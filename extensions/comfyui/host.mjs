@@ -177,7 +177,10 @@ async function cachedPack() {
 }
 
 const SERVICE_LOG = path.join(HERE, 'comfyui-server.log')
-let service = { child: null, pid: null }
+const SERVICE_STATE = path.join(HERE, 'service.json')
+// The host owns the boot lifecycle: the canvas only reads it, so leaving the panel (which
+// unmounts the client) cannot interrupt a start that is already running.
+let service = { child: null, pid: null, status: 'idle', startedAt: 0, error: null }
 
 /** Is something already answering on the configured port? */
 async function reachable() {
@@ -198,16 +201,24 @@ function logTail(bytes) {
 }
 
 /** Start ComfyUI with the bundled Python, and wait until it answers. */
+async function adoptRunning() {
+  if (service.pid === null) {
+    const port = Number(new URL(await baseUrl()).port) || 8188
+    const pid = await pidOnPort(port)
+    if (pid !== null) service = { ...service, child: null, pid, adopted: true }
+  }
+  service = { ...service, status: 'ready', error: null, startedAt: service.startedAt || Date.now() }
+}
+
+/** Spawn ComfyUI and return at once; readiness is reported through /service/status. */
 async function startService() {
+  await restoreServiceState()
   if (await reachable()) {
-    // The process may have outlived this Host (or been started elsewhere); adopt it so that a
-    // later stop really stops it.
-    if (service.pid === null) {
-      const port = Number(new URL(await baseUrl()).port) || 8188
-      const pid = await pidOnPort(port)
-      if (pid !== null) service = { child: null, pid, adopted: true }
-    }
-    return { ok: true, alreadyRunning: true, pid: service.pid }
+    await adoptRunning()
+    return { ok: true, alreadyRunning: true, pid: service.pid, status: service.status }
+  }
+  if (service.status === 'starting' && service.child !== null) {
+    return { ok: true, starting: true, pid: service.pid, status: service.status, startedAt: service.startedAt }
   }
   const config = await settings()
   const root = typeof config.comfyuiRoot === 'string' ? config.comfyuiRoot : ''
@@ -226,27 +237,50 @@ async function startService() {
   } finally {
     closeSync(fd)
   }
-  service = { child, pid: child.pid ?? null }
-  child.on('exit', () => {
-    if (service.child === child) service = { child: null, pid: null }
-  })
-  child.on('error', () => {
-    if (service.child === child) service = { child: null, pid: null }
-  })
-  const timeout = typeof config.startupTimeoutMs === 'number' && config.startupTimeoutMs > 0
-    ? config.startupTimeoutMs
-    : 180_000
-  const deadline = Date.now() + timeout
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    if (service.child !== child) {
-      return { ok: false, error: 'ComfyUI 进程退出：' + logTail(1200) }
+  const startedAt = Date.now()
+  service = { child, pid: child.pid ?? null, status: 'starting', startedAt, error: null }
+  await saveServiceState()
+  child.on('exit', (code) => {
+    if (service.child !== child) return
+    void saveServiceState()
+    service = {
+      ...service,
+      child: null,
+      pid: null,
+      status: service.status === 'ready' ? 'idle' : 'failed',
+      error: service.status === 'ready' ? null : 'ComfyUI 进程退出（code ' + String(code) + '）',
     }
-    if (await reachable()) return { ok: true, started: true, pid: service.pid }
-  }
-  return { ok: false, error: 'ComfyUI 启动超时：' + logTail(1200) }
+  })
+  child.on('error', (error) => {
+    if (service.child !== child) return
+    service = { ...service, child: null, pid: null, status: 'failed', error: error instanceof Error ? error.message : String(error) }
+  })
+  // The wait runs here, not in the HTTP request: the response is already on its way back.
+  void (async () => {
+    const timeout = typeof config.startupTimeoutMs === 'number' && config.startupTimeoutMs > 0
+      ? config.startupTimeoutMs
+      : 180_000
+    const deadline = Date.now() + timeout
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (service.child !== child) return
+      if (await reachable()) {
+        if (service.child !== child) return
+        service = { ...service, status: 'ready', error: null }
+        await saveServiceState()
+        return
+      }
+    }
+    if (service.child === child) {
+      // A boot that never answers is a hang, not progress: release the VRAM and report it.
+      const tail = logTail(1200)
+      service = { child: null, pid: null, status: 'failed', startedAt, error: 'ComfyUI 启动超时：' + tail }
+      await killPid(child.pid ?? 0)
+      await saveServiceState()
+    }
+  })()
+  return { ok: true, starting: true, pid: service.pid, status: service.status, startedAt }
 }
-
 function killPid(pid) {
   return new Promise((resolve) => {
     execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 20_000 }, () => resolve())
@@ -255,6 +289,7 @@ function killPid(pid) {
 
 /** Stop the instance this canvas started; somebody else's stays unless asked. */
 async function stopService() {
+  await restoreServiceState()
   const config = await settings()
   // Turning the service off means the resources are released; an instance this Host did not
   // start still gets stopped unless the settings say otherwise.
@@ -264,16 +299,62 @@ async function stopService() {
       const pid = await pidOnPort(Number(new URL(await baseUrl()).port) || 8188)
       if (pid !== null) {
         await killPid(pid)
-        service = { child: null, pid: null }
+        service = { child: null, pid: null, status: 'idle', startedAt: 0, error: null }
         return { ok: true, stopped: true, external: true }
       }
     }
+    service = { ...service, status: 'idle', startedAt: 0, error: null }
     return { ok: true, stopped: false, reason: 'not running through this canvas' }
   }
   const pid = service.pid
-  service = { child: null, pid: null }
+  service = { child: null, pid: null, status: 'idle', startedAt: 0, error: null }
   await killPid(pid)
+  await saveServiceState()
   return { ok: true, stopped: true }
+}
+/** Is a process with this PID alive right now? */
+function pidAlive(pid) {
+  return new Promise((resolve) => {
+    execFile('tasklist', ['/FI', 'PID eq ' + String(pid), '/NH'], { timeout: 10_000 }, (error, stdout) => {
+      if (error !== null) {
+        resolve(false)
+        return
+      }
+      resolve(String(stdout).includes(String(pid)))
+    })
+  })
+}
+
+async function saveServiceState() {
+  try {
+    await writeFile(SERVICE_STATE, JSON.stringify(service), 'utf8')
+  } catch {
+    // The record is a convenience; losing it only costs automatic adoption.
+  }
+}
+
+/** Restore the record after a Host restart, adopting a process that is still booting. */
+async function restoreServiceState() {
+  if (service.pid !== null) return
+  let stored = null
+  try {
+    stored = JSON.parse(String(readFileSync(SERVICE_STATE)))
+  } catch {
+    stored = null
+  }
+  if (stored === null || typeof stored !== 'object' || typeof stored.pid !== 'number') return
+  if ((await pidAlive(stored.pid)) !== true) {
+    await rm(SERVICE_STATE, { force: true }).catch(() => {})
+    return
+  }
+  service = {
+    child: null,
+    pid: stored.pid,
+    adopted: true,
+    status: stored.status === 'ready' ? 'ready' : 'starting',
+    startedAt: typeof stored.startedAt === 'number' ? stored.startedAt : Date.now(),
+    error: null,
+  }
 }
 
 /** The PID listening on a local port, via netstat (no extra dependency). */
@@ -432,15 +513,28 @@ export function setup(api) {
     }
   })
 
-  api.route('GET', '/service/status', async () => ({
-    status: 200,
-    body: {
-      ok: true,
-      ours: service.pid !== null,
-      pid: service.pid,
-      reachable: await reachable(),
-    },
-  }))
+  api.route('GET', '/service/status', async () => {
+    await restoreServiceState()
+    const answering = await reachable()
+    // Something answering is "ready", whatever this Host thought it was doing.
+    if (answering) {
+      await adoptRunning()
+    } else if (answering !== true && service.status === 'ready') {
+      service = { ...service, status: service.pid === null ? 'idle' : 'failed', error: null }
+    }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        ours: service.pid !== null,
+        pid: service.pid,
+        status: service.status,
+        startedAt: service.startedAt,
+        error: service.error,
+        reachable: answering,
+      },
+    }
+  })
 
   api.route('POST', '/service/start', async () => {
     try {

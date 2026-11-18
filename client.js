@@ -3131,6 +3131,70 @@ const thumbCache = new Map()
        * its run carries that workflow's name and the library row shows the same run; only a
        * draft canvas runs as the independent temporary workflow.
        */
+      /** Ask a backend what it is doing. Older backends may only answer "reachable". */
+      async function backendStatus(backend) {
+        if (typeof backend.status === 'function') {
+          try {
+            return await backend.status()
+          } catch {
+            return null
+          }
+        }
+        if (typeof backend.probe === 'function') {
+          try {
+            return { reachable: (await backend.probe()) === true }
+          } catch {
+            return null
+          }
+        }
+        return null
+      }
+
+      /**
+       * Follow a backend that is booting. The host keeps the process and its progress, so this
+       * only mirrors it — leaving the panel and coming back resumes here, not in a dead request.
+       */
+      async function syncBackendState(backend, isCancelled) {
+        let info = await backendStatus(backend)
+        if (info === null || isCancelled()) return
+        if (info.starting === true) {
+          setServiceStates((current) => ({
+            ...current,
+            [backend.id]: { status: 'starting', startedAt: info.startedAt ?? Date.now() },
+          }))
+          for (let attempt = 0; attempt < 1200; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1500))
+            if (isCancelled()) return
+            info = await backendStatus(backend)
+            if (info === null || info.starting === true) continue
+            if (info.ready === true || info.reachable === true) {
+              setServiceStates((current) => ({
+                ...current,
+                [backend.id]: { status: 'ready', startedAt: info.startedAt ?? Date.now() },
+              }))
+              void prepareBackend(backend, { quiet: true })
+            } else {
+              setServiceStates((current) => ({ ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
+              if (typeof info.error === 'string' && info.error !== '') {
+                showNotice(tr('notice.backendFailed', { name: backend.name ?? backend.id, message: info.error }))
+              }
+            }
+            return
+          }
+          return
+        }
+        if (info.ready === true || info.reachable === true) {
+          setServiceStates((current) => (current[backend.id]?.status === 'ready'
+            ? current
+            : { ...current, [backend.id]: { status: 'ready', startedAt: info.startedAt ?? Date.now() } }))
+          void prepareBackend(backend, { quiet: true })
+          return
+        }
+        setServiceStates((current) => (current[backend.id] === undefined
+          ? current
+          : { ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
+      }
+
       /** Forget the node shapes one backend produced, cache included. */
       function dropBackendPack(backendId) {
         setPacks((current) => current.filter((pack) => pack.remote !== backendId))
@@ -3323,20 +3387,10 @@ const thumbCache = new Map()
       // shapes are refreshed without booting anything.
       React.useEffect(() => {
         let cancelled = false
+        const isCancelled = () => cancelled
         void (async () => {
           for (const backend of backends) {
-            if (typeof backend.probe !== 'function') continue
-            let reachable = false
-            try {
-              reachable = (await backend.probe()) === true
-            } catch {
-              reachable = false
-            }
-            if (cancelled || reachable !== true) continue
-            setServiceStates((current) => (current[backend.id]?.status === 'ready'
-              ? current
-              : { ...current, [backend.id]: { status: 'ready', startedAt: Date.now() } }))
-            void prepareBackend(backend, { quiet: true })
+            await syncBackendState(backend, isCancelled)
           }
         })()
         return () => {
@@ -6709,6 +6763,8 @@ const thumbCache = new Map()
                   ? { opacity: 0.55, boxShadow: '0 0 0 2px var(--dsw-alias-brand-primary)' }
                   : null),
               },
+              draggable: false,
+              onDragStart: (event) => event.preventDefault(),
               onPointerDown: (event) => startExtensionDrag(event, extension),
               onPointerMove: onExtensionDragMove,
               onPointerUp: endExtensionDrag,
@@ -6755,6 +6811,7 @@ const thumbCache = new Map()
                     key: 'icon',
                     src: extensionIconUrl(extension),
                     alt: extension.name,
+                    draggable: false,
                     // Square by design; the slot is small, so the browser scales it down.
                     style: {
                       width: '100%',
@@ -6762,6 +6819,7 @@ const thumbCache = new Map()
                       objectFit: 'cover',
                       borderRadius: '5px',
                       display: 'block',
+                      userSelect: 'none',
                     },
                     onError: (event) => {
                       event.currentTarget.style.visibility = 'hidden'

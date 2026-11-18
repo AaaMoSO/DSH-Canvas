@@ -247,18 +247,36 @@ const backend = {
   name: 'ComfyUI',
   /** True when the service already answers; asking must not start anything. */
   async probe() {
+    const info = await this.status()
+    return info !== null && info.reachable === true
+  },
+  /** The host's view of the service, including a boot that is already in flight. */
+  async status() {
     try {
-      const status = await call('/service/status')
-      return status.reachable === true
+      const payload = await call('/service/status')
+      return {
+        reachable: payload.reachable === true,
+        ready: payload.status === 'ready',
+        starting: payload.status === 'starting',
+        startedAt: payload.startedAt,
+        error: payload.error,
+      }
     } catch {
-      return false
+      return null
     }
   },
   async prepare() {
-    // Switching to this backend brings ComfyUI up; switching back to local takes it down.
-    const service = await call('/service/start', { method: 'POST' })
-    if (service.alreadyRunning !== true && service.started !== true) {
-      throw new Error(service.error ?? 'ComfyUI 没有启动')
+    // The host boots ComfyUI in the background; only the shapes need to wait for it here.
+    const started = await call('/service/start', { method: 'POST' })
+    if (started.alreadyRunning !== true) {
+      const deadline = Date.now() + 10 * 60 * 1000
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        const info = await this.status()
+        if (info !== null && info.ready === true) break
+        if (info !== null && info.starting !== true) throw new Error(info.error ?? 'ComfyUI 启动失败')
+        if (Date.now() > deadline) throw new Error('ComfyUI 启动超时')
+      }
     }
     const payload = await call('/nodes')
     return payload.pack

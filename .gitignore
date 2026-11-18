@@ -4,5 +4,6 @@
 extensions.json
 config.json
 extensions/comfyui/settings.json
+extensions/comfyui/service.json
 .DS_Store
 Thumbs.db
