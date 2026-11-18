@@ -51,7 +51,35 @@ export function setup(api) {
 - 节点视图只负责节点控件下方的额外区域，不接管控件本身；
 - `render` 抛错只会显示一行错误，不会影响画布。
 
+## 执行后端与「源」
+
+后端契约（`registerBackend`）：
+
+```js
+{
+  id, name,
+  prepare(),   // 可选：准备好节点形状；返回一个包，或一个包数组
+  status(),    // 可选：{ ready, starting, startedAt, error }，面板重开后据此接着显示进度
+  probe(),     // 可选：进程是否在跑（不会启动任何东西）
+  start({ prompt, label }),   // 提交一次运行，返回 { id }
+  poll(id),    // { status: 'queued'|'done'|'error'|'cancelled', images?, error? }
+  cancel(id),  // 可选
+  deactivate(),// 可选：关闭服务，返回 { stopped }
+  writeWorkflow(name, workflow), listWorkflows(), readWorkflow(name)
+}
+```
+
+每个后端同时是一个**源**，源决定节点库和工作流库显示谁的内容：
+
+- `packs/` 里的包属于 `local`；
+- 后端提供的包属于该后端（包上带 `source`，缺省取 `remote`）；
+- 一个后端可以返回**多个包**——例如 ComfyUI 兼容层按 `python_module` 把上千个节点拆回它们原本的包，
+  节点库就按这个结构分组，而不是一坨。
+
+菜单里的「源」可以切换当前源；切换后节点库与工作流库都只列该源的内容。
+
 ## 优先级
+
 
 拼图菜单里的拓展方块可以上下拖动，**越靠上优先级越高**。加载顺序从低到高：所有拓展按从下到上
 依次 `setup(api)`，收集到的能力表再反转，所以冲突时高优先级先命中。

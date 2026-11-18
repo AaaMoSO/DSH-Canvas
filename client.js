@@ -17,7 +17,9 @@ const EXTENSION_ARM_MS = 30
 const REMOTE_RUN_KEY = 'dsh.node-canvas.remoteRun.v1'
 const REMOTE_RUN_MAX_AGE = 6 * 60 * 60 * 1000
 // Node shapes a backend produced, cached so a reload does not need the backend running.
-const REMOTE_PACK_KEY = 'dsh.node-canvas.remotePack.v1'
+const REMOTE_PACK_KEY = 'dsh.node-canvas.remotePacks.v2'
+// Which source (Local, ComfyUI, …) the libraries are showing.
+const SOURCE_KEY = 'dsh.node-canvas.source.v1'
 // Preview tiles shrink a 4K PNG to a thumbnail before it reaches the DOM: a 2880×4320 image is
 // ~50 MB once decoded, and several of those in one node make the whole panel sluggish.
 const THUMB_WIDTH = 640
@@ -479,6 +481,14 @@ const thumbCache = new Map()
       }
     }
 
+    /** The source a pack belongs to: the Host's packs are Local, backends name themselves. */
+    function sourceOfPack(pack) {
+      if (pack === null || typeof pack !== 'object') return 'local'
+      if (typeof pack.source === 'string' && pack.source !== '') return pack.source
+      if (typeof pack.remote === 'string' && pack.remote !== '') return pack.remote
+      return 'local'
+    }
+
     /** What a save would write, with sorted keys: stable across hydration and reloads. */
     function graphSignature(graph) {
       return stableJson(serializeGraph(graph))
@@ -616,6 +626,13 @@ const thumbCache = new Map()
       'library.empty': 'Add a pack under node-canvas/packs/ and reload.',
       'library.section.nodes': 'Node library',
       'library.section.workflows': 'Workflow library',
+      'library.section.source': 'Sources',
+      'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
+      'source.local': 'Local',
+      'source.counts': '{nodes} nodes · {workflows} workflows',
+      'library.sourceWorkflows': '{name} workflows ({n})',
+      'library.workflows.sourceEmpty': 'This source has no workflows yet.',
+      'library.sourceOffline': 'This source is not running; start it from the extensions menu.',
       'library.noPorts': 'No ports or widgets.',
       'library.workflows.empty': 'No saved workflows yet.',
       'library.comfyuiWorkflows': 'ComfyUI workflows ({n})',
@@ -744,6 +761,13 @@ const thumbCache = new Map()
       'library.empty': '把节点包放进 node-canvas/packs/ 后刷新。',
       'library.section.nodes': '节点库',
       'library.section.workflows': '工作流库',
+      'library.section.source': '源',
+      'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
+      'source.local': '本地',
+      'source.counts': '{nodes} 节点 · {workflows} 工作流',
+      'library.sourceWorkflows': '{name} 工作流（{n}）',
+      'library.workflows.sourceEmpty': '该源还没有工作流。',
+      'library.sourceOffline': '该源未启动，可在拓展菜单里点亮它。',
       'library.noPorts': '没有端口或控件。',
       'library.workflows.empty': '还没有保存的工作流。',
       'library.comfyuiWorkflows': 'ComfyUI 工作流（{n}）',
@@ -1618,6 +1642,15 @@ const thumbCache = new Map()
       const [hoverPort, setHoverPort] = React.useState(null)
       const [dragging, setDragging] = React.useState(false)
       const [packs, setPacks] = React.useState([])
+      // Local is the plugin's own node/workflow protocol; everything else is a backend's source.
+      const [activeSource, setActiveSource] = React.useState(() => {
+        try {
+          const raw = localStorage.getItem(SOURCE_KEY)
+          return typeof raw === 'string' && raw !== '' ? raw : 'local'
+        } catch {
+          return 'local'
+        }
+      })
       const [packsReady, setPacksReady] = React.useState(false)
       // Model files for a pack's file-backed dropdowns, keyed `packId:folder`.
       const [fileLists, setFileLists] = React.useState({})
@@ -1652,7 +1685,7 @@ const thumbCache = new Map()
       const [serviceClock, setServiceClock] = React.useState(0)
       const [remoteRun, setRemoteRun] = React.useState(null)
       // Workflows that live in a backend (ComfyUI's own list), shown next to ours.
-      const [backendWorkflows, setBackendWorkflows] = React.useState([])
+      const [backendWorkflows, setBackendWorkflows] = React.useState({ source: null, names: [] })
       const remoteRunRef = React.useRef(null)
       remoteRunRef.current = remoteRun
 // Extension packages: the puzzle menu, the add dialog, and the list from the Host.
@@ -1854,10 +1887,18 @@ const thumbCache = new Map()
         try {
           const raw = localStorage.getItem(REMOTE_PACK_KEY)
           if (raw === null) return
-          const pack = JSON.parse(raw)
-          if (pack === null || typeof pack !== 'object' || Array.isArray(pack.nodes) !== true) return
-          packsCache = [...packsCache.filter((item) => item.id !== pack.id), pack]
-          setPacks((current) => (current.some((item) => item.id === pack.id) ? current : [...current, pack]))
+          const parsed = JSON.parse(raw)
+          const list = Array.isArray(parsed) ? parsed : []
+          const usable = list.filter((item) => item !== null && typeof item === 'object' && Array.isArray(item.nodes) === true)
+          if (usable.length === 0) return
+          const remote = usable[0].remote
+          const ids = new Set(usable.map((item) => item.id))
+          const replace = (current) => [
+            ...current.filter((item) => ids.has(item.id) !== true && item.remote !== remote),
+            ...usable,
+          ]
+          packsCache = replace(packsCache)
+          setPacks(replace)
         } catch {
           // A corrupt cache only costs the shapes until the next sync.
         }
@@ -3219,26 +3260,27 @@ const thumbCache = new Map()
           && typeof backend.listWorkflows === 'function') ?? null
       }
 
-      const loadBackendWorkflows = React.useCallback(async () => {
+      const loadBackendWorkflows = React.useCallback(async (sourceId) => {
         const available = extensionFeatures.backends
-        const backend = available.find((item) => Object.prototype.hasOwnProperty.call(serviceStates, item.id)
+        const backend = available.find((item) => (sourceId === undefined || item.id === sourceId)
           && serviceStates[item.id]?.status === 'ready'
           && typeof item.listWorkflows === 'function')
         if (backend === undefined) {
-          setBackendWorkflows([])
+          setBackendWorkflows({ source: sourceId ?? null, names: [] })
           return
         }
         try {
           const names = await backend.listWorkflows()
-          setBackendWorkflows(Array.isArray(names) ? names : [])
+          setBackendWorkflows({ source: backend.id, names: Array.isArray(names) ? names : [] })
         } catch {
-          setBackendWorkflows([])
+          setBackendWorkflows({ source: backend.id, names: [] })
         }
       }, [extensionFeatures.backends, serviceStates])
 
       /** Import one of the backend's workflows into the canvas, keeping its name for write-back. */
       async function openBackendWorkflow(name) {
-        const backend = workflowBackend()
+        const backend = backends.find((item) => item.id === activeSource && isServiceReady(item.id) === true
+          && typeof item.readWorkflow === 'function') ?? workflowBackend()
         if (backend === null || typeof backend.readWorkflow !== 'function') return
         try {
           const text = await backend.readWorkflow(name)
@@ -3258,18 +3300,26 @@ const thumbCache = new Map()
         // Preparing can take a while (a backend may have to boot); say so before waiting.
         if (options?.quiet !== true) showNotice(tr('notice.backendPreparing', { name: backend.name ?? backend.id }))
         try {
-          const pack = await backend.prepare()
-          if (pack === null || typeof pack !== 'object' || Array.isArray(pack.nodes) !== true) return false
-          setPacks((current) => [...current.filter((item) => item.id !== pack.id), pack])
-          if (typeof pack.remote === 'string' && pack.remote !== '') {
-            try {
-              localStorage.setItem(REMOTE_PACK_KEY, JSON.stringify(pack))
-            } catch {
-              // A pack larger than the storage quota simply is not cached.
-            }
+          const prepared = await backend.prepare()
+          const list = Array.isArray(prepared)
+            ? prepared
+            : (prepared !== null && typeof prepared === 'object' && Array.isArray(prepared.packs) ? prepared.packs : [prepared])
+          const usable = list.filter((item) => item !== null && typeof item === 'object' && Array.isArray(item.nodes) === true)
+          if (usable.length === 0) return false
+          const remote = usable[0].remote
+          const ids = new Set(usable.map((item) => item.id))
+          setPacks((current) => [
+            ...current.filter((item) => ids.has(item.id) !== true && item.remote !== remote),
+            ...usable,
+          ])
+          try {
+            localStorage.setItem(REMOTE_PACK_KEY, JSON.stringify(usable))
+          } catch {
+            // More shapes than the storage quota simply are not cached.
           }
           if (options?.quiet !== true) {
-            showNotice(tr('notice.backendNodes', { name: backend.name ?? backend.id, n: pack.nodes.length }))
+            const n = usable.reduce((sum, item) => sum + item.nodes.length, 0)
+            showNotice(tr('notice.backendNodes', { name: backend.name ?? backend.id, n }))
           }
           return true
         } catch (error) {
@@ -3322,6 +3372,18 @@ const thumbCache = new Map()
         restoreRemoteRun()
       }, [restoreRemoteRun])
 
+      // A source can disappear (its extension was removed): the libraries go back to Local.
+      React.useEffect(() => {
+        if (activeSource === 'local') return
+        if (extensionFeatures.backends.some((backend) => backend.id === activeSource)) return
+        setActiveSource('local')
+        try {
+          localStorage.setItem(SOURCE_KEY, 'local')
+        } catch {
+          // Forgetting the fallback only costs a stale choice on the next load.
+        }
+      }, [activeSource, extensionFeatures.backends])
+
       /** The visible state of one backend service. */
       function serviceStateOf(backendId) {
         const state = serviceStates[backendId]
@@ -3359,7 +3421,7 @@ const thumbCache = new Map()
             setServiceStates((current) => ({ ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
             // The service is what makes these nodes real; without it they are just placeholders.
             dropBackendPack(backend.id)
-            setBackendWorkflows([])
+            setBackendWorkflows({ source: null, names: [] })
             showNotice(tr('notice.backendStopped', { name: backend.name ?? backend.id }))
           } catch (error) {
             setServiceStates((current) => ({ ...current, [backend.id]: { status: 'ready', startedAt: current[backend.id]?.startedAt ?? Date.now() } }))
@@ -3380,8 +3442,12 @@ const thumbCache = new Map()
 
       // One timer for the whole menu: it only runs while some service is booting.
       React.useEffect(() => {
-        void loadBackendWorkflows()
-      }, [loadBackendWorkflows])
+        for (const backend of extensionFeatures.backends) {
+          if (Object.prototype.hasOwnProperty.call(serviceStates, backend.id) === false) continue
+          if (serviceStates[backend.id]?.status !== 'ready') continue
+          void loadBackendWorkflows(backend.id)
+        }
+      }, [loadBackendWorkflows, extensionFeatures.backends, serviceStates])
 
 
       // A backend that is already running when the page loads counts as started, and its node
@@ -4404,6 +4470,24 @@ const thumbCache = new Map()
         }, BAND_MS + 40)
       }
 
+      function selectSource(id) {
+        if (id === activeSource) return
+        setActiveSource(id)
+        try {
+          localStorage.setItem(SOURCE_KEY, id)
+        } catch {
+          // The choice only has to survive a reload; a full storage simply forgets it.
+        }
+        setOpenPack(null)
+        setNodePreview(null)
+        if (id !== 'local') {
+          void loadBackendWorkflows(id)
+          // A backend that is already running supplies its shapes without a boot.
+          const backend = backends.find((item) => item.id === id)
+          if (backend !== undefined && isServiceReady(id) === true) void prepareBackend(backend, { quiet: true })
+        }
+      }
+
       function openBand(id) {
         if (bandTimerRef.current !== 0) {
           clearTimeout(bandTimerRef.current)
@@ -4416,8 +4500,9 @@ const thumbCache = new Map()
         // The library is a directory listing, so it is re-read every time it is shown.
         if (id === 'workflows') {
           loadWorkflows()
-          void loadBackendWorkflows()
-        } else loadPacks()
+          if (activeSource !== 'local') void loadBackendWorkflows(activeSource)
+        } else if (id === 'nodes') loadPacks()
+        else if (activeSource !== 'local') void loadBackendWorkflows(activeSource)
       }
 
       function toggleFullscreen() {
@@ -6108,9 +6193,14 @@ const thumbCache = new Map()
 
       // The menu is one column: the library list, then — below it — the selected library's own
       // items. Packs unfold in place, so nothing ever grows sideways into the canvas.
+      const sources = [
+        { id: 'local', name: tr('source.local') },
+        ...extensionFeatures.backends.map((backend) => ({ id: backend.id, name: backend.name ?? backend.id })),
+      ]
       const sectionRows = [
         { id: 'nodes', label: tr('library.section.nodes') },
         { id: 'workflows', label: tr('library.section.workflows') },
+        { id: 'source', label: tr('library.section.source') },
       ].map((section) => h('button', {
         key: 'section:' + section.id,
         type: 'button',
@@ -6129,7 +6219,7 @@ const thumbCache = new Map()
       ]))
 
       const packRows = []
-      for (const pack of packs) {
+      for (const pack of packs.filter((item) => sourceOfPack(item) === activeSource)) {
         const expanded = openPack === pack.id
         packRows.push(h('button', {
           key: 'pack:' + pack.id,
@@ -6172,11 +6262,14 @@ const thumbCache = new Map()
       if (packsReady !== true) {
         packRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
       } else if (packRows.length === 0) {
-        packRows.push(h('div', { key: 'pack-empty', style: S.libraryHint }, tr('library.empty')))
+        packRows.push(h('div', {
+          key: 'pack-empty',
+          style: S.libraryHint,
+        }, activeSource === 'local' ? tr('library.empty') : tr('library.sourceEmpty')))
       }
 
       const workflowRows = []
-      for (const item of workflows) {
+      for (const item of (activeSource === 'local' ? workflows : [])) {
         const active = item.name === currentWorkflow
         const state = workflowRunState(item.name)
         workflowRows.push(h('button', {
@@ -6229,12 +6322,13 @@ const thumbCache = new Map()
           h('span', { key: 'text', style: S.nodeName }, item.name),
         ]))
       }
-      if (backendWorkflows.length > 0) {
+      const remoteNames = backendWorkflows.source === activeSource ? backendWorkflows.names : []
+      if (remoteNames.length > 0) {
         workflowRows.push(h('div', {
           key: 'workflow-backend-head',
           style: { ...S.libraryHint, marginTop: '6px' },
-        }, tr('library.comfyuiWorkflows', { n: backendWorkflows.length })))
-        for (const name of backendWorkflows) {
+        }, tr('library.sourceWorkflows', { n: remoteNames.length, name: (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name })))
+        for (const name of remoteNames) {
           workflowRows.push(h('button', {
             key: 'backend-workflow:' + name,
             type: 'button',
@@ -6249,10 +6343,38 @@ const thumbCache = new Map()
           ]))
         }
       }
-      if (workflowsReady !== true) {
+      if (activeSource === 'local' && workflowsReady !== true) {
         workflowRows.push(h('div', { key: 'workflow-loading', style: S.libraryHint }, tr('library.loading')))
       } else if (workflowRows.length === 0) {
-        workflowRows.push(h('div', { key: 'workflow-empty', style: S.libraryHint }, tr('library.workflows.empty')))
+        const hint = activeSource === 'local'
+          ? tr('library.workflows.empty')
+          : (isServiceReady(activeSource) === true ? tr('library.workflows.sourceEmpty') : tr('library.sourceOffline'))
+        workflowRows.push(h('div', { key: 'workflow-empty', style: S.libraryHint }, hint))
+      }
+
+      const sourceRows = []
+      for (const source of sources) {
+        const active = source.id === activeSource
+        const nodes = packs
+          .filter((pack) => sourceOfPack(pack) === source.id)
+          .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
+        const workflowsHere = source.id === 'local'
+          ? workflows.length
+          : (backendWorkflows.source === source.id ? backendWorkflows.names.length : 0)
+        sourceRows.push(h('button', {
+          key: 'source:' + source.id,
+          type: 'button',
+          title: source.name,
+          style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
+          onClick: () => selectSource(source.id),
+        }, [
+          h('span', { key: 'name', style: S.typeName }, source.name),
+          h('span', {
+            key: 'count',
+            style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
+          }, tr('source.counts', { nodes, workflows: workflowsHere })),
+          h('span', { key: 'check', style: S.typeChevron }, active ? '✓' : ''),
+        ]))
       }
 
       // The band slides down out of the menu like a sash window: the slot is already at its final
@@ -6269,7 +6391,7 @@ const thumbCache = new Map()
       // The selected library fills the room under the menu, spanning the same width.
       const submenuRows = barSection === 'nodes'
         ? packRows
-        : workflowRows
+        : (barSection === 'workflows' ? workflowRows : sourceRows)
 
       /** The miniature itself: ports on both sides, widget bars underneath. */
       function previewRows(def) {

@@ -96,8 +96,37 @@ function mapInput(name, item) {
 }
 
 /** The whole object_info map → a canvas pack. The shapes are ComfyUI's own, not a conversion. */
-function mapPack(objectInfo) {
-  const nodes = []
+/**
+ * Which pack a node belongs to. ComfyUI's core extensions are one pack (they are one product),
+ * while every installed custom-node folder becomes its own pack — that is the split the library
+ * needs, not one entry per python file.
+ */
+function groupOf(info) {
+  const module = typeof info.python_module === 'string' && info.python_module !== '' ? info.python_module : 'nodes'
+  if (module === 'nodes' || module === 'builtin') {
+    return { key: 'core', name: 'ComfyUI Core', sortKey: '0' }
+  }
+  if (module.startsWith('comfy_extras')) {
+    return { key: 'extras', name: 'ComfyUI Extras', sortKey: '1' }
+  }
+  if (module.startsWith('comfy_api_nodes')) {
+    return { key: 'api', name: 'ComfyUI API Nodes', sortKey: '2' }
+  }
+  if (module.startsWith('custom_nodes.')) {
+    const name = module.slice('custom_nodes.'.length)
+    const tail = name.split('.').pop() ?? name
+    return { key: 'custom:' + tail.toLowerCase(), name: tail, sortKey: '3' + tail.toLowerCase() }
+  }
+  const tail = module.split('.').pop() ?? module
+  return { key: 'other:' + tail.toLowerCase(), name: tail, sortKey: '4' + tail.toLowerCase() }
+}
+
+/**
+ * ComfyUI ships its nodes in packs; the canvas keeps that split so the library reads like
+ * ComfyUI's own, instead of one wall of a thousand entries.
+ */
+function mapPacks(objectInfo) {
+  const byModule = new Map()
   for (const [type, info] of Object.entries(objectInfo ?? {})) {
     if (info === null || typeof info !== 'object') continue
     const groups = info.input ?? {}
@@ -119,7 +148,9 @@ function mapPack(objectInfo) {
     // not say so, but without this the canvas has nowhere to show the result.
     const prefixInput = inputs.find((input) => input.name === 'filename_prefix')
     const savesImages = info.output_node === true && prefixInput !== undefined
-    nodes.push({
+    const group = groupOf(info)
+    if (byModule.has(group.key) !== true) byModule.set(group.key, { name: group.name, sortKey: group.sortKey, nodes: [] })
+    byModule.get(group.key).nodes.push({
       type,
       display_name: typeof info.display_name === 'string' && info.display_name !== '' ? info.display_name : type,
       category: typeof info.category === 'string' && info.category !== '' ? info.category : 'comfyui',
@@ -133,8 +164,20 @@ function mapPack(objectInfo) {
       remote: 'comfyui',
     })
   }
-  nodes.sort((left, right) => left.type.localeCompare(right.type))
-  return { id: 'comfyui-live', name: 'ComfyUI', remote: 'comfyui', nodes }
+  const packs = []
+  for (const [key, group] of byModule) {
+    group.nodes.sort((left, right) => left.type.localeCompare(right.type))
+    packs.push({
+      id: 'comfyui:' + key.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase(),
+      name: group.name,
+      sortKey: group.sortKey,
+      source: 'comfyui',
+      remote: 'comfyui',
+      nodes: group.nodes,
+    })
+  }
+  packs.sort((left, right) => left.sortKey.localeCompare(right.sortKey))
+  return packs
 }
 
 /** ComfyUI's history entry → what the canvas needs: done/queued/error plus the written images. */
@@ -164,16 +207,16 @@ function mapHistory(promptId, history) {
   return { status: 'running', images }
 }
 
-let packCache = { at: 0, base: '', pack: null }
+let packCache = { at: 0, base: '', packs: null }
 
-async function cachedPack() {
+async function cachedPacks() {
   const base = await baseUrl()
-  if (packCache.pack !== null && packCache.base === base && Date.now() - packCache.at < 60_000) {
-    return packCache.pack
+  if (packCache.packs !== null && packCache.base === base && Date.now() - packCache.at < 60_000) {
+    return packCache.packs
   }
-  const pack = mapPack(await request('GET', '/object_info'))
-  packCache = { at: Date.now(), base, pack }
-  return pack
+  const packs = mapPacks(await request('GET', '/object_info'))
+  packCache = { at: Date.now(), base, packs }
+  return packs
 }
 
 const SERVICE_LOG = path.join(HERE, 'comfyui-server.log')
@@ -477,10 +520,12 @@ export function setup(api) {
   // already reads images from, so a ComfyUI SaveImage shows up in its node.
   api.route('GET', '/nodes', async () => {
     try {
-      const pack = await cachedPack()
+      const packs = await cachedPacks()
       const outputDir = api.config !== null && typeof api.config === 'object' ? api.config.outputDir : undefined
-      if (typeof outputDir === 'string' && outputDir !== '') pack.outputRoot = outputDir
-      return { status: 200, body: { ok: true, pack } }
+      if (typeof outputDir === 'string' && outputDir !== '') {
+        for (const pack of packs) pack.outputRoot = outputDir
+      }
+      return { status: 200, body: { ok: true, packs } }
     } catch (error) {
       return { status: 502, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }
     }

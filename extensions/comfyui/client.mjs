@@ -279,7 +279,8 @@ const backend = {
       }
     }
     const payload = await call('/nodes')
-    return payload.pack
+    // ComfyUI's nodes arrive split by the pack they came from.
+    return Array.isArray(payload.packs) ? payload.packs : (payload.pack ?? [])
   },
   async deactivate() {
     return call('/service/stop', { method: 'POST' })
