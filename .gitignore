@@ -1,0 +1,8 @@
+# Runtime state and machine-specific files.
+.workspace/
+*.log
+extensions.json
+config.json
+extensions/comfyui/settings.json
+.DS_Store
+Thumbs.db

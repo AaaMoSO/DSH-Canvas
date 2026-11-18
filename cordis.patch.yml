@@ -1,0 +1,3 @@
+- insert:
+    - id: node-canvas
+      name: '@local/node-canvas'

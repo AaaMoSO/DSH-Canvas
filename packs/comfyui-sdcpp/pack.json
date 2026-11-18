@@ -1,0 +1,1081 @@
+{
+  "name": "comfyui-sdcpp",
+  "modelsRoot": "D:\\DSH_uesr\\Z-image-cpu\\sd.cpp",
+  "nodes": [
+    {
+      "type": "SDCppLoadModel",
+      "display_name": "sd.cpp Load Model",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "recipe",
+          "type": "STRING",
+          "widget": true,
+          "default": "z-image-turbo"
+        },
+        {
+          "name": "diffusion_model",
+          "type": "COMBO",
+          "widget": true,
+          "folder": "diffusion_models",
+          "dynamic": true,
+          "options": []
+        },
+        {
+          "name": "text_encoder",
+          "type": "COMBO",
+          "widget": true,
+          "folder": "text_encoders",
+          "dynamic": true,
+          "options": []
+        },
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": true,
+          "folder": "vae",
+          "dynamic": true,
+          "options": []
+        },
+        {
+          "name": "placement",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "gpu (diffusion on CUDA, TE in RAM)",
+            "all_gpu",
+            "all_cpu (weights in RAM)",
+            "recipe decides placement"
+          ],
+          "default": "gpu (diffusion on CUDA, TE in RAM)"
+        },
+        {
+          "name": "vision_encoder",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "(none)"
+          ],
+          "default": "(none)"
+        },
+        {
+          "name": "vae",
+          "type": "SDCPP_VAE",
+          "widget": false,
+          "isOptional": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sdcpp_model",
+          "type": "SDCPP_MODEL"
+        }
+      ]
+    },
+    {
+      "type": "SDCppMoveWeights",
+      "display_name": "sd.cpp Move Weights (VRAM <-> RAM)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "sdcpp_model",
+          "type": "SDCPP_MODEL",
+          "widget": false
+        },
+        {
+          "name": "target",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "RAM (free VRAM)",
+            "GPU (back into VRAM)"
+          ],
+          "default": "RAM (free VRAM)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sdcpp_model",
+          "type": "SDCPP_MODEL"
+        }
+      ]
+    },
+    {
+      "type": "SDCppUnloadModel",
+      "display_name": "sd.cpp Unload Model",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "sdcpp_model",
+          "type": "SDCPP_MODEL",
+          "widget": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "status",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "type": "SDCppServerInfo",
+      "display_name": "sd.cpp Server Info",
+      "category": "sd.cpp",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "status",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "type": "SDCppGenerate",
+      "display_name": "sd.cpp Generate (txt2img / img2img / inpaint)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "sdcpp_model",
+          "type": "SDCPP_MODEL",
+          "widget": false
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "widget": true,
+          "default": "",
+          "multiline": true
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "widget": true,
+          "default": "",
+          "multiline": true
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": true,
+          "default": 512,
+          "step": 16,
+          "min": 64,
+          "max": 2048
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": true,
+          "default": 512,
+          "step": 16,
+          "min": 64,
+          "max": 2048
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": true,
+          "default": 8,
+          "min": 1,
+          "max": 100
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 1,
+          "step": 0.1,
+          "min": 0,
+          "max": 20
+        },
+        {
+          "name": "sampler",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "euler",
+            "euler_a",
+            "heun",
+            "dpm2",
+            "dpm++2s_a",
+            "dpm++2m",
+            "dpm++2mv2",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "ddim_trailing"
+          ],
+          "default": "euler"
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "discrete",
+            "karras",
+            "exponential",
+            "ays",
+            "gits",
+            "sgm_uniform",
+            "simple",
+            "normal",
+            "ddim_uniform",
+            "beta"
+          ],
+          "default": "discrete"
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "widget": true,
+          "default": 42,
+          "min": 0,
+          "max": 0
+        },
+        {
+          "name": "batch_count",
+          "type": "INT",
+          "widget": true,
+          "default": 1,
+          "min": 1,
+          "max": 8
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "widget": false,
+          "isOptional": true
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "widget": false,
+          "isOptional": true
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "widget": true,
+          "isOptional": true,
+          "default": 0.55,
+          "step": 0.05,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "name": "cache_mode",
+          "type": "COMBO",
+          "widget": true,
+          "isOptional": true,
+          "options": [
+            "disabled",
+            "easycache",
+            "spectrum",
+            "ucache",
+            "dbcache",
+            "taylorseer",
+            "cache-dit"
+          ],
+          "default": "disabled"
+        },
+        {
+          "name": "lora",
+          "type": "COMBO",
+          "widget": true,
+          "isOptional": true,
+          "dynamic": true,
+          "options": []
+        },
+        {
+          "name": "lora_strength",
+          "type": "FLOAT",
+          "widget": true,
+          "isOptional": true,
+          "default": 1,
+          "step": 0.05,
+          "min": -2,
+          "max": 2
+        },
+        {
+          "name": "lora_path",
+          "type": "STRING",
+          "widget": true,
+          "isOptional": true,
+          "default": ""
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE"
+        }
+      ]
+    },
+    {
+      "type": "SDCppUpscale",
+      "display_name": "sd.cpp Upscale (ESRGAN)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "widget": false
+        },
+        {
+          "name": "upscaler",
+          "type": "COMBO",
+          "widget": true,
+          "folder": "upscale_models",
+          "dynamic": true,
+          "options": []
+        },
+        {
+          "name": "repeats",
+          "type": "INT",
+          "widget": true,
+          "default": 1,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "name": "tile_size",
+          "type": "INT",
+          "widget": true,
+          "default": 128,
+          "step": 32,
+          "min": 0,
+          "max": 256
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE"
+        }
+      ]
+    },
+    {
+      "type": "SDCppConvertLoRA",
+      "display_name": "sd.cpp Convert LoRA (drop file here)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "source_file",
+          "type": "STRING",
+          "widget": true,
+          "default": ""
+        },
+        {
+          "name": "diffusion_model",
+          "type": "COMBO",
+          "widget": true,
+          "dynamic": true,
+          "options": []
+        }
+      ],
+      "outputs": [
+        {
+          "name": "lora_path",
+          "type": "STRING"
+        },
+        {
+          "name": "report",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "type": "SDCppVAELoader",
+      "display_name": "sd.cpp VAE Loader",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": true,
+          "folder": "vae",
+          "dynamic": true,
+          "options": []
+        }
+      ],
+      "outputs": [
+        {
+          "name": "vae",
+          "type": "SDCPP_VAE"
+        }
+      ]
+    },
+    {
+      "type": "SDCppSeed",
+      "display_name": "sd.cpp Seed (fixed / random batch)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "mode",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "fixed",
+            "random"
+          ],
+          "default": "fixed"
+        },
+        {
+          "name": "seed_value",
+          "type": "INT",
+          "widget": true,
+          "default": 42,
+          "min": 0,
+          "max": 0
+        },
+        {
+          "name": "batch_count",
+          "type": "INT",
+          "widget": true,
+          "default": 4,
+          "min": 1,
+          "max": 16
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seed_source",
+          "type": "SDCPP_SEED"
+        },
+        {
+          "name": "seeds",
+          "type": "STRING"
+        }
+      ]
+    },
+    {
+      "type": "SDCppCLIPTextEncode",
+      "display_name": "sd.cpp CLIP Text Encode",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "widget": true,
+          "default": "",
+          "multiline": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "conditioning",
+          "type": "SDCPP_CONDITIONING"
+        }
+      ]
+    },
+    {
+      "type": "SDCppEmptyLatentImage",
+      "display_name": "sd.cpp Empty Latent Image",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": true,
+          "default": 512,
+          "step": 16,
+          "min": 64,
+          "max": 2048
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": true,
+          "default": 512,
+          "step": 16,
+          "min": 64,
+          "max": 2048
+        }
+      ],
+      "outputs": [
+        {
+          "name": "latent",
+          "type": "SDCPP_LATENT"
+        }
+      ]
+    },
+    {
+      "type": "SDCppFitResolution",
+      "display_name": "sd.cpp Fit Resolution (longest side)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "widget": false
+        },
+        {
+          "name": "max_side",
+          "type": "INT",
+          "widget": true,
+          "default": 1280,
+          "step": 16,
+          "min": 256,
+          "max": 4096
+        },
+        {
+          "name": "max_tokens",
+          "type": "INT",
+          "widget": true,
+          "default": 4600,
+          "step": 128,
+          "min": 256,
+          "max": 65536
+        },
+        {
+          "name": "multiple_of",
+          "type": "INT",
+          "widget": true,
+          "default": 16,
+          "step": 8,
+          "min": 8,
+          "max": 256
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE"
+        },
+        {
+          "name": "width",
+          "type": "INT"
+        },
+        {
+          "name": "height",
+          "type": "INT"
+        }
+      ]
+    },
+    {
+      "type": "SDCppEdit",
+      "display_name": "sd.cpp Edit (instruction + reference image)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "model",
+          "type": "SDCPP_MODEL",
+          "widget": false
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "widget": false
+        },
+        {
+          "name": "instruction",
+          "type": "STRING",
+          "widget": true,
+          "default": "Change her boots to white, keep everything else the same.",
+          "multiline": true
+        },
+        {
+          "name": "seed_source",
+          "type": "SDCPP_SEED",
+          "widget": false
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": true,
+          "default": 12,
+          "min": 1,
+          "max": 100
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 4,
+          "step": 0.1,
+          "min": 0,
+          "max": 20
+        },
+        {
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "euler",
+            "euler_a",
+            "heun",
+            "dpm2",
+            "dpm++2s_a",
+            "dpm++2m",
+            "dpm++2mv2",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "ddim_trailing"
+          ],
+          "default": "euler"
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "discrete",
+            "karras",
+            "exponential",
+            "ays",
+            "gits",
+            "sgm_uniform",
+            "simple",
+            "normal",
+            "ddim_uniform",
+            "beta"
+          ],
+          "default": "discrete"
+        },
+        {
+          "name": "cache_mode",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "disabled",
+            "easycache",
+            "spectrum",
+            "ucache",
+            "dbcache",
+            "taylorseer",
+            "cache-dit"
+          ],
+          "default": "disabled"
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": true,
+          "default": 0,
+          "step": 32,
+          "min": 0,
+          "max": 2048
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": true,
+          "default": 0,
+          "step": 32,
+          "min": 0,
+          "max": 2048
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE"
+        },
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES"
+        }
+      ]
+    },
+    {
+      "type": "SDCppPoseSet",
+      "display_name": "sd.cpp Pose Set (one image per pose line)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "model",
+          "type": "SDCPP_MODEL",
+          "widget": false
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "widget": false
+        },
+        {
+          "name": "poses",
+          "type": "STRING",
+          "widget": true,
+          "default": "Change her pose so she is sitting on a wooden chair. Keep her face, hair, outfit and the plain white background exactly the same.\nChange her pose so she is seen from behind, showing her back to the viewer. Keep her hair, outfit and the plain white background exactly the same.",
+          "multiline": true
+        },
+        {
+          "name": "seed_source",
+          "type": "SDCPP_SEED",
+          "widget": false
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": true,
+          "default": 12,
+          "min": 1,
+          "max": 100
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 4,
+          "step": 0.1,
+          "min": 0,
+          "max": 20
+        },
+        {
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "euler",
+            "euler_a",
+            "heun",
+            "dpm2",
+            "dpm++2s_a",
+            "dpm++2m",
+            "dpm++2mv2",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "ddim_trailing"
+          ],
+          "default": "euler"
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "discrete",
+            "karras",
+            "exponential",
+            "ays",
+            "gits",
+            "sgm_uniform",
+            "simple",
+            "normal",
+            "ddim_uniform",
+            "beta"
+          ],
+          "default": "discrete"
+        },
+        {
+          "name": "cache_mode",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "disabled",
+            "easycache",
+            "spectrum",
+            "ucache",
+            "dbcache",
+            "taylorseer",
+            "cache-dit"
+          ],
+          "default": "disabled"
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": true,
+          "default": 0,
+          "step": 32,
+          "min": 0,
+          "max": 2048
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": true,
+          "default": 0,
+          "step": 32,
+          "min": 0,
+          "max": 2048
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE"
+        },
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES"
+        }
+      ]
+    },
+    {
+      "type": "SDCppVAEEncode",
+      "display_name": "sd.cpp VAE Encode (img2img)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "pixels",
+          "type": "IMAGE",
+          "widget": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "latent",
+          "type": "SDCPP_LATENT"
+        }
+      ]
+    },
+    {
+      "type": "SDCppVAEEncodeForInpaint",
+      "display_name": "sd.cpp VAE Encode (inpaint)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "pixels",
+          "type": "IMAGE",
+          "widget": false
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "widget": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "latent",
+          "type": "SDCPP_LATENT"
+        }
+      ]
+    },
+    {
+      "type": "SDCppKSampler",
+      "display_name": "sd.cpp KSampler",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "model",
+          "type": "SDCPP_MODEL",
+          "widget": false
+        },
+        {
+          "name": "positive",
+          "type": "SDCPP_CONDITIONING",
+          "widget": false
+        },
+        {
+          "name": "negative",
+          "type": "SDCPP_CONDITIONING",
+          "widget": false
+        },
+        {
+          "name": "latent_image",
+          "type": "SDCPP_LATENT",
+          "widget": false
+        },
+        {
+          "name": "seed_source",
+          "type": "SDCPP_SEED",
+          "widget": false
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": true,
+          "default": 8,
+          "min": 1,
+          "max": 100
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 1,
+          "step": 0.1,
+          "min": 0,
+          "max": 20
+        },
+        {
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "euler",
+            "euler_a",
+            "heun",
+            "dpm2",
+            "dpm++2s_a",
+            "dpm++2m",
+            "dpm++2mv2",
+            "lcm",
+            "ipndm",
+            "ipndm_v",
+            "ddim_trailing"
+          ],
+          "default": "euler"
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "discrete",
+            "karras",
+            "exponential",
+            "ays",
+            "gits",
+            "sgm_uniform",
+            "simple",
+            "normal",
+            "ddim_uniform",
+            "beta"
+          ],
+          "default": "discrete"
+        },
+        {
+          "name": "denoise",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 1,
+          "step": 0.05,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "name": "cache_mode",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "disabled",
+            "easycache",
+            "spectrum",
+            "ucache",
+            "dbcache",
+            "taylorseer",
+            "cache-dit"
+          ],
+          "default": "disabled"
+        },
+        {
+          "name": "cache_threshold",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 0.25,
+          "step": 0.05,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "name": "lora",
+          "type": "COMBO",
+          "widget": true,
+          "options": [
+            "(none)"
+          ],
+          "folder": "loras",
+          "dynamic": true,
+          "default": "(none)"
+        },
+        {
+          "name": "lora_strength",
+          "type": "FLOAT",
+          "widget": true,
+          "default": 1,
+          "step": 0.05,
+          "min": -2,
+          "max": 2
+        },
+        {
+          "name": "lora_path",
+          "type": "STRING",
+          "widget": true,
+          "default": ""
+        }
+      ],
+      "outputs": [
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES"
+        }
+      ]
+    },
+    {
+      "type": "SDCppVAEDecode",
+      "display_name": "sd.cpp VAE Decode",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES",
+          "widget": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE"
+        }
+      ]
+    },
+    {
+      "type": "SDCppCleanAlpha",
+      "display_name": "sd.cpp Clean Alpha (defringe)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES",
+          "widget": false
+        },
+        {
+          "name": "haze_cut",
+          "type": "INT",
+          "widget": true,
+          "default": 32,
+          "step": 4,
+          "min": 0,
+          "max": 128
+        },
+        {
+          "name": "edge_soft",
+          "type": "INT",
+          "widget": true,
+          "default": 112,
+          "step": 8,
+          "min": 8,
+          "max": 255
+        },
+        {
+          "name": "defringe",
+          "type": "BOOLEAN",
+          "widget": true,
+          "default": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES"
+        }
+      ]
+    },
+    {
+      "type": "SDCppSaveImageAlpha",
+      "display_name": "sd.cpp Save Image (keeps alpha)",
+      "category": "sd.cpp",
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "SDCPP_SAMPLES",
+          "widget": false
+        },
+        {
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": true,
+          "default": "sd.cpp_alpha"
+        }
+      ],
+      "outputs": []
+    }
+  ]
+}

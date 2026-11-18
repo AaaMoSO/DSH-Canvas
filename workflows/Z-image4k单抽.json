@@ -1,0 +1,395 @@
+{
+  "format": "node-canvas-workflow",
+  "version": 2,
+  "name": "Z-image4k单抽",
+  "graph": {
+    "nodes": [
+      {
+        "id": "nzu0rm",
+        "x": 5,
+        "y": 15,
+        "w": 302,
+        "h": 92,
+        "title": "SDCppVAELoader",
+        "type": "SDCppVAELoader",
+        "mode": 0,
+        "widgets": {
+          "vae_name": "vae/ae.safetensors"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "o:vae",
+            "name": "vae",
+            "type": "SDCPP_VAE"
+          }
+        ]
+      },
+      {
+        "id": "n11x4k0",
+        "x": 6,
+        "y": 145,
+        "w": 332,
+        "h": 252,
+        "title": "SDCppLoadModel",
+        "type": "SDCppLoadModel",
+        "mode": 0,
+        "widgets": {
+          "recipe": "z-image-turbo",
+          "diffusion_model": "diffusion_models/z_image_turbo-Q4_K.gguf",
+          "text_encoder": "text_encoders/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "vae_name": "vae/ae.safetensors",
+          "placement": "gpu (diffusion on CUDA, TE in RAM)",
+          "vision_encoder": "(none)"
+        },
+        "inputs": [
+          {
+            "id": "i:vae",
+            "name": "vae",
+            "type": "SDCPP_VAE"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o:sdcpp_model",
+            "name": "sdcpp_model",
+            "type": "SDCPP_MODEL"
+          }
+        ]
+      },
+      {
+        "id": "n14meko",
+        "x": 5,
+        "y": 405,
+        "w": 422,
+        "h": 452,
+        "title": "SDCppCLIPTextEncode",
+        "type": "SDCppCLIPTextEncode",
+        "mode": 0,
+        "widgets": {
+          "text": "Full body character illustration for a game, a Victorian gothic retro maid girl, pure white background, centered vertical composition, the entire figure fully in frame. She has very long curly brown hair, fluffy and slightly messy, a delicate hairband, brown eyes, cool pale skin, a delicate face with a gentle expression carrying a hint of mischief. She wears a retro Victorian long dress: a black ruffled apron over the skirt, a wide lace ruffled collar, a brown-grey dark plaid full skirt, brown gloves, retro high-heeled leather shoes. A crow perches quietly on her shoulder, its black and grey feathers clearly layered. Both hands hold a retro hard-shell suitcase made of dark brown hard shell and worn leather, covered with postage stamps, tucked-away papers and small blue flowers, with fine metal edging, clasps and small charms. She wears pocket-watch earrings, a necklace pendant and a retro metal waist ornament. Sharp clean line art, clear outlines, a mix of thick painterly and flat cel shading, low-saturation grey palette, retro dark muted tones, aged texture, steampunk retro mood, detailed fabric folds, lace, plaid, leather, metal and paper materials clearly distinguished, fine brushwork, highly finished anime character illustration."
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "o:conditioning",
+            "name": "conditioning",
+            "type": "SDCPP_CONDITIONING"
+          }
+        ]
+      },
+      {
+        "id": "n16bfl0",
+        "x": 2,
+        "y": 870,
+        "w": 422,
+        "h": 142,
+        "title": "SDCppCLIPTextEncode",
+        "type": "SDCppCLIPTextEncode",
+        "mode": 0,
+        "widgets": {
+          "text": ""
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "o:conditioning",
+            "name": "conditioning",
+            "type": "SDCPP_CONDITIONING"
+          }
+        ]
+      },
+      {
+        "id": "n18i9r4",
+        "x": 772,
+        "y": 27,
+        "w": 302,
+        "h": 122,
+        "title": "SDCppEmptyLatentImage",
+        "type": "SDCppEmptyLatentImage",
+        "mode": 0,
+        "widgets": {
+          "width": 720,
+          "height": 1080
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "o:latent",
+            "name": "latent",
+            "type": "SDCPP_LATENT"
+          }
+        ]
+      },
+      {
+        "id": "n1awdsw",
+        "x": 454,
+        "y": 413,
+        "w": 322,
+        "h": 152,
+        "title": "SDCppSeed",
+        "type": "SDCppSeed",
+        "mode": 0,
+        "widgets": {
+          "mode": "fixed",
+          "seed_value": 2024,
+          "batch_count": 2
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "o:seed_source",
+            "name": "seed_source",
+            "type": "SDCPP_SEED"
+          },
+          {
+            "id": "o:seeds",
+            "name": "seeds",
+            "type": "STRING"
+          }
+        ]
+      },
+      {
+        "id": "n1dicb3",
+        "x": 388,
+        "y": 9,
+        "w": 332,
+        "h": 373,
+        "title": "SDCppKSampler",
+        "type": "SDCppKSampler",
+        "mode": 0,
+        "widgets": {
+          "steps": 12,
+          "cfg": 1,
+          "sampler_name": "euler",
+          "scheduler": "discrete",
+          "denoise": 1,
+          "cache_mode": "easycache",
+          "cache_threshold": 0.25,
+          "lora": "style-impasto.safetensors",
+          "lora_strength": 0.8,
+          "lora_path": ""
+        },
+        "inputs": [
+          {
+            "id": "i:model",
+            "name": "model",
+            "type": "SDCPP_MODEL"
+          },
+          {
+            "id": "i:positive",
+            "name": "positive",
+            "type": "SDCPP_CONDITIONING"
+          },
+          {
+            "id": "i:negative",
+            "name": "negative",
+            "type": "SDCPP_CONDITIONING"
+          },
+          {
+            "id": "i:latent_image",
+            "name": "latent_image",
+            "type": "SDCPP_LATENT"
+          },
+          {
+            "id": "i:seed_source",
+            "name": "seed_source",
+            "type": "SDCPP_SEED"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o:samples",
+            "name": "samples",
+            "type": "SDCPP_SAMPLES"
+          }
+        ]
+      },
+      {
+        "id": "n1kog0i",
+        "x": 791,
+        "y": 200,
+        "w": 242,
+        "h": 92,
+        "title": "SDCppVAEDecode",
+        "type": "SDCppVAEDecode",
+        "mode": 0,
+        "widgets": {},
+        "inputs": [
+          {
+            "id": "i:samples",
+            "name": "samples",
+            "type": "SDCPP_SAMPLES"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o:image",
+            "name": "image",
+            "type": "IMAGE"
+          }
+        ]
+      },
+      {
+        "id": "n1n4lx2",
+        "x": 480,
+        "y": 585,
+        "w": 546,
+        "h": 449,
+        "title": "SaveImage",
+        "type": "SaveImage",
+        "mode": 0,
+        "widgets": {
+          "filename_prefix": "sd.cpp_t2i"
+        },
+        "inputs": [
+          {
+            "id": "i:images",
+            "name": "images",
+            "type": "IMAGE"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o:images",
+            "name": "images",
+            "type": "IMAGE"
+          }
+        ]
+      },
+      {
+        "id": "nrmmr701",
+        "x": 824,
+        "y": 351,
+        "w": 210,
+        "h": 52,
+        "title": "sd.cpp Upscale (ESRGAN)",
+        "type": "SDCppUpscale",
+        "mode": 0,
+        "widgets": {
+          "upscaler": "RealESRGAN_x4plus.pth",
+          "repeats": 1,
+          "tile_size": 128
+        },
+        "inputs": [
+          {
+            "id": "i:image",
+            "name": "image",
+            "type": "IMAGE"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o:image",
+            "name": "image",
+            "type": "IMAGE"
+          }
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "l1p1eq0",
+        "from": [
+          "nzu0rm",
+          "o:vae"
+        ],
+        "to": [
+          "n11x4k0",
+          "i:vae"
+        ]
+      },
+      {
+        "id": "l1qwk1n",
+        "from": [
+          "n11x4k0",
+          "o:sdcpp_model"
+        ],
+        "to": [
+          "n1dicb3",
+          "i:model"
+        ]
+      },
+      {
+        "id": "l1risu8",
+        "from": [
+          "n14meko",
+          "o:conditioning"
+        ],
+        "to": [
+          "n1dicb3",
+          "i:positive"
+        ]
+      },
+      {
+        "id": "l1s22a0",
+        "from": [
+          "n16bfl0",
+          "o:conditioning"
+        ],
+        "to": [
+          "n1dicb3",
+          "i:negative"
+        ]
+      },
+      {
+        "id": "l1tyqtr",
+        "from": [
+          "n18i9r4",
+          "o:latent"
+        ],
+        "to": [
+          "n1dicb3",
+          "i:latent_image"
+        ]
+      },
+      {
+        "id": "l1ukruc",
+        "from": [
+          "n1awdsw",
+          "o:seed_source"
+        ],
+        "to": [
+          "n1dicb3",
+          "i:seed_source"
+        ]
+      },
+      {
+        "id": "l1vh2qy",
+        "from": [
+          "n1dicb3",
+          "o:samples"
+        ],
+        "to": [
+          "n1kog0i",
+          "i:samples"
+        ]
+      },
+      {
+        "id": "liaivi9z",
+        "from": [
+          "n1kog0i",
+          "o:image"
+        ],
+        "to": [
+          "nrmmr701",
+          "i:image"
+        ]
+      },
+      {
+        "id": "lcmu37bp",
+        "from": [
+          "nrmmr701",
+          "o:image"
+        ],
+        "to": [
+          "n1n4lx2",
+          "i:images"
+        ]
+      }
+    ],
+    "groups": [],
+    "extra": {},
+    "config": {}
+  }
+}

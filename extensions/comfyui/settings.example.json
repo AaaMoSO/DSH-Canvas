@@ -1,0 +1,10 @@
+{
+  "comfyuiUrl": "http://127.0.0.1:8188",
+  "timeoutMs": 30000,
+  "autostart": true,
+  "comfyuiRoot": "D:\\path\\to\\ComfyUI",
+  "pythonExe": "D:\\path\\to\\ComfyUI\\python\\python.exe",
+  "comfyuiArgs": ["--listen", "127.0.0.1", "--port", "8188"],
+  "startupTimeoutMs": 180000,
+  "stopExternal": true
+}

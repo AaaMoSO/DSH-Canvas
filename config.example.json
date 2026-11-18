@@ -1,0 +1,7 @@
+{
+  "sdCppRoot": "D:\\path\\to\\sd.cpp",
+  "sdCppPort": 8288,
+  "outputDir": "D:\\path\\to\\ComfyUI\\output",
+  "workspaceRoot": "",
+  "sdServerArgs": []
+}

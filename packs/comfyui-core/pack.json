@@ -1,0 +1,33 @@
+{
+  "name": "ComfyUI 核心节点",
+  "outputRoot": "D:\\DSH_uesr\\Z-image-cpu\\ComfyUI\\ComfyUI-aki-v3.2\\ComfyUI\\output",
+  "nodes": [
+    {
+      "type": "SaveImage",
+      "display_name": "Save Image",
+      "category": "image",
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE"
+        },
+        {
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": true,
+          "default": "ComfyUI"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE"
+        }
+      ],
+      "preview": {
+        "type": "image",
+        "prefixFrom": "filename_prefix"
+      }
+    }
+  ]
+}

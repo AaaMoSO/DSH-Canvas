@@ -1,0 +1,5 @@
+{
+  "SDCppLoadModel": { "concurrency": "exclusive", "resource": "sd-server" },
+  "SDCppKSampler": { "concurrency": "exclusive", "resource": "sd-server" },
+  "SDCppUpscale": { "concurrency": "exclusive", "resource": "sd-server" }
+}

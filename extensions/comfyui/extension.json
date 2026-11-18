@@ -1,0 +1,9 @@
+{
+  "id": "comfyui",
+  "name": "ComfyUI 兼容",
+  "version": "1.0.0",
+  "description": "读写 ComfyUI 前端的工作流 JSON，并带有把 ComfyUI 自定义节点包转换成 pack.json 的脚本。",
+  "client": "./client.mjs",
+  "host": "./host.mjs",
+  "icon": "./icon.jpg"
+}

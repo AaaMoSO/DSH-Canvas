@@ -1,0 +1,8 @@
+{
+  "id": "hover-card",
+  "name": "悬停卡片",
+  "version": "1.0.0",
+  "description": "把拓展图标的悬停提示换成向左展开的信息卡：图标 + 单行滚动播放的名称与简介。",
+  "icon": "./icon.svg",
+  "client": "./client.mjs"
+}
