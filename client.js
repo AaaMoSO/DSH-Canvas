@@ -10,8 +10,9 @@ window.__ModuleLoader__.load({
 const BASELINE_KEY = 'dsh.node-canvas.baseline.v3'
 // Label the canvas run carries on the Host; only one temporary workflow exists at a time.
 const TEMP_RUN_LABEL = '__canvas__'
-// How long a tile must be held before dragging starts.
-const EXTENSION_HOLD_MS = 350
+// How long a tile is held before it becomes a drag handle. Kept tiny: the movement itself is
+// what distinguishes a drag from a click, not the length of the press.
+const EXTENSION_ARM_MS = 30
 // A backend run outlives the panel: the panel is unmounted when the sidebar shows the chat.
 const REMOTE_RUN_KEY = 'dsh.node-canvas.remoteRun.v1'
 const REMOTE_RUN_MAX_AGE = 6 * 60 * 60 * 1000
@@ -6557,37 +6558,34 @@ const thumbCache = new Map()
           y: event.clientY,
         }
         if (extensionHoldTimerRef.current !== 0) clearTimeout(extensionHoldTimerRef.current)
-        // Deliberate hold, not the first pixel of movement: a click stays a click.
+        // The timer only arms the tile; travelling then turns it into a drag, while a click
+        // (press + release without movement) still reaches the service toggle.
         extensionHoldTimerRef.current = setTimeout(() => {
           extensionHoldTimerRef.current = 0
           const drag = extensionDragRef.current
-          if (drag === null || drag.id !== extension.id || drag.moved === true) return
-          drag.started = true
-          if (typeof target.setPointerCapture === 'function') {
-            try {
-              target.setPointerCapture(drag.pointerId)
-            } catch {
-              // Capture is an optimisation; the handlers below still see the moves.
-            }
-          }
-          setExtensionDrag(extension.id)
-        }, EXTENSION_HOLD_MS)
+          if (drag === null || drag.id !== extension.id) return
+          drag.armed = true
+        }, EXTENSION_ARM_MS)
       }
 
       function onExtensionDragMove(event) {
         const drag = extensionDragRef.current
         if (drag === null || drag.pointerId !== event.pointerId) return
         if (drag.started !== true) {
-          // Moving before the hold completes means this was a click with a shaky hand.
-          const far = Math.abs(event.clientX - drag.x) > 8 || Math.abs(event.clientY - drag.y) > 8
-          if (far !== true) return
-          if (extensionHoldTimerRef.current !== 0) {
-            clearTimeout(extensionHoldTimerRef.current)
-            extensionHoldTimerRef.current = 0
+          if (drag.armed !== true) return
+          // A few pixels of travel is what makes this a reorder rather than a click.
+          const travelled = Math.abs(event.clientY - drag.y) > 3 || Math.abs(event.clientX - drag.x) > 3
+          if (travelled !== true) return
+          drag.started = true
+          // Capture now, so the rest of the gesture is delivered even outside the tile.
+          if (typeof event.currentTarget.setPointerCapture === 'function') {
+            try {
+              event.currentTarget.setPointerCapture(drag.pointerId)
+            } catch {
+              // Capture is an optimisation; the handlers below still see the moves.
+            }
           }
-          extensionDragRef.current = null
-          suppressTileClickRef.current = true
-          return
+          setExtensionDrag(drag.id)
         }
         const menu = extensionMenuRef.current
         if (menu === null) return
@@ -6611,7 +6609,7 @@ const thumbCache = new Map()
         }
         if (drag === null) return
         if (drag.started !== true) {
-          // A short press is not a reorder; the tile's click handler takes it from here.
+          // A press without travel is a click; the tile's click handler takes it from here.
           extensionDragRef.current = null
           return
         }
