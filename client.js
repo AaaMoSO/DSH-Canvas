@@ -10,6 +10,11 @@ window.__ModuleLoader__.load({
 const BASELINE_KEY = 'dsh.node-canvas.baseline.v3'
 // Label the canvas run carries on the Host; only one temporary workflow exists at a time.
 const TEMP_RUN_LABEL = '__canvas__'
+// How long a tile must be held before dragging starts.
+const EXTENSION_HOLD_MS = 350
+// A backend run outlives the panel: the panel is unmounted when the sidebar shows the chat.
+const REMOTE_RUN_KEY = 'dsh.node-canvas.remoteRun.v1'
+const REMOTE_RUN_MAX_AGE = 6 * 60 * 60 * 1000
 // Node shapes a backend produced, cached so a reload does not need the backend running.
 const REMOTE_PACK_KEY = 'dsh.node-canvas.remotePack.v1'
 // Preview tiles shrink a 4K PNG to a thumbnail before it reaches the DOM: a 2880×4320 image is
@@ -1672,8 +1677,15 @@ const thumbCache = new Map()
       const [extensionDrag, setExtensionDrag] = React.useState(null)
       const extensionMenuRef = React.useRef(null)
       const extensionDragRef = React.useRef(null)
+      // Reordering only starts after a deliberate hold; a click must keep toggling the service.
+      const extensionHoldTimerRef = React.useRef(0)
       // A tile drag ends with a click; that click must not also start or stop a service.
       const suppressTileClickRef = React.useRef(false)
+
+      // Leaving the panel mid-press must not leave a hold timer behind.
+      React.useEffect(() => () => {
+        if (extensionHoldTimerRef.current !== 0) clearTimeout(extensionHoldTimerRef.current)
+      }, [])
       const extensionsRef = React.useRef([])
       extensionsRef.current = extensions
       const extensionDropRef = React.useRef(null)
@@ -3201,7 +3213,49 @@ const thumbCache = new Map()
         }
       }
 
+      function rememberRemoteRun(run) {
+        try {
+          if (run === null) localStorage.removeItem(REMOTE_RUN_KEY)
+          else localStorage.setItem(REMOTE_RUN_KEY, JSON.stringify(run))
+        } catch {
+          // Losing the note only costs the automatic resume.
+        }
+      }
+
+      /** Pick up a run that was still going when the panel went away. */
+      const restoreRemoteRun = React.useCallback(() => {
+        let stored = null
+        try {
+          const raw = localStorage.getItem(REMOTE_RUN_KEY)
+          stored = raw === null ? null : JSON.parse(raw)
+        } catch {
+          stored = null
+        }
+        if (stored === null || typeof stored !== 'object') return
+        if (stored.status !== 'running' || typeof stored.id !== 'string') {
+          rememberRemoteRun(null)
+          return
+        }
+        if (typeof stored.startedAt === 'number' && Date.now() - stored.startedAt > REMOTE_RUN_MAX_AGE) {
+          rememberRemoteRun(null)
+          return
+        }
+        const backend = extensionFeatures.backends.find((item) => item.id === stored.backendId)
+        if (backend === undefined) {
+          rememberRemoteRun(null)
+          return
+        }
+        setRemoteRun({ id: stored.id, backend: backend.id, status: 'running', startedAt: stored.startedAt, error: null })
+        void followBackendRun(backend, stored.id)
+      }, [extensionFeatures.backends])
+
       const backends = extensionFeatures.backends
+
+      // The panel is unmounted while the chat is open; a backend run keeps going there and is
+      // picked up again here instead of looking interrupted.
+      React.useEffect(() => {
+        restoreRemoteRun()
+      }, [restoreRemoteRun])
 
       /** The visible state of one backend service. */
       function serviceStateOf(backendId) {
@@ -3264,6 +3318,7 @@ const thumbCache = new Map()
         void loadBackendWorkflows()
       }, [loadBackendWorkflows])
 
+
       // A backend that is already running when the page loads counts as started, and its node
       // shapes are refreshed without booting anything.
       React.useEffect(() => {
@@ -3316,6 +3371,8 @@ const thumbCache = new Map()
           } catch {
             // The job may have finished between the poll and the click.
           }
+          rememberRemoteRun(null)
+          setRemoteRun(null)
           return
         }
         let prompt
@@ -3330,7 +3387,9 @@ const thumbCache = new Map()
           if (started === null || typeof started?.id !== 'string' || started.id === '') {
             throw new Error('backend returned no run id')
           }
-          setRemoteRun({ id: started.id, backend: backend.id, status: 'running', startedAt: Date.now(), error: null })
+          const startedAt = Date.now()
+          setRemoteRun({ id: started.id, backend: backend.id, status: 'running', startedAt, error: null })
+          rememberRemoteRun({ id: started.id, backendId: backend.id, label, startedAt, status: 'running' })
           await followBackendRun(backend, started.id)
         } catch (error) {
           showNotice(tr('notice.runFailed', { message: error.message }))
@@ -3350,6 +3409,7 @@ const thumbCache = new Map()
             continue
           }
           if (state === null || state.status === 'queued' || state.status === 'running') continue
+          rememberRemoteRun(null)
           setRemoteRun({ id, backend: backend.id, status: state.status, startedAt: current.startedAt, error: state.error ?? null })
           if (state.status === 'done') {
             // The backend wrote new files; drop the cached listings so previews reload.
@@ -6432,22 +6492,49 @@ const thumbCache = new Map()
       function startExtensionDrag(event, extension) {
         if (event.button !== 0) return
         event.stopPropagation()
-        event.preventDefault()
-        if (typeof event.currentTarget.setPointerCapture === 'function') {
-          try {
-            event.currentTarget.setPointerCapture(event.pointerId)
-          } catch {
-            // Capture is an optimisation; the handlers below still see the moves.
-          }
-        }
+        const target = event.currentTarget
         suppressTileClickRef.current = false
-        extensionDragRef.current = { id: extension.id, pointerId: event.pointerId, moved: false }
-        setExtensionDrag(extension.id)
+        extensionDragRef.current = {
+          id: extension.id,
+          pointerId: event.pointerId,
+          moved: false,
+          started: false,
+          x: event.clientX,
+          y: event.clientY,
+        }
+        if (extensionHoldTimerRef.current !== 0) clearTimeout(extensionHoldTimerRef.current)
+        // Deliberate hold, not the first pixel of movement: a click stays a click.
+        extensionHoldTimerRef.current = setTimeout(() => {
+          extensionHoldTimerRef.current = 0
+          const drag = extensionDragRef.current
+          if (drag === null || drag.id !== extension.id || drag.moved === true) return
+          drag.started = true
+          if (typeof target.setPointerCapture === 'function') {
+            try {
+              target.setPointerCapture(drag.pointerId)
+            } catch {
+              // Capture is an optimisation; the handlers below still see the moves.
+            }
+          }
+          setExtensionDrag(extension.id)
+        }, EXTENSION_HOLD_MS)
       }
 
       function onExtensionDragMove(event) {
         const drag = extensionDragRef.current
         if (drag === null || drag.pointerId !== event.pointerId) return
+        if (drag.started !== true) {
+          // Moving before the hold completes means this was a click with a shaky hand.
+          const far = Math.abs(event.clientX - drag.x) > 8 || Math.abs(event.clientY - drag.y) > 8
+          if (far !== true) return
+          if (extensionHoldTimerRef.current !== 0) {
+            clearTimeout(extensionHoldTimerRef.current)
+            extensionHoldTimerRef.current = 0
+          }
+          extensionDragRef.current = null
+          suppressTileClickRef.current = true
+          return
+        }
         const menu = extensionMenuRef.current
         if (menu === null) return
         const tiles = [...menu.querySelectorAll('[data-extension-tile]')]
@@ -6464,10 +6551,19 @@ const thumbCache = new Map()
 
       function endExtensionDrag(event) {
         const drag = extensionDragRef.current
+        if (extensionHoldTimerRef.current !== 0) {
+          clearTimeout(extensionHoldTimerRef.current)
+          extensionHoldTimerRef.current = 0
+        }
         if (drag === null) return
+        if (drag.started !== true) {
+          // A short press is not a reorder; the tile's click handler takes it from here.
+          extensionDragRef.current = null
+          return
+        }
         extensionDragRef.current = null
         setExtensionDrag(null)
-        suppressTileClickRef.current = drag.moved === true
+        suppressTileClickRef.current = true
         if (drag.moved === true) void persistExtensionOrder()
       }
 
@@ -6627,6 +6723,15 @@ const thumbCache = new Map()
               },
               onPointerLeave: () => {
                 setExtensionHover((current) => (current !== null && current.id === extension.id ? null : current))
+                // Pressing and leaving means "not this tile"; nothing should start a reorder.
+                const drag = extensionDragRef.current
+                if (drag !== null && drag.id === extension.id && drag.started !== true) {
+                  if (extensionHoldTimerRef.current !== 0) {
+                    clearTimeout(extensionHoldTimerRef.current)
+                    extensionHoldTimerRef.current = 0
+                  }
+                  extensionDragRef.current = null
+                }
               },
               onClick: (event) => {
                 event.stopPropagation()
