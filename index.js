@@ -67,7 +67,11 @@ export class HttpError extends Error {
   }
 }
 
+// The account service is optional: the canvas shows an avatar when DSH is signed in.
+let pluginCtx = null
+
 export function apply(ctx) {
+  pluginCtx = ctx
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: PREFIX,
@@ -77,12 +81,51 @@ export function apply(ctx) {
   }))
 }
 
+/**
+ * The signed-in DSH account, reduced to what an avatar needs. Every failure is reported as "no
+ * profile": the canvas is fully usable while signed out.
+ */
+async function readAccount(url) {
+  const account = pluginCtx === null ? undefined : pluginCtx.get('deepseekAccount')
+  if (account === undefined || account === null || typeof account.getProfile !== 'function') {
+    return { signedIn: false, profile: null }
+  }
+  const locale = url.searchParams.get('locale') ?? 'zh-CN'
+  try {
+    const result = await account.getProfile({
+      version: '0.1.0',
+      locale,
+      timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+    })
+    if (result === null || result === undefined || result.status !== 'ready') {
+      return { signedIn: false, profile: null }
+    }
+    const value = result.value ?? {}
+    const avatarUrl = typeof value.avatarUrl === 'string' && value.avatarUrl !== '' ? value.avatarUrl : null
+    return {
+      signedIn: true,
+      profile: {
+        id: typeof value.id === 'string' ? value.id : null,
+        name: typeof value.name === 'string' ? value.name : null,
+        avatarUrl,
+      },
+    }
+  } catch (error) {
+    return { signedIn: false, profile: null, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 async function handle(req, res) {
   const url = new URL(req.url ?? '/', 'http://localhost')
   try {
     if (url.pathname === `${PREFIX}/packs` || url.pathname === `${PREFIX}/packs/`) {
       if (req.method !== 'GET') throw new HttpError(405, 'use GET')
       send(res, 200, { ok: true, packs: await readPacks() })
+      return
+    }
+    if (url.pathname === `${PREFIX}/account`) {
+      if (req.method !== 'GET') throw new HttpError(405, 'use GET')
+      send(res, 200, { ok: true, ...(await readAccount(url)) })
       return
     }
     if (url.pathname === `${PREFIX}/files`) {

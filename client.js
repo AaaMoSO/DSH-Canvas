@@ -627,6 +627,8 @@ const thumbCache = new Map()
       'library.section.nodes': 'Node library',
       'library.section.workflows': 'Workflow library',
       'library.section.source': 'Sources',
+      'account.avatar': 'Account avatar',
+      'account.anonymous': 'Not signed in',
       'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
       'source.local': 'Local',
       'source.counts': '{nodes} nodes · {workflows} workflows',
@@ -762,6 +764,8 @@ const thumbCache = new Map()
       'library.section.nodes': '节点库',
       'library.section.workflows': '工作流库',
       'library.section.source': '源',
+      'account.avatar': '账户头像',
+      'account.anonymous': '未登录',
       'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
       'source.local': '本地',
       'source.counts': '{nodes} 节点 · {workflows} 工作流',
@@ -1256,6 +1260,15 @@ const thumbCache = new Map()
         border: '1px solid var(--dsw-alias-brand-primary)',
         borderRadius: '7px',
       },
+      // One SVG box: the clip, the photo and the ring are all drawn, so no CSS radius is involved.
+      avatarSvg: {
+        flex: 'none',
+        display: 'block',
+        width: '30px',
+        height: '30px',
+        overflow: 'visible',
+        color: 'var(--dsw-alias-border-l2)',
+      },
       iconBtn: {
         cursor: 'pointer',
         display: 'inline-flex',
@@ -1623,6 +1636,7 @@ const thumbCache = new Map()
       const [editing, setEditing] = React.useState(null)
       const [menu, setMenu] = React.useState(null)
       // The toolbar menu under the hamburger; content comes later.
+      const [account, setAccount] = React.useState(null)
       const [barMenu, setBarMenu] = React.useState(null)
       // Which library column 1 points at, and which pack is unfolded in column 2.
       const [barSection, setBarSection] = React.useState(null)
@@ -2033,6 +2047,29 @@ const thumbCache = new Map()
       React.useEffect(() => {
         loadPacks()
       }, [loadPacks])
+
+      // The signed-in DSH account supplies the avatar; signed out simply leaves the ring empty.
+      React.useEffect(() => {
+        let cancelled = false
+        const language = typeof navigator !== 'undefined' && typeof navigator.language === 'string'
+          ? navigator.language
+          : 'zh-CN'
+        fetch('/node-canvas/account?locale=' + encodeURIComponent(language), { cache: 'no-store' })
+          .then((response) => (response.ok === true ? response.json() : null))
+          .then((payload) => {
+            if (cancelled || payload === null || typeof payload !== 'object') return
+            const profile = payload.profile
+            setAccount(profile === null || typeof profile !== 'object'
+              ? { name: null, avatarUrl: null }
+              : { name: typeof profile.name === 'string' ? profile.name : null, avatarUrl: typeof profile.avatarUrl === 'string' ? profile.avatarUrl : null })
+          })
+          .catch(() => {
+            if (cancelled !== true) setAccount({ name: null, avatarUrl: null })
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [])
 
       /** What an adapter cannot know by itself: geometry and canvas-side helpers. */
       function adapterContext() {
@@ -5905,6 +5942,58 @@ const thumbCache = new Map()
             }),
             h('span', { key: 'text' }, canvasDirty ? tr('canvas.draft') : tr('canvas.saved')),
           ]),
+          (() => {
+            const hasAvatar = account !== null && typeof account.avatarUrl === 'string' && account.avatarUrl !== ''
+            const clipId = 'nc-avatar-clip'
+            const initial = account !== null && typeof account.name === 'string' && account.name.trim() !== ''
+              ? account.name.trim().charAt(0).toUpperCase()
+              : ''
+            return h('svg', {
+              key: 'account',
+              viewBox: '0 0 30 30',
+              width: 30,
+              height: 30,
+              role: 'img',
+              'aria-label': tr('account.avatar'),
+              style: S.avatarSvg,
+            }, [
+              h('title', { key: 'title' },
+                account !== null && typeof account.name === 'string' && account.name !== ''
+                  ? account.name
+                  : tr('account.anonymous')),
+              h('clipPath', { key: 'clip', id: clipId },
+                h('circle', { cx: 15, cy: 15, r: 14 })),
+              hasAvatar
+                ? h('image', {
+                    key: 'image',
+                    href: account.avatarUrl,
+                    x: 0,
+                    y: 0,
+                    width: 30,
+                    height: 30,
+                    preserveAspectRatio: 'xMidYMid slice',
+                    'clip-path': 'url(#' + clipId + ')',
+                  })
+                : h('text', {
+                    key: 'initial',
+                    x: 15,
+                    y: 15,
+                    textAnchor: 'middle',
+                    dominantBaseline: 'central',
+                    fontSize: 12,
+                    fill: 'var(--dsw-alias-label-primary)',
+                  }, initial),
+              h('circle', {
+                key: 'ring',
+                cx: 15,
+                cy: 15,
+                r: 14.5,
+                fill: 'none',
+                stroke: 'currentColor',
+                strokeWidth: 1,
+              }),
+            ])
+          })(),
           h('button', {
             key: 'extensions',
             type: 'button',
@@ -6198,9 +6287,9 @@ const thumbCache = new Map()
         ...extensionFeatures.backends.map((backend) => ({ id: backend.id, name: backend.name ?? backend.id })),
       ]
       const sectionRows = [
+        { id: 'source', label: tr('library.section.source') },
         { id: 'nodes', label: tr('library.section.nodes') },
         { id: 'workflows', label: tr('library.section.workflows') },
-        { id: 'source', label: tr('library.section.source') },
       ].map((section) => h('button', {
         key: 'section:' + section.id,
         type: 'button',
