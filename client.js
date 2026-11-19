@@ -20,6 +20,12 @@ const REMOTE_RUN_MAX_AGE = 6 * 60 * 60 * 1000
 const REMOTE_PACK_KEY = 'dsh.node-canvas.remotePacks.v2'
 // Which source (Local, ComfyUI, …) the libraries are showing.
 const SOURCE_KEY = 'dsh.node-canvas.source.v1'
+// The menu column is resizable: its width, and how much of the height it keeps for itself.
+const LAYOUT_KEY = 'dsh.node-canvas.layout.v1'
+const LAYOUT_DEFAULT_SPLIT = 0.36
+const MENU_MIN_WIDTH = 180
+const MENU_MAX_SPLIT = 0.8
+const MENU_MIN_SPLIT = 0.15
 // Preview tiles shrink a 4K PNG to a thumbnail before it reaches the DOM: a 2880×4320 image is
 // ~50 MB once decoded, and several of those in one node make the whole panel sluggish.
 const THUMB_WIDTH = 640
@@ -628,6 +634,8 @@ const thumbCache = new Map()
       'library.section.workflows': 'Workflow library',
       'library.section.source': 'Sources',
       'account.avatar': 'Account avatar',
+      'menu.resizeWidth': 'Drag to resize the column; double click restores it',
+      'menu.resizeHeight': 'Drag to change the height split; double click restores it',
       'account.anonymous': 'Not signed in',
       'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
       'source.local': 'Local',
@@ -765,6 +773,8 @@ const thumbCache = new Map()
       'library.section.workflows': '工作流库',
       'library.section.source': '源',
       'account.avatar': '账户头像',
+      'menu.resizeWidth': '拖动调整菜单宽度，双击恢复',
+      'menu.resizeHeight': '拖动调整高度占比，双击恢复',
       'account.anonymous': '未登录',
       'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
       'source.local': '本地',
@@ -1261,6 +1271,29 @@ const thumbCache = new Map()
         borderRadius: '7px',
       },
       // One SVG box: the clip, the photo and the ring are all drawn, so no CSS radius is involved.
+      sourceCurrent: {
+        marginLeft: 'auto',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '5px',
+        minWidth: 0,
+        color: 'var(--dsw-alias-label-secondary)',
+      },
+      sourceCurrentIcon: {
+        width: '15px',
+        height: '15px',
+        flex: 'none',
+        borderRadius: '4px',
+        objectFit: 'cover',
+        display: 'block',
+      },
+      sourceCurrentName: {
+        fontSize: '11px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        maxWidth: '120px',
+      },
       avatarSvg: {
         flex: 'none',
         display: 'block',
@@ -1637,6 +1670,22 @@ const thumbCache = new Map()
       const [menu, setMenu] = React.useState(null)
       // The toolbar menu under the hamburger; content comes later.
       const [account, setAccount] = React.useState(null)
+      // Width of the menu column (null = follow the toolbar) and its share of the height.
+      const [layout, setLayout] = React.useState(() => {
+        try {
+          const raw = localStorage.getItem(LAYOUT_KEY)
+          const parsed = raw === null ? null : JSON.parse(raw)
+          const width = parsed !== null && typeof parsed === 'object' && typeof parsed.width === 'number'
+            ? Math.round(parsed.width)
+            : null
+          const split = parsed !== null && typeof parsed === 'object' && typeof parsed.split === 'number'
+            ? parsed.split
+            : LAYOUT_DEFAULT_SPLIT
+          return { width, split: Math.min(MENU_MAX_SPLIT, Math.max(MENU_MIN_SPLIT, split)) }
+        } catch {
+          return { width: null, split: LAYOUT_DEFAULT_SPLIT }
+        }
+      })
       const [barMenu, setBarMenu] = React.useState(null)
       // Which library column 1 points at, and which pack is unfolded in column 2.
       const [barSection, setBarSection] = React.useState(null)
@@ -4405,16 +4454,9 @@ const thumbCache = new Map()
       }
 
       const barMenuBodyRef = React.useRef(null)
+      const resizeRef = React.useRef(null)
       const barMenuTimerRef = React.useRef(0)
       const bandTimerRef = React.useRef(0)
-
-      /**
-       * Run after the browser has actually laid out the collapsed state, so a height transition
-       * has a real start value. One frame is not enough for a freshly mounted element.
-       */
-      function nextFrame(callback) {
-        requestAnimationFrame(() => requestAnimationFrame(callback))
-      }
 
       /**
        * The menu covers the top third of the panel; the selected library fills the room left
@@ -4423,8 +4465,22 @@ const thumbCache = new Map()
       function menuMetrics(top) {
         const page = pageRef.current
         const pageHeight = page === null ? window.innerHeight : page.getBoundingClientRect().height
-        const height = Math.max(160, Math.round(pageHeight / 3))
-        return { height, room: Math.max(140, pageHeight - top - height) }
+        const available = Math.max(240, pageHeight - top - 6)
+        const height = Math.max(120, Math.round(available * layout.split))
+        return { height, room: Math.max(100, available - height) }
+      }
+
+      /** Store the column geometry the user dragged into place. */
+      function saveLayout(patch) {
+        setLayout((current) => {
+          const next = { ...current, ...patch }
+          try {
+            localStorage.setItem(LAYOUT_KEY, JSON.stringify(next))
+          } catch {
+            // The sizes only have to survive a reload; a full storage forgets them.
+          }
+          return next
+        })
       }
 
       /**
@@ -4450,11 +4506,18 @@ const thumbCache = new Map()
           ? buttonRect.bottom
           : toolbarRef.current.getBoundingClientRect().bottom
         const top = Math.round(barBottom - pageRect.top)
+        const pageWidth = pageRect.width
+        const defaultWidth = Math.max(140, Math.round(buttonRect.right - pageRect.left))
+        const width = layout.width === null
+          ? defaultWidth
+          : Math.min(Math.max(MENU_MIN_WIDTH, layout.width), Math.max(MENU_MIN_WIDTH, pageWidth - 16))
         setBarMenu({
           left: 0,
           top,
-          width: Math.max(140, Math.round(buttonRect.right - pageRect.left)),
-          open: false,
+          width,
+          defaultWidth,
+          open: true,
+          closing: false,
           ...menuMetrics(top),
         })
         setBarSection(null)
@@ -4465,11 +4528,83 @@ const thumbCache = new Map()
         }
         setBandClosing(false)
         setNodePreview(null)
-        // Two frames: the first lays out the closed state, the second starts the transition.
-        nextFrame(() => {
-          setBarMenu((current) => (current === null ? current : { ...current, open: true }))
-        })
         loadPacks()
+      }
+
+      /** Drag the column's right edge (width) or its divider (height split). */
+      function beginResize(event, mode) {
+        if (event.button !== 0 || barMenu === null) return
+        event.stopPropagation()
+        event.preventDefault()
+        if (typeof event.currentTarget.setPointerCapture === 'function') {
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId)
+          } catch {
+            // Capture is an optimisation; the handlers below still see the moves.
+          }
+        }
+        resizeRef.current = {
+          mode,
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          top: barMenu.top,
+          width: barMenu.width,
+          height: barMenu.height,
+          room: barMenu.room,
+        }
+      }
+
+      function moveResize(event) {
+        const drag = resizeRef.current
+        if (drag === null || drag.pointerId !== event.pointerId) return
+        const page = pageRef.current
+        const pageRect = page === null ? { width: window.innerWidth, height: window.innerHeight } : page.getBoundingClientRect()
+        if (drag.mode === 'width') {
+          const maxWidth = Math.max(MENU_MIN_WIDTH, Math.round(pageRect.width - 16))
+          drag.width = Math.min(maxWidth, Math.max(MENU_MIN_WIDTH, Math.round(drag.width + event.clientX - drag.x)))
+          drag.x = event.clientX
+          setBarMenu((current) => (current === null ? current : { ...current, width: drag.width }))
+          return
+        }
+        const available = Math.max(240, Math.round(pageRect.height - drag.top - 6))
+        const height = Math.min(available - 100, Math.max(120, Math.round(drag.height + event.clientY - drag.y)))
+        drag.y = event.clientY
+        drag.height = height
+        drag.room = Math.max(100, available - height)
+        setBarMenu((current) => (current === null ? current : { ...current, height: drag.height, room: drag.room }))
+      }
+
+      function endResize(event) {
+        const drag = resizeRef.current
+        if (drag === null) return
+        resizeRef.current = null
+        if (typeof event.currentTarget.releasePointerCapture === 'function') {
+          try {
+            event.currentTarget.releasePointerCapture(event.pointerId)
+          } catch {
+            // Already released.
+          }
+        }
+        if (drag.mode === 'width') saveLayout({ width: drag.width })
+        else saveLayout({ split: drag.height / Math.max(1, drag.height + drag.room) })
+      }
+
+      /** Double click restores the default for that edge. */
+      function resetResize(mode) {
+        if (barMenu === null) return
+        if (mode === 'width') {
+          const width = typeof barMenu.defaultWidth === 'number' ? barMenu.defaultWidth : barMenu.width
+          setBarMenu((current) => (current === null ? current : { ...current, width }))
+          saveLayout({ width: null })
+          return
+        }
+        const page = pageRef.current
+        const pageRect = page === null ? { height: window.innerHeight } : page.getBoundingClientRect()
+        const available = Math.max(240, Math.round(pageRect.height - barMenu.top - 6))
+        const height = Math.max(120, Math.round(available * LAYOUT_DEFAULT_SPLIT))
+        setBarMenu((current) => (current === null ? current : { ...current, height, room: Math.max(100, available - height) }))
+        saveLayout({ split: LAYOUT_DEFAULT_SPLIT })
       }
 
       function closeBarMenu() {
@@ -4484,7 +4619,7 @@ const thumbCache = new Map()
         }
         setBandClosing(false)
         setNodePreview(null)
-        setBarMenu((current) => (current === null ? current : { ...current, open: false }))
+        setBarMenu((current) => (current === null ? current : { ...current, open: false, closing: true }))
         barMenuTimerRef.current = setTimeout(() => {
           barMenuTimerRef.current = 0
           setBarMenu(null)
@@ -5942,58 +6077,7 @@ const thumbCache = new Map()
             }),
             h('span', { key: 'text' }, canvasDirty ? tr('canvas.draft') : tr('canvas.saved')),
           ]),
-          (() => {
-            const hasAvatar = account !== null && typeof account.avatarUrl === 'string' && account.avatarUrl !== ''
-            const clipId = 'nc-avatar-clip'
-            const initial = account !== null && typeof account.name === 'string' && account.name.trim() !== ''
-              ? account.name.trim().charAt(0).toUpperCase()
-              : ''
-            return h('svg', {
-              key: 'account',
-              viewBox: '0 0 30 30',
-              width: 30,
-              height: 30,
-              role: 'img',
-              'aria-label': tr('account.avatar'),
-              style: S.avatarSvg,
-            }, [
-              h('title', { key: 'title' },
-                account !== null && typeof account.name === 'string' && account.name !== ''
-                  ? account.name
-                  : tr('account.anonymous')),
-              h('clipPath', { key: 'clip', id: clipId },
-                h('circle', { cx: 15, cy: 15, r: 14 })),
-              hasAvatar
-                ? h('image', {
-                    key: 'image',
-                    href: account.avatarUrl,
-                    x: 0,
-                    y: 0,
-                    width: 30,
-                    height: 30,
-                    preserveAspectRatio: 'xMidYMid slice',
-                    'clip-path': 'url(#' + clipId + ')',
-                  })
-                : h('text', {
-                    key: 'initial',
-                    x: 15,
-                    y: 15,
-                    textAnchor: 'middle',
-                    dominantBaseline: 'central',
-                    fontSize: 12,
-                    fill: 'var(--dsw-alias-label-primary)',
-                  }, initial),
-              h('circle', {
-                key: 'ring',
-                cx: 15,
-                cy: 15,
-                r: 14.5,
-                fill: 'none',
-                stroke: 'currentColor',
-                strokeWidth: 1,
-              }),
-            ])
-          })(),
+          avatarGlyph(30, true),
           h('button', {
             key: 'extensions',
             type: 'button',
@@ -6304,7 +6388,31 @@ const thumbCache = new Map()
         },
       }, [
         h('span', { key: 'label', style: S.typeName }, section.label),
-        h('span', { key: 'chevron', style: S.typeChevron }, barSection === section.id ? '▾' : '▸'),
+        // Which source is in use: its own icon, or the account avatar for Local.
+        section.id === 'source'
+          ? h('span', { key: 'current', style: S.sourceCurrent }, [
+              activeSource === 'local'
+                ? avatarGlyph(15, false)
+                : (() => {
+                    const extension = extensions.find((item) => item.id === activeSource)
+                    return extension !== undefined && typeof extension.icon === 'string' && extension.icon !== ''
+                      ? h('img', {
+                          key: 'icon',
+                          src: extensionIconUrl(extension),
+                          alt: '',
+                          draggable: false,
+                          style: S.sourceCurrentIcon,
+                        })
+                      : h('span', { key: 'dot', style: { ...S.sourceCurrentIcon, background: 'currentColor', opacity: 0.5 } })
+                  })(),
+              h('span', { key: 'name', style: S.sourceCurrentName },
+                (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name),
+            ])
+          : null,
+        h('span', {
+          key: 'chevron',
+          style: section.id === 'source' ? { ...S.typeChevron, marginLeft: '2px' } : S.typeChevron,
+        }, barSection === section.id ? '▾' : '▸'),
       ]))
 
       const packRows = []
@@ -6475,7 +6583,11 @@ const thumbCache = new Map()
         + '.nc-combo-item{display:flex;align-items:center;height:22px;padding:0 8px;border-radius:5px;font-size:12px;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
         + '.nc-combo-item:hover{background:var(--dsw-alias-bg-layer-2)}'
         + '.nc-combo-item[data-selected="true"]{color:var(--dsw-alias-brand-primary)}'
-        + '.nc-dialog-primary:hover{background:var(--dsw-alias-button-primary-hover)}')
+        + '.nc-dialog-primary:hover{background:var(--dsw-alias-button-primary-hover)}'
+        + '.nc-menu-scroll{scrollbar-width:none;-ms-overflow-style:none}'
+        + '.nc-menu-scroll::-webkit-scrollbar{width:0;height:0;display:none}'
+        + '.nc-resize-x:hover,.nc-resize-y:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent)}'
+        + '.nc-resize-x:active,.nc-resize-y:active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent)}')
 
       // The selected library fills the room under the menu, spanning the same width.
       const submenuRows = barSection === 'nodes'
@@ -6524,11 +6636,9 @@ const thumbCache = new Map()
               left: barMenu.left + 'px',
               top: barMenu.top + 'px',
               width: barMenu.width + 'px',
-              height: (barMenu.open === true ? barMenu.height : 0) + 'px',
+              height: barMenu.height + 'px',
               overflow: 'hidden',
               zIndex: 25,
-              opacity: barMenu.open === true ? 1 : 0,
-              transition: 'height ' + BAR_MENU_MS + 'ms ease, opacity ' + BAR_MENU_MS + 'ms ease',
               pointerEvents: barMenu.open === true ? 'auto' : 'none',
               boxShadow: '0 12px 32px rgba(0, 0, 0, 0.24)',
             },
@@ -6537,10 +6647,14 @@ const thumbCache = new Map()
             key: 'body',
             ref: barMenuBodyRef,
             role: 'menu',
+            className: 'nc-menu-scroll',
             style: {
               boxSizing: 'border-box',
               height: '100%',
               overflowY: 'auto',
+              animation: (barMenu.closing === true ? 'node-canvas-band-out ' : 'node-canvas-band-in ')
+                + BAR_MENU_MS + 'ms cubic-bezier(0.22, 0.61, 0.36, 1)'
+                + (barMenu.closing === true ? ' forwards' : ''),
               padding: '10px',
               background: 'var(--dsw-alias-bg-base)',
               border: '1px solid var(--dsw-alias-border-l1)',
@@ -6548,6 +6662,54 @@ const thumbCache = new Map()
               borderRadius: '0 0 12px 0',
             },
           }, sectionRows))
+
+      const resizeWidthEl = barMenu === null || barMenu.open !== true
+        ? null
+        : h('div', {
+            key: 'resize-width',
+            className: 'nc-resize-x',
+            title: tr('menu.resizeWidth'),
+            'aria-hidden': true,
+            style: {
+              position: 'absolute',
+              left: (barMenu.left + barMenu.width) + 'px',
+              top: barMenu.top + 'px',
+              width: '6px',
+              height: (barMenu.height + (barSection === null ? 0 : barMenu.room)) + 'px',
+              cursor: 'col-resize',
+              zIndex: 26,
+              background: 'transparent',
+            },
+            onPointerDown: (event) => beginResize(event, 'width'),
+            onPointerMove: moveResize,
+            onPointerUp: endResize,
+            onPointerCancel: endResize,
+            onDoubleClick: () => resetResize('width'),
+          })
+
+      const resizeSplitEl = barMenu === null || barMenu.open !== true
+        ? null
+        : h('div', {
+            key: 'resize-split',
+            className: 'nc-resize-y',
+            title: tr('menu.resizeHeight'),
+            'aria-hidden': true,
+            style: {
+              position: 'absolute',
+              left: barMenu.left + 'px',
+              top: (barMenu.top + barMenu.height - 3) + 'px',
+              width: barMenu.width + 'px',
+              height: '6px',
+              cursor: 'row-resize',
+              zIndex: 26,
+              background: 'transparent',
+            },
+            onPointerDown: (event) => beginResize(event, 'height'),
+            onPointerMove: moveResize,
+            onPointerUp: endResize,
+            onPointerCancel: endResize,
+            onDoubleClick: () => resetResize('height'),
+          })
 
       const barSubmenuEl = barMenu === null || barMenu.open !== true || barSection === null
         ? null
@@ -6567,6 +6729,7 @@ const thumbCache = new Map()
             onPointerDown: (event) => event.stopPropagation(),
           }, h('div', {
             key: 'submenu-panel',
+            className: 'nc-menu-scroll',
             style: {
               boxSizing: 'border-box',
               height: '100%',
@@ -6715,6 +6878,66 @@ const thumbCache = new Map()
             style: { fontSize: '10px', padding: '4px', color: 'var(--dsw-alias-state-error-primary)' },
           }, 'extension: ' + (error instanceof Error ? error.message : String(error)))
         }
+      }
+
+      /**
+       * The account avatar as SVG: clip, photo and ring are all drawn, so it is a true circle at
+       * any size. Used by the toolbar ring and by the menu's current-source badge.
+       */
+      function avatarGlyph(size, withTitle) {
+        const hasAvatar = account !== null && typeof account.avatarUrl === 'string' && account.avatarUrl !== ''
+        const clipId = 'nc-avatar-clip-' + size
+        const initial = account !== null && typeof account.name === 'string' && account.name.trim() !== ''
+          ? account.name.trim().charAt(0).toUpperCase()
+          : ''
+        const half = size / 2
+        return h('svg', {
+          key: 'avatar',
+          viewBox: '0 0 30 30',
+          width: size,
+          height: size,
+          role: 'img',
+          'aria-label': tr('account.avatar'),
+          style: { ...S.avatarSvg, width: size + 'px', height: size + 'px' },
+        }, [
+          withTitle === true
+            ? h('title', { key: 'title' },
+                account !== null && typeof account.name === 'string' && account.name !== ''
+                  ? account.name
+                  : tr('account.anonymous'))
+            : null,
+          h('clipPath', { key: 'clip', id: clipId },
+            h('circle', { cx: 15, cy: 15, r: 14 })),
+          hasAvatar
+            ? h('image', {
+                key: 'image',
+                href: account.avatarUrl,
+                x: 0,
+                y: 0,
+                width: 30,
+                height: 30,
+                preserveAspectRatio: 'xMidYMid slice',
+                'clip-path': 'url(#' + clipId + ')',
+              })
+            : h('text', {
+                key: 'initial',
+                x: half,
+                y: half,
+                textAnchor: 'middle',
+                dominantBaseline: 'central',
+                fontSize: 12,
+                fill: 'var(--dsw-alias-label-primary)',
+              }, initial),
+          h('circle', {
+            key: 'ring',
+            cx: 15,
+            cy: 15,
+            r: 14.5,
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: size <= 16 ? 1.6 : 1,
+          }),
+        ])
       }
 
       /** Where the canvas fetches an extension's icon from (the Host serves the file). */
@@ -7348,7 +7571,7 @@ const thumbCache = new Map()
         // One handler for the whole panel: keys pressed while the toolbar or the library has
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
-      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, panelsEl, comboMenuEl, dropOverlay])
+      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, panelsEl, comboMenuEl, dropOverlay])
     }
 
     function PanelIcon(props) {
