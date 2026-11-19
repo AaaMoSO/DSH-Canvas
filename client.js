@@ -2052,10 +2052,10 @@ const thumbCache = new Map()
           return { width: null, split: LAYOUT_DEFAULT_SPLIT }
         }
       })
-      const [barMenu, setBarMenu] = React.useState(null)
+      const [barMenu, setBarMenu] = useStored('barMenu', null)
       // Which library column 1 points at, and which pack is unfolded in column 2.
-      const [barSection, setBarSection] = React.useState(null)
-      const [openPack, setOpenPack] = React.useState(null)
+      const [barSection, setBarSection] = useStored('barSection', null)
+      const [openPack, setOpenPack] = useStored('openPack', null)
       // While the band retracts it stays mounted, so the reverse animation has something to play.
       const [bandClosing, setBandClosing] = React.useState(false)
       // The node a library row is pointing at; shown as a miniature beside the band.
@@ -2064,8 +2064,8 @@ const thumbCache = new Map()
       const [comboMenu, setComboMenu] = React.useState(null)
       // The node being dragged out of the library; the miniature follows the cursor instead.
       const [nodeDrag, setNodeDrag] = React.useState(null)
-      const [props, setProps] = React.useState(null)
-      const [notice, setNotice] = React.useState(null)
+      const [props, setProps] = useStored('props', null)
+      const [notice, setNotice] = useStored('notice', null)
       const [temp, setTemp] = React.useState(null)
       const [marquee, setMarquee] = React.useState(null)
       const [hoverPort, setHoverPort] = React.useState(null)
@@ -2100,11 +2100,11 @@ const thumbCache = new Map()
       // switching back to an untouched one is still "saved", not "draft".
       const workflowBaselinesRef = React.useRef(getCanvasStore().ensure('workflowBaselines', new Map()))
       // Naming dialog for "save" (when unnamed) and "save as": `{ mode, value, error }`.
-      const [dialog, setDialog] = React.useState(null)
+      const [dialog, setDialog] = useStored('dialog', null)
       // The workflow row the pointer is on; its run control floats beside the menu.
       const [runHover, setRunHover] = React.useState(null)
       // Full-resolution viewer: `{ root, name }` while it is open.
-      const [previewViewer, setPreviewViewer] = React.useState(null)
+      const [previewViewer, setPreviewViewer] = useStored('previewViewer', null)
       // Bumped when a preview thumbnail finishes decoding, so the tile can swap it in.
       const [thumbTick, setThumbTick] = React.useState(0)
       // Backends are *services*: enabling one starts its server, so ComfyUI workflows can run while
@@ -2120,8 +2120,8 @@ const thumbCache = new Map()
       const [backendWorkflows, setBackendWorkflows] = useStored('backendWorkflows', () => ({ source: null, names: [] }))
 // Extension packages: the puzzle menu, the add dialog, and the list from the Host.
       const [extensions, setExtensions] = useStored('extensions', [])
-      const [extensionMenu, setExtensionMenu] = React.useState(false)
-      const [extensionDialog, setExtensionDialog] = React.useState(null)
+      const [extensionMenu, setExtensionMenu] = useStored('extensionMenu', false)
+      const [extensionDialog, setExtensionDialog] = useStored('extensionDialog', null)
       // Format adapters contributed by extensions, e.g. the ComfyUI workflow reader/writer.
       const [adapters, setAdapters] = useStored('adapters', [])
       // Everything else an extension can add: node views, node menu items, toolbar actions,
@@ -2134,7 +2134,7 @@ const thumbCache = new Map()
         hovers: [],
         backends: [],
       })
-      const [openPanels, setOpenPanels] = React.useState([])
+      const [openPanels, setOpenPanels] = useStored('openPanels', [])
       // The tile under the pointer, for extensions that draw their own hover card.
       const [extensionHover, setExtensionHover] = React.useState(null)
       // Which extension tile is being dragged, and the menu element for hit-testing.
@@ -2451,6 +2451,29 @@ const thumbCache = new Map()
       React.useEffect(() => {
         loadPacks()
       }, [loadPacks])
+
+      // A stored UI may have been captured mid-animation or mid-request; settle it on mount.
+      React.useEffect(() => {
+        if (barMenu !== null && barMenu.open !== true) setBarMenu(null)
+        if (extensionDialog !== null && extensionDialog.busy === true) {
+          setExtensionDialog((current) => (current === null ? current : { ...current, busy: false }))
+        }
+      }, [])
+
+      // A notice restored after a remount gets its full time again.
+      React.useEffect(() => {
+        if (notice === null || noticeTimerRef.current !== 0) return undefined
+        noticeTimerRef.current = setTimeout(() => {
+          noticeTimerRef.current = 0
+          setNotice(null)
+        }, 2600)
+        return () => {
+          if (noticeTimerRef.current !== 0) {
+            clearTimeout(noticeTimerRef.current)
+            noticeTimerRef.current = 0
+          }
+        }
+      }, [notice])
 
       // The signed-in DSH account supplies the avatar; signed out simply leaves the ring empty.
       React.useEffect(() => {
@@ -4855,8 +4878,16 @@ const thumbCache = new Map()
           closing: false,
           ...menuMetrics(top),
         })
-        setBarSection(null)
-        setOpenPack(null)
+        // The library the user was browsing comes back with the menu.
+        const rememberedSection = barSection
+        const rememberedPack = openPack
+        if (typeof rememberedSection === 'string' && rememberedSection !== '') {
+          openBand(rememberedSection)
+          if (typeof rememberedPack === 'string') setOpenPack(rememberedPack)
+        } else {
+          setBarSection(null)
+          setOpenPack(null)
+        }
         if (bandTimerRef.current !== 0) {
           clearTimeout(bandTimerRef.current)
           bandTimerRef.current = 0
