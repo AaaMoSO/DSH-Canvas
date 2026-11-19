@@ -971,6 +971,17 @@ const thumbCache = new Map()
       'extensions.add': 'Add an extension package',
       'extensions.title': 'Add an extension package',
       'extensions.hint': 'Drop an extension folder here, or paste the path of a folder that contains pack.json or nodes/.',
+      'settings.open': 'Extension settings',
+      'settings.title': 'Settings',
+      'settings.close': 'Close',
+      'settings.empty': 'No extension here needs a setting yet.',
+      'settings.stored': 'Saved in the extension folder',
+      'settings.save': 'Save',
+      'settings.saving': 'Saving…',
+      'settings.cancel': 'Cancel',
+      'settings.saved': 'Settings saved.',
+      'settings.failed': 'Could not read the settings.',
+      'settings.failedReason': 'Could not save the settings: {message}',
       'extensions.drop': 'Drop the extension folder here',
       'extensions.pathPlaceholder': 'Folder path…',
       'extensions.register': 'Register',
@@ -1111,6 +1122,17 @@ const thumbCache = new Map()
       'extensions.add': '添加拓展包',
       'extensions.title': '添加拓展包',
       'extensions.hint': '把拓展包文件夹拖到下面，或粘贴一个包含 pack.json / nodes/ 的文件夹路径。',
+      'settings.open': '拓展设置',
+      'settings.title': '设置',
+      'settings.close': '关闭',
+      'settings.empty': '这里的拓展暂时还不需要设置。',
+      'settings.stored': '保存在该拓展的目录里',
+      'settings.save': '保存',
+      'settings.saving': '保存中…',
+      'settings.cancel': '取消',
+      'settings.saved': '设置已保存。',
+      'settings.failed': '读取设置失败。',
+      'settings.failedReason': '保存设置失败：{message}',
       'extensions.drop': '把拓展包文件夹拖到这里',
       'extensions.pathPlaceholder': '文件夹路径…',
       'extensions.register': '登记',
@@ -1214,8 +1236,11 @@ const thumbCache = new Map()
       return 'en'
     }
 
+    // The active language, kept current by the plugin half; extension labels follow it.
+    let uiLocaleId = null
+
     let translator = (key) => {
-      const dict = isChineseId(browserLocale()) ? ZH : EN
+      const dict = isChineseId(uiLocaleId ?? browserLocale()) ? ZH : EN
       return dict[key] ?? EN[key] ?? key
     }
 
@@ -1243,6 +1268,10 @@ const thumbCache = new Map()
     }
 
     const GLYPHS = {
+      gear: [
+        'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z',
+        'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+      ],
       close: ['M6 6l12 12', 'M18 6 6 18'],
       undo: ['M9 5 4 10l5 5', 'M4 10h8.5a5.5 5.5 0 0 1 0 11H9'],
       redo: ['M15 5l5 5-5 5', 'M20 10h-8.5a5.5 5.5 0 0 0 0 11H15'],
@@ -1498,6 +1527,103 @@ const thumbCache = new Map()
         borderStyle: 'dashed',
         background: 'transparent',
         color: 'var(--dsw-alias-label-tertiary)',
+      },
+      settingsWindow: {
+        position: 'absolute',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: '420px',
+        maxWidth: '92%',
+        maxHeight: '78%',
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        borderRadius: '10px',
+        boxShadow: '0 18px 40px rgba(0, 0, 0, 0.32)',
+        zIndex: 30,
+        overflow: 'hidden',
+      },
+      settingsHeader: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '10px 12px',
+        borderBottom: '1px solid var(--dsw-alias-border-l2)',
+      },
+      settingsClose: {
+        marginLeft: 'auto',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '22px',
+        height: '22px',
+        padding: 0,
+        border: 'none',
+        borderRadius: '5px',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+      },
+      settingsTabs: {
+        display: 'flex',
+        gap: '6px',
+        padding: '8px 12px 0',
+        flexWrap: 'wrap',
+      },
+      settingsTab: {
+        padding: '3px 10px',
+        borderRadius: '999px',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: '11px',
+        cursor: 'pointer',
+      },
+      settingsTabActive: {
+        borderColor: 'var(--dsw-alias-brand-primary)',
+        color: 'var(--dsw-alias-brand-primary)',
+      },
+      settingsBody: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        padding: '12px',
+        overflowY: 'auto',
+      },
+      settingsField: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+      },
+      settingsFieldLabel: {
+        fontSize: '11px',
+        color: 'var(--dsw-alias-label-secondary)',
+      },
+      settingsInput: {
+        width: '100%',
+        padding: '5px 8px',
+        boxSizing: 'border-box',
+        borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: '12px',
+        outline: 'none',
+      },
+      settingsHint: {
+        fontSize: '10px',
+        lineHeight: '14px',
+        color: 'var(--dsw-alias-label-tertiary)',
+      },
+      settingsFooter: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '10px 12px',
+        borderTop: '1px solid var(--dsw-alias-border-l2)',
       },
       extensionDrop: {
         display: 'flex',
@@ -2137,8 +2263,14 @@ const thumbCache = new Map()
         panels: [],
         hovers: [],
         backends: [],
+        settings: [],
       })
       const [openPanels, setOpenPanels] = useStored('openPanels', [])
+      // The settings window is a canvas feature: extensions only add sections to it.
+      const [settingsDialog, setSettingsDialog] = useStored('settingsDialog', null)
+      const [settingsDraft, setSettingsDraft] = React.useState({})
+      const [settingsBusy, setSettingsBusy] = React.useState(false)
+      const [settingsError, setSettingsError] = React.useState(null)
       // The tile under the pointer, for extensions that draw their own hover card.
       const [extensionHover, setExtensionHover] = React.useState(null)
       // Which extension tile is being dragged, and the menu element for hit-testing.
@@ -2526,7 +2658,7 @@ const thumbCache = new Map()
           const payload = await fetch('/node-canvas/extensions', { cache: 'no-store' })
             .then((response) => (response.ok === true ? response.json() : null))
           const formats = []
-          const features = { nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [] }
+          const features = { nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [], settings: [] }
           const sources = [...(payload?.extensions ?? [])].reverse()
           for (const extension of sources) {
             if (typeof extension.client !== 'string' || extension.client === '') continue
@@ -2551,6 +2683,8 @@ const thumbCache = new Map()
                   registerExtensionHover: (hover) => add(features.hovers, hover, (value) => typeof value.render === 'function'),
                   /** An execution backend: the canvas keeps editing, this runs the graph. */
                   registerBackend: (backend) => add(features.backends, backend, (value) => typeof value.id === 'string' && typeof value.start === 'function'),
+                  /** A section of the settings window: fields the extension needs the user to fill in. */
+                  registerSettings: (section) => add(features.settings, section, (value) => typeof value.id === 'string' && Array.isArray(value.fields)),
                 })
               } else if (module.adapter !== null && typeof module.adapter === 'object') {
                 // One-release compatibility with the first adapter-only shape.
@@ -2568,6 +2702,7 @@ const thumbCache = new Map()
             panels: features.panels.reverse(),
             hovers: features.hovers.reverse(),
             backends: features.backends.reverse(),
+            settings: features.settings.reverse(),
           })
         } catch {
           // The Host not answering leaves the registered capabilities as they were.
@@ -3855,6 +3990,106 @@ const thumbCache = new Map()
           // Forgetting the fallback only costs a stale choice on the next load.
         }
       }, [activeSource, extensionFeatures.backends])
+
+      /** A label may be given once per language; the one the canvas speaks wins. */
+      function settingsText(value) {
+        if (typeof value === 'string') return value
+        if (value !== null && typeof value === 'object') {
+          const chinese = isChineseId(uiLocaleId ?? browserLocale())
+          return String(value[chinese ? 'zh' : 'en'] ?? value.en ?? value.zh ?? '')
+        }
+        return ''
+      }
+
+      function settingsSections() {
+        return Array.isArray(extensionFeatures.settings) ? extensionFeatures.settings : []
+      }
+
+      function settingsSection(id) {
+        return settingsSections().find((item) => item.id === id) ?? null
+      }
+
+      function openSettings() {
+        const first = settingsSections()[0] ?? null
+        setSettingsError(null)
+        setSettingsDialog({ id: first === null ? null : first.id })
+      }
+
+      function closeSettings() {
+        setSettingsDialog(null)
+        setSettingsDraft({})
+        setSettingsError(null)
+      }
+
+      /** Fill the form from the extension's settings.json, falling back to declared defaults. */
+      React.useEffect(() => {
+        if (settingsDialog === null) return undefined
+        const section = settingsSection(settingsDialog.id)
+        if (section === null) return undefined
+        let cancelled = false
+        setSettingsBusy(true)
+        fetch('/node-canvas/extensions/settings?id=' + encodeURIComponent(section.id), { cache: 'no-store' })
+          .then((response) => (response.ok === true ? response.json() : null))
+          .then((payload) => {
+            if (cancelled) return
+            const stored = payload !== null && payload.values !== null && typeof payload.values === 'object' ? payload.values : {}
+            const draft = {}
+            for (const field of section.fields) {
+              const value = stored[field.key]
+              draft[field.key] = value !== undefined
+                ? value
+                : (field.default !== undefined ? field.default : (field.type === 'boolean' ? false : ''))
+            }
+            setSettingsDraft(draft)
+            setSettingsError(null)
+          })
+          .catch(() => {
+            if (cancelled !== true) setSettingsError(tr('settings.failed'))
+          })
+          .finally(() => {
+            if (cancelled !== true) setSettingsBusy(false)
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [settingsDialog, extensionFeatures.settings])
+
+      /** Write the form back into the extension's folder; its host module picks it up next call. */
+      async function saveSettings() {
+        if (settingsDialog === null) return
+        const section = settingsSection(settingsDialog.id)
+        if (section === null) return
+        const values = {}
+        for (const field of section.fields) {
+          const raw = settingsDraft[field.key]
+          if (field.type === 'boolean') values[field.key] = raw === true
+          else if (field.type === 'number') {
+            const number = Number(raw)
+            values[field.key] = Number.isFinite(number) ? number : 0
+          } else {
+            values[field.key] = raw === undefined || raw === null ? '' : String(raw)
+          }
+        }
+        setSettingsBusy(true)
+        setSettingsError(null)
+        try {
+          const response = await fetch('/node-canvas/extensions/settings?id=' + encodeURIComponent(section.id), {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ values }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (response.ok !== true || payload?.ok !== true) {
+            throw new Error(payload?.error ?? 'HTTP ' + response.status)
+          }
+          closeSettings()
+          showNotice(tr('settings.saved'))
+        } catch (error) {
+          setSettingsError(tr('settings.failedReason', { message: error.message }))
+        } finally {
+          setSettingsBusy(false)
+        }
+      }
 
       /** The visible state of one backend service. */
       function serviceStateOf(backendId) {
@@ -7800,6 +8035,16 @@ const thumbCache = new Map()
                 setExtensionDialog({ busy: false, error: null })
               },
             }, Glyph('plus', 18)),
+            h('button', {
+              key: 'extension-settings',
+              type: 'button',
+              title: tr('settings.open'),
+              style: { ...S.extensionTile, ...S.extensionTileAdd },
+              onClick: (event) => {
+                event.stopPropagation()
+                openSettings()
+              },
+            }, Glyph('gear', 18)),
           ])
 
       const extensionDialogEl = extensionDialog === null
@@ -8072,6 +8317,106 @@ const thumbCache = new Map()
             },
           }, option)))
 
+      // One window for every extension that needs the user to fill something in.
+      const settingsSectionItem = settingsDialog === null ? null : settingsSection(settingsDialog.id)
+      const settingsEl = settingsDialog === null
+        ? null
+        : h('div', {
+            key: 'settings-dialog',
+            style: S.settingsWindow,
+            onPointerDown: (event) => event.stopPropagation(),
+          }, [
+            h('div', { key: 'header', style: S.settingsHeader }, [
+              h('span', { key: 'icon', style: { display: 'flex', color: 'var(--dsw-alias-label-secondary)' } }, Glyph('gear', 15)),
+              h('span', {
+                key: 'title',
+                style: { fontSize: '13px', fontWeight: '500', color: 'var(--dsw-alias-label-primary)' },
+              }, tr('settings.title')),
+              h('button', {
+                key: 'close',
+                type: 'button',
+                title: tr('settings.close'),
+                style: S.settingsClose,
+                onClick: closeSettings,
+              }, Glyph('close', 14)),
+            ]),
+            settingsSections().length > 1
+              ? h('div', { key: 'tabs', style: S.settingsTabs }, settingsSections().map((item) => h('button', {
+                  key: 'tab:' + item.id,
+                  type: 'button',
+                  style: item.id === settingsDialog.id
+                    ? { ...S.settingsTab, ...S.settingsTabActive }
+                    : S.settingsTab,
+                  onClick: () => {
+                    setSettingsError(null)
+                    setSettingsDialog({ id: item.id })
+                  },
+                }, settingsText(item.title ?? item.id))))
+              : null,
+            h('div', { key: 'body', style: S.settingsBody }, settingsSectionItem === null
+              ? h('div', { key: 'empty', style: S.settingsHint }, tr('settings.empty'))
+              : settingsSectionItem.fields.map((field) => h('label', {
+                  key: 'field:' + field.key,
+                  style: S.settingsField,
+                }, [
+                  h('span', { key: 'label', style: S.settingsFieldLabel }, settingsText(field.label ?? field.key)),
+                  field.type === 'boolean'
+                    ? h('input', {
+                        key: 'input',
+                        type: 'checkbox',
+                        checked: settingsDraft[field.key] === true,
+                        style: { width: '14px', height: '14px' },
+                        onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.checked })),
+                      })
+                    : field.type === 'select'
+                      ? h('select', {
+                          key: 'input',
+                          value: settingsDraft[field.key] ?? '',
+                          style: S.settingsInput,
+                          onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
+                        }, (field.options ?? []).map((option) => {
+                          const value = typeof option === 'string' ? option : String(option.value ?? '')
+                          const label = typeof option === 'string' ? option : settingsText(option.label ?? value)
+                          return h('option', { key: 'option:' + value, value }, label)
+                        }))
+                      : h('input', {
+                          key: 'input',
+                          type: field.type === 'number' ? 'number' : 'text',
+                          value: settingsDraft[field.key] ?? '',
+                          placeholder: typeof field.placeholder === 'string' ? field.placeholder : '',
+                          style: S.settingsInput,
+                          onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
+                        }),
+                  field.hint === undefined
+                    ? null
+                    : h('span', { key: 'hint', style: S.settingsHint }, settingsText(field.hint)),
+                ]))),
+            settingsError === null
+              ? null
+              : h('div', {
+                  key: 'error',
+                  style: { padding: '0 12px 8px', fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' },
+                }, settingsError),
+            h('div', { key: 'footer', style: S.settingsFooter }, [
+              h('span', { key: 'stored', style: S.settingsHint }, tr('settings.stored')),
+              h('button', {
+                key: 'cancel',
+                type: 'button',
+                style: S.dialogButton,
+                onClick: closeSettings,
+              }, tr('settings.cancel')),
+              h('button', {
+                key: 'save',
+                type: 'button',
+                disabled: settingsBusy,
+                style: { ...S.dialogButton, ...S.dialogButtonPrimary, opacity: settingsBusy ? 0.6 : 1 },
+                onClick: () => {
+                  void saveSettings()
+                },
+              }, settingsBusy ? tr('settings.saving') : tr('settings.save')),
+            ]),
+          ])
+
       const dropOverlay = dragging
         ? h('div', { key: 'drop', style: S.dropOverlay }, tr('dragging'))
         : null
@@ -8085,7 +8430,7 @@ const thumbCache = new Map()
         // One handler for the whole panel: keys pressed while the toolbar or the library has
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
-      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, panelsEl, comboMenuEl, dropOverlay])
+      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, panelsEl, comboMenuEl, dropOverlay])
     }
 
     function PanelIcon(props) {
@@ -8119,6 +8464,7 @@ const thumbCache = new Map()
             }
           })
           const bound = locale.bind(NS)
+          uiLocaleId = activeLocaleId(locale)
           translator = (key) => {
             const value = bound(key)
             if (typeof value === 'string' && value !== key) return value
@@ -8126,6 +8472,7 @@ const thumbCache = new Map()
             return dict[key] ?? EN[key] ?? key
           }
           ctx.effect(() => locale.subscribe(() => {
+            uiLocaleId = activeLocaleId(locale)
             for (const listener of [...localeListeners]) listener()
           }))
         }

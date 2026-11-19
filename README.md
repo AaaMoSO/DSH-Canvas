@@ -17,6 +17,9 @@ remote execution backend when you need its node pack.
 - **Extensions**: capability packages that enhance the plugin (workflow formats, node views,
   toolbar actions, panels, hover cards, execution backends). Drag a folder into the puzzle menu to
   register one; order them by dragging, top wins. See [extensions/README.md](extensions/README.md).
+- **Extension settings**: the gear under the puzzle menu's plus opens a settings window. Any
+  extension may add a section to it (`registerSettings`) for values only the user knows, such as
+  the ComfyUI folder and its Python; the form is written to that extension's `settings.json`.
 
 ## Install
 

@@ -17,7 +17,7 @@
  * snapshot or (later) read out of a Python custom-node package.
  */
 
-import { readdir, readFile, stat, writeFile, mkdir, unlink, rm } from 'node:fs/promises'
+import { readdir, readFile, stat, writeFile, mkdir, unlink, rm, rename } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { Executor, ExecutionError } from './executor.js'
@@ -224,6 +224,47 @@ async function handle(req, res) {
       }
       throw new HttpError(405, 'use GET or POST')
     }
+    if (url.pathname === `${PREFIX}/extensions/settings`) {
+      const id = extensionId(url.searchParams.get('id'))
+      if (id === null) throw new HttpError(400, 'extension id required')
+      const extension = (await extensionDirs()).get(id)
+      if (extension === undefined) throw new HttpError(404, 'unknown extension ' + id)
+      const file = path.join(extension.path, 'settings.json')
+      if (req.method === 'GET') {
+        let values = {}
+        try {
+          const parsed = JSON.parse(await readFile(file, 'utf8'))
+          if (parsed !== null && typeof parsed === 'object' && Array.isArray(parsed) !== true) values = parsed
+        } catch {
+          values = {}
+        }
+        send(res, 200, { ok: true, values })
+        return
+      }
+      if (req.method === 'PUT') {
+        const body = await readJson(req)
+        const raw = body?.values
+        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+          throw new HttpError(400, 'body.values must be an object')
+        }
+        // The canvas form only expresses flat values; anything else is dropped here.
+        const values = {}
+        for (const [key, value] of Object.entries(raw)) {
+          if (/^[A-Za-z0-9_-]{1,64}$/.test(key) !== true) continue
+          if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') values[key] = value
+          else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) values[key] = value
+        }
+        await mkdir(extension.path, { recursive: true })
+        const tmp = file + '.tmp'
+        await writeFile(tmp, JSON.stringify(values, null, 2) + String.fromCharCode(10), 'utf8')
+        await rename(tmp, file)
+        // The extension's host module is cached by version: drop it so new settings are used.
+        extensionHosts.delete(id)
+        send(res, 200, { ok: true, values })
+        return
+      }
+      throw new HttpError(405, 'use GET or PUT')
+    }
     if (url.pathname === `${PREFIX}/extensions/order`) {
       if (req.method !== 'PUT') throw new HttpError(405, 'use PUT')
       const body = await readJson(req)
@@ -322,6 +363,13 @@ async function loadExtensionHost(extension) {
     version = (await stat(file)).mtimeMs
   } catch {
     return null
+  }
+  // Editing an extension's settings restarts its host module too, so the new values are used.
+  try {
+    const settingsVersion = (await stat(path.join(extension.path, 'settings.json'))).mtimeMs
+    if (settingsVersion > version) version = settingsVersion
+  } catch {
+    // No settings file: the host module version alone decides.
   }
   const cached = extensionHosts.get(extension.id)
   if (cached !== undefined && cached.version === version) return cached
