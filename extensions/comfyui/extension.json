@@ -18,6 +18,11 @@
       "hint": {
         "en": "The folder that holds main.py.",
         "zh": "包含 main.py 的那个文件夹。"
+      },
+      "pick": "directory",
+      "validate": {
+        "required": true,
+        "path": "directory"
       }
     },
     {
@@ -31,6 +36,10 @@
       "hint": {
         "en": "Leave empty to use the python on PATH.",
         "zh": "留空则使用 PATH 里的 python。"
+      },
+      "pick": "file",
+      "validate": {
+        "path": "file"
       }
     },
     {
@@ -45,6 +54,10 @@
       "hint": {
         "en": "Where the canvas reaches ComfyUI.",
         "zh": "画布访问 ComfyUI 的地址。"
+      },
+      "validate": {
+        "required": true,
+        "pattern": "^https?://"
       }
     },
     {
@@ -63,7 +76,10 @@
         "en": "Startup timeout (ms)",
         "zh": "启动超时（毫秒）"
       },
-      "default": 600000
+      "default": 600000,
+      "validate": {
+        "min": 1000
+      }
     },
     {
       "key": "stopExternal",

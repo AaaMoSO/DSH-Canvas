@@ -982,6 +982,22 @@ const thumbCache = new Map()
       'settings.saved': 'Settings saved.',
       'settings.failed': 'Could not read the settings.',
       'settings.failedReason': 'Could not save the settings: {message}',
+      'settings.browse': 'Browse…',
+      'settings.pickFailed': 'Could not open the picker: {message}',
+      'settings.errRequired': 'Required',
+      'settings.errPattern': 'Does not match the required form',
+      'settings.errMissing': 'Path does not exist',
+      'settings.errNotDirectory': 'Must be a folder',
+      'settings.errNotFile': 'Must be a file',
+      'settings.errMin': 'Must be at least {min}',
+      'settings.errMax': 'Must be at most {max}',
+      'settings.pickDirectory': 'Choose a folder',
+      'settings.pickFile': 'Choose a file',
+      'settings.up': 'Up',
+      'settings.choose': 'Choose',
+      'settings.emptyFolder': '(empty folder)',
+      'settings.pathHint': 'Path',
+      'settings.loading': 'Reading…',
       'extensions.drop': 'Drop the extension folder here',
       'extensions.pathPlaceholder': 'Folder path…',
       'extensions.register': 'Register',
@@ -1133,6 +1149,22 @@ const thumbCache = new Map()
       'settings.saved': '设置已保存。',
       'settings.failed': '读取设置失败。',
       'settings.failedReason': '保存设置失败：{message}',
+      'settings.browse': '浏览…',
+      'settings.pickFailed': '无法打开选择框：{message}',
+      'settings.errRequired': '必填',
+      'settings.errPattern': '格式不符合要求',
+      'settings.errMissing': '路径不存在',
+      'settings.errNotDirectory': '应当是一个文件夹',
+      'settings.errNotFile': '应当是一个文件',
+      'settings.errMin': '不能小于 {min}',
+      'settings.errMax': '不能大于 {max}',
+      'settings.pickDirectory': '选择文件夹',
+      'settings.pickFile': '选择文件',
+      'settings.up': '上一级',
+      'settings.choose': '选择',
+      'settings.emptyFolder': '（空文件夹）',
+      'settings.pathHint': '路径',
+      'settings.loading': '读取中…',
       'extensions.drop': '把拓展包文件夹拖到这里',
       'extensions.pathPlaceholder': '文件夹路径…',
       'extensions.register': '登记',
@@ -1268,6 +1300,13 @@ const thumbCache = new Map()
     }
 
     const GLYPHS = {
+      folder: [
+        'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+      ],
+      file: [
+        'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z',
+        'M14 3v5h5',
+      ],
       gear: [
         'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z',
         'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
@@ -1340,6 +1379,10 @@ const thumbCache = new Map()
       })()
       return entry
     }
+
+    // A canvas is not a document: the desktop app's spell checker only draws squiggles under
+    // node titles, widget values and paths.
+    const NO_SPELL = { spellCheck: false, autoCorrect: 'off', autoCapitalize: 'off', autoComplete: 'off' }
 
     function Glyph(name, size) {
       const paths = GLYPHS[name] ?? []
@@ -1655,7 +1698,89 @@ const thumbCache = new Map()
         fontSize: '11px',
         color: 'var(--dsw-alias-label-secondary)',
       },
+      pickerWindow: {
+        position: 'absolute',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: '520px',
+        height: '420px',
+        maxWidth: '94%',
+        maxHeight: '84%',
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        borderRadius: '10px',
+        boxShadow: '0 18px 40px rgba(0, 0, 0, 0.32)',
+        zIndex: 32,
+        overflow: 'hidden',
+      },
+      pickerBar: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '8px 10px',
+        borderBottom: '1px solid var(--dsw-alias-border-l2)',
+      },
+      pickerList: {
+        flex: '1',
+        minHeight: 0,
+        overflowY: 'auto',
+        padding: '6px',
+      },
+      pickerRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '7px',
+        width: '100%',
+        padding: '5px 7px',
+        boxSizing: 'border-box',
+        border: 'none',
+        borderRadius: '6px',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: '12px',
+        textAlign: 'left',
+        cursor: 'pointer',
+      },
+      pickerRowActive: {
+        background: 'var(--dsw-alias-bg-layer-2)',
+      },
+      pickerIcon: {
+        display: 'flex',
+        flex: 'none',
+        color: 'var(--dsw-alias-label-tertiary)',
+      },
+      pickerName: {
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      },
+      settingsRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+      },
+      settingsBrowse: {
+        flex: 'none',
+        padding: '5px 10px',
+        borderRadius: '6px',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: '11px',
+        cursor: 'pointer',
+      },
+      settingsFieldError: {
+        fontSize: '10px',
+        lineHeight: '14px',
+        color: 'var(--dsw-alias-state-error-primary)',
+      },
       settingsInput: {
+        flex: '1 1 auto',
+        minWidth: 0,
         width: '100%',
         padding: '5px 8px',
         boxSizing: 'border-box',
@@ -2323,6 +2448,9 @@ const thumbCache = new Map()
       const [settingsDraft, setSettingsDraft] = React.useState({})
       const [settingsBusy, setSettingsBusy] = React.useState(false)
       const [settingsError, setSettingsError] = React.useState(null)
+      const [settingsFieldErrors, setSettingsFieldErrors] = React.useState({})
+      // The canvas' own folder picker, used when the desktop app cannot show a native one.
+      const [settingsPicker, setSettingsPicker] = React.useState(null)
       // The tile under the pointer, for extensions that draw their own hover card.
       const [extensionHover, setExtensionHover] = React.useState(null)
       // Which extension tile is being dragged, and the menu element for hit-testing.
@@ -4068,6 +4196,7 @@ const thumbCache = new Map()
       function closeSettings() {
         setSettingsDialog(null)
         setSettingsDraft({})
+        setSettingsFieldErrors({})
         setSettingsError(null)
       }
 
@@ -4091,6 +4220,7 @@ const thumbCache = new Map()
                 : (field.default !== undefined ? field.default : (field.type === 'boolean' ? false : ''))
             }
             setSettingsDraft(draft)
+            setSettingsFieldErrors({})
             setSettingsError(null)
           })
           .catch(() => {
@@ -4103,6 +4233,137 @@ const thumbCache = new Map()
           cancelled = true
         }
       }, [settingsDialog, extensions])
+
+      /** One field against the rules its manifest declared; null when it passes. */
+      async function validateSettingsField(field, value) {
+        const rules = field.validate ?? {}
+        const text = value === undefined || value === null ? '' : String(value)
+        if (rules.required === true && text.trim() === '') return tr('settings.errRequired')
+        if (typeof rules.pattern === 'string' && text !== '') {
+          try {
+            if (new RegExp(rules.pattern).test(text) !== true) return tr('settings.errPattern')
+          } catch {
+            // A broken pattern is ignored; the Host already refused to hand one over.
+          }
+        }
+        if (typeof rules.min === 'number' && text !== '' && Number(text) < rules.min) {
+          return tr('settings.errMin', { min: rules.min })
+        }
+        if (typeof rules.max === 'number' && text !== '' && Number(text) > rules.max) {
+          return tr('settings.errMax', { max: rules.max })
+        }
+        if ((rules.path === 'directory' || rules.path === 'file') && text.trim() !== '') {
+          try {
+            const response = await fetch('/node-canvas/probe-path?path=' + encodeURIComponent(text.trim()), { cache: 'no-store' })
+            const payload = response.ok === true ? await response.json() : null
+            if (payload !== null && payload.exists !== true) return tr('settings.errMissing')
+            if (payload !== null && rules.path === 'directory' && payload.isDirectory !== true) {
+              return tr('settings.errNotDirectory')
+            }
+            if (payload !== null && rules.path === 'file' && payload.isFile !== true) {
+              return tr('settings.errNotFile')
+            }
+          } catch {
+            // An unreachable Host must not stop a save; the file is still written.
+          }
+        }
+        return null
+      }
+
+      /** Read one folder for the picker; an empty path lists the drives. */
+      async function loadPicker(target) {
+        setSettingsPicker((current) => (current === null ? current : { ...current, loading: true, error: null }))
+        try {
+          const response = await fetch('/node-canvas/list-dir?path=' + encodeURIComponent(target), { cache: 'no-store' })
+          const payload = await response.json().catch(() => null)
+          if (response.ok !== true || payload?.ok !== true) throw new Error(payload?.error ?? 'HTTP ' + response.status)
+          setSettingsPicker((current) => (current === null ? current : {
+            ...current,
+            loading: false,
+            path: typeof payload.path === 'string' ? payload.path : target,
+            parent: typeof payload.parent === 'string' ? payload.parent : null,
+            entries: Array.isArray(payload.entries) ? payload.entries : [],
+            selected: typeof payload.selected === 'string' ? payload.selected : null,
+          }))
+        } catch (error) {
+          setSettingsPicker((current) => (current === null ? current : { ...current, loading: false, error: error.message }))
+        }
+      }
+
+      function openSettingsPicker(field) {
+        const value = settingsDraft[field.key]
+        setSettingsPicker({
+          key: field.key,
+          kind: field.pick === 'file' ? 'file' : 'directory',
+          label: settingsText(field.label ?? field.key),
+          path: typeof value === 'string' ? value : '',
+          parent: null,
+          entries: [],
+          selected: null,
+          loading: true,
+          error: null,
+        })
+        void loadPicker(typeof value === 'string' ? value : '')
+      }
+
+      function applyPickedPath(value) {
+        if (settingsPicker === null) return
+        const key = settingsPicker.key
+        setSettingsDraft((draft) => ({ ...draft, [key]: value }))
+        setSettingsFieldErrors((errors) => {
+          const next = { ...errors }
+          delete next[key]
+          return next
+        })
+        setSettingsPicker(null)
+      }
+
+      function confirmPicker() {
+        if (settingsPicker === null) return
+        if (settingsPicker.kind === 'file') {
+          if (settingsPicker.selected !== null) applyPickedPath(settingsPicker.selected)
+          return
+        }
+        if (settingsPicker.path !== '') applyPickedPath(settingsPicker.path)
+      }
+
+      /** The native picker when the desktop app has one, the canvas' own folder list otherwise. */
+      async function browseSettingsField(field) {
+        const current = settingsDraft[field.key]
+        try {
+          const probe = await fetch('/node-canvas/pick-path', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ probe: true }),
+          }).then((response) => (response.ok === true ? response.json() : null))
+          if (probe?.available !== true) {
+            openSettingsPicker(field)
+            return
+          }
+          const response = await fetch('/node-canvas/pick-path', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              kind: field.pick === 'file' ? 'file' : 'directory',
+              title: settingsText(field.label ?? field.key),
+              defaultPath: typeof current === 'string' ? current : '',
+            }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (response.ok !== true || payload?.ok !== true) {
+            openSettingsPicker(field)
+            return
+          }
+          if (payload.canceled === true) return
+          if (typeof payload.value !== 'string' || payload.value === '') {
+            openSettingsPicker(field)
+            return
+          }
+          applyPickedPath(payload.value)
+        } catch {
+          openSettingsPicker(field)
+        }
+      }
 
       /** Write the form back into the extension's folder; its host module picks it up next call. */
       async function saveSettings() {
@@ -4120,6 +4381,17 @@ const thumbCache = new Map()
             values[field.key] = raw === undefined || raw === null ? '' : String(raw)
           }
         }
+        const fieldErrors = {}
+        for (const field of section.settings) {
+          const problem = await validateSettingsField(field, values[field.key])
+          if (problem !== null) fieldErrors[field.key] = problem
+        }
+        if (Object.keys(fieldErrors).length > 0) {
+          setSettingsFieldErrors(fieldErrors)
+          setSettingsError(null)
+          return
+        }
+        setSettingsFieldErrors({})
         setSettingsBusy(true)
         setSettingsError(null)
         try {
@@ -5885,6 +6157,7 @@ const thumbCache = new Map()
             key: 'w:' + spec.index,
             style: { ...row, alignItems: 'stretch', padding: '4px 8px', borderRadius: '8px' },
           }, h('textarea', {
+            ...NO_SPELL,
             defaultValue: shown,
             style: {
               width: '100%',
@@ -5991,6 +6264,7 @@ const thumbCache = new Map()
           }
           if (options.length === 0) {
             return h('div', { key: 'w:' + spec.index, style: row }, [label, h('input', {
+              ...NO_SPELL,
               defaultValue: shown,
               style: field,
               onPointerDown: stop,
@@ -6040,6 +6314,7 @@ const thumbCache = new Map()
             ? (event) => scrubWidget(event, node, spec)
             : stop,
         }, [label, h('input', {
+          ...NO_SPELL,
           defaultValue: shown,
           style: field,
           onPointerDown: stop,
@@ -6185,6 +6460,7 @@ const thumbCache = new Map()
 
         function inlineEditor(initial, commit) {
           return h('input', {
+            ...NO_SPELL,
             key: 'input',
             autoFocus: true,
             defaultValue: initial,
@@ -6321,6 +6597,7 @@ const thumbCache = new Map()
           }, [
             editingTitle
               ? h('input', {
+                  ...NO_SPELL,
                   key: 'input',
                   autoFocus: true,
                   defaultValue: node.title,
@@ -6511,6 +6788,7 @@ const thumbCache = new Map()
           ]),
           h('label', { key: 'label-name', style: S.fieldLabel }, tr('props.name')),
           h('input', {
+            ...NO_SPELL,
             key: 'name',
             autoFocus: true,
             defaultValue: node.title,
@@ -6524,6 +6802,7 @@ const thumbCache = new Map()
           }),
           h('label', { key: 'label-type', style: S.fieldLabel }, tr('props.type')),
           h('input', {
+            ...NO_SPELL,
             key: 'type',
             defaultValue: node.type,
             placeholder: tr('props.typeHint'),
@@ -6540,6 +6819,7 @@ const thumbCache = new Map()
             h('div', { key: 'w' }, [
               h('label', { key: 'label', style: S.fieldLabel }, tr('props.width')),
               h('input', {
+                ...NO_SPELL,
                 key: 'input',
                 type: 'number',
                 min: 1,
@@ -6556,6 +6836,7 @@ const thumbCache = new Map()
             h('div', { key: 'h' }, [
               h('label', { key: 'label', style: S.fieldLabel }, tr('props.height')),
               h('input', {
+                ...NO_SPELL,
                 key: 'input',
                 type: 'number',
                 min: 1,
@@ -6615,6 +6896,7 @@ const thumbCache = new Map()
           ]),
           h('label', { key: 'label-widgets', style: S.fieldLabel }, tr('props.widgets')),
           h('textarea', {
+            ...NO_SPELL,
             key: 'widgets',
             rows: 3,
             spellCheck: false,
@@ -8155,6 +8437,7 @@ const thumbCache = new Map()
               style: { display: 'flex', gap: '6px' },
             }, [
               h('input', {
+                ...NO_SPELL,
                 key: 'input',
                 ref: extensionPathRef,
                 placeholder: tr('extensions.pathPlaceholder'),
@@ -8262,6 +8545,7 @@ const thumbCache = new Map()
                   ? tr('extensions.removeMessage', { name: dialog.name ?? dialog.value })
                   : tr('dialog.deleteMessage', { name: dialog.value }))
               : h('input', {
+                  ...NO_SPELL,
                   key: 'name',
                   ref: nameInputRef,
                   autoFocus: true,
@@ -8432,6 +8716,7 @@ const thumbCache = new Map()
                       h('span', { key: 'label', style: S.settingsFieldLabel }, settingsText(field.label ?? field.key)),
                       field.type === 'boolean'
                         ? h('input', {
+                            ...NO_SPELL,
                             key: 'input',
                             type: 'checkbox',
                             checked: settingsDraft[field.key] === true,
@@ -8449,17 +8734,42 @@ const thumbCache = new Map()
                               const label = typeof option === 'string' ? option : settingsText(option.label ?? value)
                               return h('option', { key: 'option:' + value, value }, label)
                             }))
-                          : h('input', {
-                              key: 'input',
-                              type: field.type === 'number' ? 'number' : 'text',
-                              value: settingsDraft[field.key] ?? '',
-                              placeholder: typeof field.placeholder === 'string' ? field.placeholder : '',
-                              style: S.settingsInput,
-                              onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
-                            }),
+                          : h('div', { key: 'row', style: S.settingsRow }, [
+                              h('input', {
+                                ...NO_SPELL,
+                                key: 'input',
+                                type: field.type === 'number' ? 'number' : 'text',
+                                value: settingsDraft[field.key] ?? '',
+                                placeholder: typeof field.placeholder === 'string' ? field.placeholder : '',
+                                style: S.settingsInput,
+                                onChange: (event) => {
+                                  setSettingsFieldErrors((errors) => {
+                                    if (errors[field.key] === undefined) return errors
+                                    const next = { ...errors }
+                                    delete next[field.key]
+                                    return next
+                                  })
+                                  setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value }))
+                                },
+                              }),
+                              field.pick === undefined
+                                ? null
+                                : h('button', {
+                                    key: 'browse',
+                                    type: 'button',
+                                    title: tr('settings.browse'),
+                                    style: S.settingsBrowse,
+                                    onClick: () => {
+                                      void browseSettingsField(field)
+                                    },
+                                  }, tr('settings.browse')),
+                            ]),
                       field.hint === undefined
                         ? null
                         : h('span', { key: 'hint', style: S.settingsHint }, settingsText(field.hint)),
+                      settingsFieldErrors[field.key] === undefined
+                        ? null
+                        : h('span', { key: 'error', style: S.settingsFieldError }, settingsFieldErrors[field.key]),
                     ]))),
                     settingsError === null
                       ? null
@@ -8489,6 +8799,100 @@ const thumbCache = new Map()
             ]),
           ])
 
+      const settingsPickerEl = settingsPicker === null
+        ? null
+        : h('div', {
+            key: 'settings-picker',
+            style: S.pickerWindow,
+            onPointerDown: (event) => event.stopPropagation(),
+          }, [
+            h('div', { key: 'header', style: S.settingsHeader }, [
+              h('span', { key: 'icon', style: { display: 'flex', color: 'var(--dsw-alias-label-secondary)' } }, Glyph('folder', 15)),
+              h('span', {
+                key: 'title',
+                style: { fontSize: '13px', fontWeight: '500', color: 'var(--dsw-alias-label-primary)' },
+              }, settingsPicker.kind === 'file' ? tr('settings.pickFile') : tr('settings.pickDirectory')),
+              h('button', {
+                key: 'close',
+                type: 'button',
+                title: tr('settings.close'),
+                style: S.settingsClose,
+                onClick: () => setSettingsPicker(null),
+              }, Glyph('close', 14)),
+            ]),
+            h('div', { key: 'bar', style: S.pickerBar }, [
+              h('button', {
+                key: 'up',
+                type: 'button',
+                title: tr('settings.up'),
+                disabled: settingsPicker.parent === null,
+                style: { ...S.settingsBrowse, opacity: settingsPicker.parent === null ? 0.45 : 1 },
+                onClick: () => {
+                  if (settingsPicker.parent !== null) void loadPicker(settingsPicker.parent)
+                },
+              }, tr('settings.up')),
+              h('input', {
+                ...NO_SPELL,
+                key: 'path',
+                value: settingsPicker.path,
+                placeholder: tr('settings.pathHint'),
+                style: S.settingsInput,
+                onChange: (event) => setSettingsPicker((current) => (current === null ? current : { ...current, path: event.target.value })),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void loadPicker(settingsPicker.path)
+                  }
+                  event.stopPropagation()
+                },
+              }),
+            ]),
+            h('div', { key: 'list', style: S.pickerList }, settingsPicker.error !== null
+              ? h('div', { key: 'error', style: S.settingsHint }, settingsPicker.error)
+              : settingsPicker.entries.length === 0
+                ? h('div', { key: 'empty', style: S.settingsHint }, settingsPicker.loading ? tr('settings.loading') : tr('settings.emptyFolder'))
+                : settingsPicker.entries.map((entry) => h('button', {
+                    key: 'entry:' + entry.path,
+                    type: 'button',
+                    style: entry.isDirectory === true
+                      ? S.pickerRow
+                      : (settingsPicker.selected === entry.path ? { ...S.pickerRow, ...S.pickerRowActive } : S.pickerRow),
+                    onClick: () => {
+                      if (entry.isDirectory === true) {
+                        void loadPicker(entry.path)
+                        return
+                      }
+                      if (settingsPicker.kind !== 'file') return
+                      setSettingsPicker((current) => (current === null ? current : { ...current, selected: entry.path }))
+                    },
+                    onDoubleClick: () => {
+                      if (entry.isDirectory === true || settingsPicker.kind !== 'file') return
+                      applyPickedPath(entry.path)
+                    },
+                  }, [
+                    h('span', { key: 'icon', style: S.pickerIcon }, Glyph(entry.isDirectory === true ? 'folder' : 'file', 14)),
+                    h('span', { key: 'name', style: S.pickerName }, entry.name),
+                  ]))),
+            h('div', { key: 'footer', style: S.settingsFooter }, [
+              h('span', { key: 'current', style: S.settingsHint }, settingsPicker.kind === 'file'
+                ? (settingsPicker.selected ?? settingsPicker.path)
+                : settingsPicker.path),
+              h('button', {
+                key: 'cancel',
+                type: 'button',
+                style: S.dialogButton,
+                onClick: () => setSettingsPicker(null),
+              }, tr('settings.cancel')),
+              h('button', {
+                key: 'choose',
+                type: 'button',
+                disabled: settingsPicker.kind === 'file' ? settingsPicker.selected === null : settingsPicker.path === '',
+                style: { ...S.dialogButton, ...S.dialogButtonPrimary },
+                onClick: confirmPicker,
+              }, tr('settings.choose')),
+            ]),
+          ])
+
       const dropOverlay = dragging
         ? h('div', { key: 'drop', style: S.dropOverlay }, tr('dragging'))
         : null
@@ -8502,7 +8906,7 @@ const thumbCache = new Map()
         // One handler for the whole panel: keys pressed while the toolbar or the library has
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
-      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, panelsEl, comboMenuEl, dropOverlay])
+      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, settingsPickerEl, panelsEl, comboMenuEl, dropOverlay])
     }
 
     function PanelIcon(props) {

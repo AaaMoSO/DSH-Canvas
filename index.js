@@ -224,6 +224,56 @@ async function handle(req, res) {
       }
       throw new HttpError(405, 'use GET or POST')
     }
+    if (url.pathname === `${PREFIX}/pick-path`) {
+      if (req.method !== 'POST') throw new HttpError(405, 'use POST')
+      const body = await readJson(req)
+      const dialog = await electronDialog()
+      // A probe lets the page know whether a native picker exists at all, without showing one.
+      if (body?.probe === true) {
+        send(res, 200, { ok: true, available: dialog !== null })
+        return
+      }
+      if (dialog === null) throw new HttpError(503, 'no native file dialog in this Host')
+      const kind = body?.kind === 'file' ? 'file' : 'directory'
+      const options = {
+        title: typeof body?.title === 'string' && body.title !== '' ? body.title.slice(0, 120) : undefined,
+        defaultPath: typeof body?.defaultPath === 'string' && body.defaultPath !== '' ? body.defaultPath : undefined,
+        properties: kind === 'file' ? ['openFile'] : ['openDirectory', 'createDirectory'],
+      }
+      if (kind === 'file' && Array.isArray(body?.filters)) {
+        options.filters = body.filters.slice(0, 8).filter((filter) => filter !== null
+          && typeof filter === 'object'
+          && typeof filter.name === 'string'
+          && Array.isArray(filter.extensions)).map((filter) => ({
+          name: filter.name.slice(0, 60),
+          extensions: filter.extensions.filter((ext) => typeof ext === 'string').slice(0, 12),
+        }))
+      }
+      const picked = await dialog.showOpenDialog(options)
+      const value = picked?.canceled === true ? null : (picked?.filePaths?.[0] ?? null)
+      send(res, 200, { ok: true, canceled: picked?.canceled === true, value })
+      return
+    }
+    if (url.pathname === `${PREFIX}/list-dir`) {
+      if (req.method !== 'GET') throw new HttpError(405, 'use GET')
+      send(res, 200, await listDirectory(String(url.searchParams.get('path') ?? '').trim()))
+      return
+    }
+    if (url.pathname === `${PREFIX}/probe-path`) {
+      if (req.method !== 'GET') throw new HttpError(405, 'use GET')
+      const target = String(url.searchParams.get('path') ?? '').trim()
+      if (target === '') {
+        send(res, 200, { ok: true, exists: false, isDirectory: false, isFile: false })
+        return
+      }
+      try {
+        const info = await stat(target)
+        send(res, 200, { ok: true, exists: true, isDirectory: info.isDirectory(), isFile: info.isFile() })
+      } catch {
+        send(res, 200, { ok: true, exists: false, isDirectory: false, isFile: false })
+      }
+      return
+    }
     if (url.pathname === `${PREFIX}/extensions/settings`) {
       const id = extensionId(url.searchParams.get('id'))
       if (id === null) throw new HttpError(400, 'extension id required')
@@ -397,6 +447,86 @@ async function loadExtensionHost(extension) {
   return entry
 }
 
+/**
+ * One level of the file system for the canvas' own picker: drives on an empty Windows path, a
+ * file's folder when a file was passed, otherwise its children. Directories come first.
+ */
+async function listDirectory(target) {
+  const windows = process.platform === 'win32'
+  let dir = target
+  let file = null
+  if (dir === '') {
+    if (windows !== true) return { ok: true, path: '/', parent: null, entries: (await children('/')) }
+    const entries = []
+    for (let code = 65; code <= 90; code += 1) {
+      const drive = String.fromCharCode(code) + ':\\'
+      try {
+        if ((await stat(drive)).isDirectory()) entries.push({ name: drive.slice(0, 2), path: drive, isDirectory: true })
+      } catch {
+        // No such drive.
+      }
+    }
+    return { ok: true, path: '', parent: null, entries }
+  }
+  try {
+    const info = await stat(dir)
+    if (info.isFile()) {
+      file = dir
+      dir = path.dirname(dir)
+    } else if (info.isDirectory() !== true) {
+      return { ok: false, error: 'not a folder' }
+    }
+  } catch {
+    return { ok: false, error: 'no such folder: ' + dir }
+  }
+  try {
+    const entries = await children(dir)
+    const parent = path.dirname(dir)
+    return {
+      ok: true,
+      path: dir,
+      parent: parent === dir ? null : parent,
+      entries,
+      ...(file === null ? {} : { selected: file }),
+    }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** Visible children of one folder, directories first. */
+async function children(dir) {
+  const listed = await readdir(dir, { withFileTypes: true })
+  const entries = []
+  for (const entry of listed) {
+    if (entry.name.startsWith('.')) continue
+    const full = path.join(dir, entry.name)
+    entries.push({ name: entry.name, path: full, isDirectory: entry.isDirectory() })
+  }
+  entries.sort((left, right) => {
+    if (left.isDirectory !== right.isDirectory) return left.isDirectory ? -1 : 1
+    return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
+  })
+  return entries
+}
+
+/**
+ * The native picker of the desktop app, or null when this Host has none (a plain Node process,
+ * for instance). Resolved per call so a plugin loaded before the app is ready still works.
+ */
+async function electronDialog() {
+  try {
+    const { createRequire } = await import('node:module')
+    const requireFromHere = createRequire(import.meta.url)
+    const electron = requireFromHere('electron')
+    const dialog = electron?.dialog ?? electron?.remote?.dialog
+    if (dialog !== null && dialog !== undefined && typeof dialog.showOpenDialog === 'function') return dialog
+  } catch {
+    // Not running inside Electron: the canvas falls back to typing the path.
+  }
+  return null
+}
+
 async function readConfigFile() {
   try {
     return JSON.parse(await readFile(path.join(fileURLToPath(new URL('./', import.meta.url)), 'config.json'), 'utf8'))
@@ -555,6 +685,24 @@ function settingsFields(raw) {
       }
     }
     if (typeof entry.placeholder === 'string') field.placeholder = entry.placeholder.slice(0, 200)
+    if (entry.pick === 'directory' || entry.pick === 'file') field.pick = entry.pick
+    else if (type === 'path') field.pick = 'directory'
+    if (entry.validate !== null && typeof entry.validate === 'object') {
+      const validate = {}
+      if (entry.validate.required === true) validate.required = true
+      if (typeof entry.validate.min === 'number') validate.min = entry.validate.min
+      if (typeof entry.validate.max === 'number') validate.max = entry.validate.max
+      if (typeof entry.validate.pattern === 'string' && entry.validate.pattern.length <= 200) {
+        try {
+          new RegExp(entry.validate.pattern)
+          validate.pattern = entry.validate.pattern
+        } catch {
+          // A broken pattern is ignored rather than breaking the whole form.
+        }
+      }
+      if (entry.validate.path === 'directory' || entry.validate.path === 'file') validate.path = entry.validate.path
+      if (Object.keys(validate).length > 0) field.validate = validate
+    }
     if (typeof entry.default === 'string' || typeof entry.default === 'number' || typeof entry.default === 'boolean') {
       field.default = entry.default
     }

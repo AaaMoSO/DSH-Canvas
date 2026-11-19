@@ -20,7 +20,9 @@ remote execution backend when you need its node pack.
 - **Extension settings**: the gear under the puzzle menu's plus opens a settings window with an
   index of extensions on the left and the selected form on the right. A package declares its
   fields in its own `extension.json` (values only the user knows, such as the ComfyUI folder and
-  its Python); the canvas writes them into that package's `settings.json`.
+  its Python); the canvas writes them into that package's `settings.json`. Path fields get a
+  browse button (the canvas' own folder browser when the desktop app has no native picker), and
+  a package may attach `validate` rules that the form checks before saving.
 
 ## Install
 

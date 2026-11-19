@@ -45,15 +45,22 @@ export function setup(api) {
   "id": "example",
   "name": "Example",
   "settings": [
-    { "key": "root", "type": "path", "label": { "en": "Folder", "zh": "目录" }, "hint": { "en": "…", "zh": "…" } },
-    { "key": "url", "type": "text", "placeholder": "http://127.0.0.1:8188" },
+    {
+      "key": "root", "type": "path", "pick": "directory",
+      "label": { "en": "Folder", "zh": "目录" }, "hint": { "en": "…", "zh": "…" },
+      "validate": { "required": true, "path": "directory" }
+    },
+    { "key": "exe", "type": "path", "pick": "file", "validate": { "path": "file" } },
+    { "key": "url", "type": "text", "placeholder": "http://127.0.0.1:8188", "validate": { "required": true, "pattern": "^https?://" } },
     { "key": "auto", "type": "boolean", "default": true },
-    { "key": "timeout", "type": "number", "default": 600000 }
+    { "key": "timeout", "type": "number", "default": 600000, "validate": { "min": 1000 } }
   ]
 }
 ```
 
 - `type` 取 `text / path / number / boolean / select`（`select` 用 `options: [{ value, label }]`）；
+- `pick` 给 `path` 字段配一个「浏览…」按钮（`directory` 或 `file`）；宿主有原生选择框时用它，否则用画布内的文件浏览器；
+- `validate` 支持 `required`、`pattern`（正则字符串）、`min` / `max`（数字）与 `path: "file" | "directory"`（保存前由宿主检查是否真实存在），不通过时该字段下方给出原因；
 - `label` 与 `hint` 可以是一条字符串，也可以是 `{ en, zh }`，画布按当前语言取用；
 - 只声明字段，不存值：保存时画布把值写成该拓展目录下的 `settings.json`（扁平值），并让
   `host.mjs` 重新加载，所以 `host.mjs` 里直接读这个文件即可。
