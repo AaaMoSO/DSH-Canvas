@@ -5723,7 +5723,7 @@ const thumbCache = new Map()
           size: { w: size.w, h: size.h },
         }
         doorPhaseRef.current = 'closing'
-        setSlide({ content: 0, animate: false, minimap: 0 })
+        setSlide({ page: 0, content: 0, animate: false, minimap: 0 })
       }
 
       React.useLayoutEffect(() => {
@@ -5745,14 +5745,14 @@ const thumbCache = new Map()
             return undefined
           }
           doorPhaseRef.current = 'staging'
-          // Hold the sheet at the panel's own geometry for one beat; the widening happens next.
+          // Full geometry, held back by the transform so the frame does not move at all.
           setDoor({
-            left: cell.left - origin.x,
+            left: -origin.x,
             top: cell.top - origin.y,
-            width: cell.width,
+            width: cell.left + cell.width,
             height: cell.height,
           })
-          setSlide({ content: 0, animate: false, minimap: -cell.left })
+          setSlide({ page: cell.left, content: 0, animate: false, minimap: -cell.left })
           return undefined
         }
 
@@ -5761,32 +5761,16 @@ const thumbCache = new Map()
           // The sheet is about to fill the window; measuring now means the overview is drawn with
           // its final viewport before the slide starts, instead of changing mid-way.
           syncShell()
-          const origin = doorOriginRef.current ?? { x: 0, y: 0 }
           const frame = requestAnimationFrame(() => {
-            // Widen to the left while the graph is pushed back by the same amount, so the nodes
-            // stay put and the toolbar's right edge never leaves the window.
-            setDoor({
-              left: -origin.x,
-              top: cell.top - origin.y,
-              width: cell.left + cell.width,
-              height: cell.height,
-            })
-            setSlide({ content: cell.left, animate: true, minimap: -cell.left })
+            setSlide({ page: 0, content: cell.left, animate: true, minimap: -cell.left })
           })
           return () => cancelAnimationFrame(frame)
         }
 
         if (phase === 'closing') {
           doorPhaseRef.current = 'closingNow'
-          const origin = doorOriginRef.current ?? { x: 0, y: 0 }
           const frame = requestAnimationFrame(() => {
-            setDoor({
-              left: cell.left - origin.x,
-              top: cell.top - origin.y,
-              width: cell.width,
-              height: cell.height,
-            })
-            setSlide({ content: -cell.left, animate: true, minimap: 0 })
+            setSlide({ page: cell.left, content: -cell.left, animate: true, minimap: 0 })
           })
           return () => cancelAnimationFrame(frame)
         }
@@ -7020,7 +7004,7 @@ const thumbCache = new Map()
       // are computed first.
       const animating = slide !== null && slide.animate === true
       const canvasShift = slide === null ? 0 : slide.content
-      // The sheet's own shift is gone: it widens to the left instead of travelling.
+      const pageShift = slide === null ? 0 : slide.page
       // The overview rides inside the canvas sheet, so it needs its own static offset instead
       // of an animated counter (see minimapShift usage below).
       const minimapShift = slide === null ? 0 : (slide.minimap ?? 0)
@@ -7091,7 +7075,17 @@ const thumbCache = new Map()
         // the saved library workflow or a draft.
         h('div', {
           key: 'workflow-state',
-          style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' },
+          style: {
+            marginLeft: 'auto',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            // The sheet slides under this cluster; the counter-shift keeps it still. It always
+            // rides in its own layer, so the pixels are rasterised once instead of per frame.
+            transform: 'translate3d(' + (-pageShift) + 'px, 0, 0)',
+            transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
+            backfaceVisibility: 'hidden',
+          },
         }, [
           h('button', {
             key: 'run',
@@ -7207,9 +7201,14 @@ const thumbCache = new Map()
       const emptyEl = nodeCount === 0
         ? h('div', {
             key: 'empty',
-            // The card is centred in the shell; the sheet now widens under it without travelling,
-            // so it needs no counter-shift of its own.
-            style: S.emptyWrap,
+            style: {
+              ...S.emptyWrap,
+              // The card is centred in the shell, but only half of the widening is visible while
+              // the sheet travels; half the counter keeps it centred in what the eye can see.
+              transform: pageShift === 0 ? 'none' : 'translateX(' + (-pageShift / 2) + 'px)',
+              transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
+              willChange: animating ? 'transform' : 'auto',
+            },
           }, h('div', {
             style: S.emptyCard,
             onPointerDown: (event) => event.stopPropagation(),
@@ -7293,10 +7292,13 @@ const thumbCache = new Map()
             width: door.width + 'px',
             height: door.height + 'px',
             zIndex: 100,
-            // The right edge is anchored (left and width move together), so the chrome on the
-            // right does not travel while the sheet grows over the sidebar.
+            transform: pageShift === 0 ? 'none' : 'translateX(' + pageShift + 'px)',
+            // Promoted before the slide starts, not on the same frame: a layer created mid-flight
+            // re-rasterises the chrome once, which reads as a flicker.
+            willChange: 'transform',
             boxShadow: animating ? '0 0 34px rgba(0, 0, 0, 0.30)' : 'none',
-            transition: animating ? 'left ' + DOOR_MS + 'ms ease, width ' + DOOR_MS + 'ms ease' : 'none',
+            // only transform animates: the layout never moves, so nothing has to chase it
+            transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
           }
 
       /** True while the pointer is over the menu or the band it opened. */
