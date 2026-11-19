@@ -7010,6 +7010,17 @@ const thumbCache = new Map()
       const minimapShift = slide === null ? 0 : (slide.minimap ?? 0)
 
       /**
+       * A window centred in the sheet: widening it by cell.left would move the centre by half of
+       * that, so the half-shift cancels the jump and animates it back to the new centre.
+       */
+      function doorCentered(base) {
+        return {
+          transform: base + ' translateX(' + (-pageShift / 2) + 'px)',
+          transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
+        }
+      }
+
+      /**
        * Chrome anchored to the sheet's right edge travels with the slide; this cancels exactly
        * that shift, on the same clock, so the element keeps its place on screen. It rides in its
        * own layer so the pixels are rasterised once instead of per frame.
@@ -8415,7 +8426,7 @@ const thumbCache = new Map()
               position: 'absolute',
               left: '50%',
               top: '50%',
-              transform: 'translate(-50%, -50%)',
+              ...doorCentered('translate(-50%, -50%)'),
               width: '360px',
               padding: '16px',
               boxSizing: 'border-box',
@@ -8539,7 +8550,7 @@ const thumbCache = new Map()
               position: 'absolute',
               left: '50%',
               top: '56px',
-              transform: 'translateX(-50%)',
+              ...doorCentered('translateX(-50%)'),
               width: '288px',
               padding: '14px',
               boxSizing: 'border-box',
@@ -8687,7 +8698,7 @@ const thumbCache = new Map()
         ? null
         : h('div', {
             key: 'settings-dialog',
-            style: S.settingsWindow,
+            style: { ...S.settingsWindow, ...doorCentered('translate(-50%, -50%)') },
             onPointerDown: (event) => event.stopPropagation(),
           }, [
             h('div', { key: 'header', style: S.settingsHeader }, [
@@ -8832,7 +8843,7 @@ const thumbCache = new Map()
         ? null
         : h('div', {
             key: 'settings-picker',
-            style: S.pickerWindow,
+            style: { ...S.pickerWindow, ...doorCentered('translate(-50%, -50%)') },
             onPointerDown: (event) => event.stopPropagation(),
           }, [
             h('div', { key: 'header', style: S.settingsHeader }, [
