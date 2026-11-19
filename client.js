@@ -18,6 +18,7 @@ const REMOTE_RUN_KEY = 'dsh.node-canvas.remoteRun.v1'
 const REMOTE_RUN_MAX_AGE = 6 * 60 * 60 * 1000
 const RUNS_POLL_MS = 2500
 const REMOTE_POLL_MS = 800
+const SERVICE_POLL_MS = 1500
 
 /**
  * The run domain, owned outside the panel.
@@ -30,14 +31,29 @@ function createRunController() {
   const listeners = new Set()
   let runs = []
   let remoteRun = null
+  let services = {}
   let backends = []
+  let serviceTimer = 0
   let runsTimer = 0
   let runsSignature = ''
   let followToken = 0
   let started = false
 
   function snapshot() {
-    return { runs, remoteRun }
+    return { runs, remoteRun, services }
+  }
+
+  /** Merge a patch into the service map; the panel keeps calling this like a state setter. */
+  function updateServices(mutator) {
+    const next = typeof mutator === 'function' ? mutator(services) : mutator
+    if (next === null || typeof next !== 'object') return
+    services = next
+    emit()
+    scheduleServicePoll()
+  }
+
+  function setService(id, value) {
+    updateServices((current) => ({ ...current, [id]: value }))
   }
 
   function emit() {
@@ -84,6 +100,78 @@ function createRunController() {
     emit()
   }
 
+  /** What a backend says about its service, normalized across providers. */
+  async function probeBackend(backend) {
+    if (typeof backend.status === 'function') {
+      try {
+        const info = await backend.status()
+        if (info === null || typeof info !== 'object') return null
+        return {
+          starting: info.starting === true,
+          ready: info.ready === true || info.reachable === true || info.status === 'ready',
+          startedAt: typeof info.startedAt === 'number' ? info.startedAt : undefined,
+          error: typeof info.error === 'string' ? info.error : undefined,
+        }
+      } catch {
+        return null
+      }
+    }
+    if (typeof backend.probe === 'function') {
+      try {
+        return { starting: false, ready: (await backend.probe()) === true, startedAt: undefined, error: undefined }
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
+  /** Adopt what each backend already reports: a running service counts as started, a boot is followed. */
+  async function trackServices() {
+    for (const backend of backends) {
+      if (Object.prototype.hasOwnProperty.call(services, backend.id)) continue
+      const info = await probeBackend(backend)
+      if (info === null) {
+        setService(backend.id, { status: 'idle', startedAt: 0 })
+      } else if (info.starting === true) {
+        setService(backend.id, { status: 'starting', startedAt: info.startedAt ?? Date.now() })
+      } else if (info.ready === true) {
+        setService(backend.id, { status: 'ready', startedAt: info.startedAt ?? Date.now() })
+      } else {
+        setService(backend.id, { status: 'idle', startedAt: 0 })
+      }
+    }
+  }
+
+  /** Ask again while something boots; the panel may be unmounted for the whole boot. */
+  function scheduleServicePoll() {
+    const booting = Object.values(services).some((state) => state !== null && typeof state === 'object' && state.status === 'starting')
+    if (booting !== true) {
+      if (serviceTimer !== 0) {
+        clearInterval(serviceTimer)
+        serviceTimer = 0
+      }
+      return
+    }
+    if (serviceTimer !== 0) return
+    serviceTimer = setInterval(() => {
+      void pollServices()
+    }, SERVICE_POLL_MS)
+  }
+
+  async function pollServices() {
+    for (const backend of backends) {
+      if (services[backend.id]?.status !== 'starting') continue
+      const info = await probeBackend(backend)
+      if (info === null || info.starting === true) continue
+      if (info.ready === true) {
+        setService(backend.id, { status: 'ready', startedAt: info.startedAt ?? services[backend.id]?.startedAt ?? Date.now() })
+      } else {
+        setService(backend.id, { status: 'idle', startedAt: 0, error: info.error ?? null })
+      }
+    }
+  }
+
   async function refreshRuns() {
     try {
       const response = await fetch('/node-canvas/runs', { cache: 'no-store' })
@@ -109,6 +197,7 @@ function createRunController() {
       void refreshRuns()
     }, RUNS_POLL_MS)
     restoreRemote()
+    void trackServices()
   }
 
   function stop() {
@@ -118,11 +207,16 @@ function createRunController() {
       runsTimer = 0
     }
     followToken += 1
+    if (serviceTimer !== 0) {
+      clearInterval(serviceTimer)
+      serviceTimer = 0
+    }
   }
 
   function setBackends(list) {
     backends = Array.isArray(list) ? list : []
     if (remoteRun === null) restoreRemote()
+    void trackServices()
   }
 
   /** Pick up a run that was still going when the panel went away. */
@@ -207,7 +301,17 @@ function createRunController() {
     }
   }
 
-  return { start, stop, subscribe, snapshot, refreshRuns, setBackends, startRemoteRun, cancelRemoteRun }
+  return {
+    start,
+    stop,
+    subscribe,
+    snapshot,
+    refreshRuns,
+    setBackends,
+    updateServices,
+    startRemoteRun,
+    cancelRemoteRun,
+  }
 }
 
 /**
@@ -2006,7 +2110,9 @@ const thumbCache = new Map()
       // Backends are *services*: enabling one starts its server, so ComfyUI workflows can run while
       // local workflows keep running on this plugin's own executor.
       // status: idle (never started / stopped), starting (booting), ready (answering).
-      const [serviceStates, setServiceStates] = useStored('serviceStates', {})
+      const [services, setServices] = React.useState(() => runController.snapshot().services)
+      const serviceStates = services
+      const setServiceStates = (mutator) => runController.updateServices(mutator)
       // Ticks once a second while something is booting, so the icon can count the seconds.
       const [serviceClock, setServiceClock] = React.useState(0)
       const [remoteRun, setRemoteRun] = React.useState(() => runController.snapshot().remoteRun)
@@ -2338,6 +2444,7 @@ const thumbCache = new Map()
         return runController.subscribe((snapshot) => {
           setRuns(snapshot.runs)
           setRemoteRun(snapshot.remoteRun)
+          setServices(snapshot.services)
         })
       }, [runController])
 
@@ -3515,70 +3622,6 @@ const thumbCache = new Map()
        * its run carries that workflow's name and the library row shows the same run; only a
        * draft canvas runs as the independent temporary workflow.
        */
-      /** Ask a backend what it is doing. Older backends may only answer "reachable". */
-      async function backendStatus(backend) {
-        if (typeof backend.status === 'function') {
-          try {
-            return await backend.status()
-          } catch {
-            return null
-          }
-        }
-        if (typeof backend.probe === 'function') {
-          try {
-            return { reachable: (await backend.probe()) === true }
-          } catch {
-            return null
-          }
-        }
-        return null
-      }
-
-      /**
-       * Follow a backend that is booting. The host keeps the process and its progress, so this
-       * only mirrors it — leaving the panel and coming back resumes here, not in a dead request.
-       */
-      async function syncBackendState(backend, isCancelled) {
-        let info = await backendStatus(backend)
-        if (info === null || isCancelled()) return
-        if (info.starting === true) {
-          setServiceStates((current) => ({
-            ...current,
-            [backend.id]: { status: 'starting', startedAt: info.startedAt ?? Date.now() },
-          }))
-          for (let attempt = 0; attempt < 1200; attempt += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 1500))
-            if (isCancelled()) return
-            info = await backendStatus(backend)
-            if (info === null || info.starting === true) continue
-            if (info.ready === true || info.reachable === true) {
-              setServiceStates((current) => ({
-                ...current,
-                [backend.id]: { status: 'ready', startedAt: info.startedAt ?? Date.now() },
-              }))
-              void prepareBackend(backend, { quiet: true })
-            } else {
-              setServiceStates((current) => ({ ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
-              if (typeof info.error === 'string' && info.error !== '') {
-                showNotice(tr('notice.backendFailed', { name: backend.name ?? backend.id, message: info.error }))
-              }
-            }
-            return
-          }
-          return
-        }
-        if (info.ready === true || info.reachable === true) {
-          setServiceStates((current) => (current[backend.id]?.status === 'ready'
-            ? current
-            : { ...current, [backend.id]: { status: 'ready', startedAt: info.startedAt ?? Date.now() } }))
-          void prepareBackend(backend, { quiet: true })
-          return
-        }
-        setServiceStates((current) => (current[backend.id] === undefined
-          ? current
-          : { ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
-      }
-
       /** Forget the node shapes one backend produced, cache included. */
       function dropBackendPack(backendId) {
         setPacks((current) => current.filter((pack) => pack.remote !== backendId))
@@ -3773,20 +3816,28 @@ const thumbCache = new Map()
       }, [loadBackendWorkflows, extensionFeatures.backends, serviceStates])
 
 
-      // A backend that is already running when the page loads counts as started, and its node
-      // shapes are refreshed without booting anything.
+      // The controller adopts and follows services; the panel only notices when one becomes
+      // ready (load its shapes) or gives up (say why).
+      const previousServicesRef = React.useRef(services)
       React.useEffect(() => {
-        let cancelled = false
-        const isCancelled = () => cancelled
-        void (async () => {
-          for (const backend of backends) {
-            await syncBackendState(backend, isCancelled)
+        const previous = previousServicesRef.current
+        previousServicesRef.current = services
+        for (const backend of extensionFeatures.backends) {
+          const before = previous[backend.id]?.status
+          const now = services[backend.id]?.status
+          if (before === now) continue
+          if (now === 'ready') {
+            const loaded = packs.some((pack) => pack.remote === backend.id)
+            if (loaded !== true) void prepareBackend(backend, { quiet: true })
+            void loadBackendWorkflows(backend.id)
+            continue
           }
-        })()
-        return () => {
-          cancelled = true
+          const message = services[backend.id]?.error
+          if (before === 'starting' && now === 'idle' && typeof message === 'string' && message !== '') {
+            showNotice(tr('notice.backendFailed', { name: backend.name ?? backend.id, message }))
+          }
         }
-      }, [backends])
+      }, [services, extensionFeatures.backends, loadBackendWorkflows, packs])
 
       const booting = Object.values(serviceStates).some((state) => state.status === 'starting')
       React.useEffect(() => {
