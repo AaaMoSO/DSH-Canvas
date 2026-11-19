@@ -6895,6 +6895,7 @@ const thumbCache = new Map()
       const remoteNames = backendWorkflows.source === activeSource ? backendWorkflows.names : []
       for (const name of remoteNames) {
         const active = name === currentWorkflow
+        const state = workflowRunState(name)
         workflowRows.push(h('button', {
           key: 'backend-workflow:' + name,
           type: 'button',
@@ -6934,7 +6935,14 @@ const thumbCache = new Map()
             ])
           },
         }, [
-          h('span', { key: 'dot', style: S.workflowDot }),
+          h('span', {
+            key: 'dot',
+            style: state === 'running'
+              ? { ...S.workflowDot, background: 'var(--dsw-alias-state-success-primary)' }
+              : state === 'error'
+                ? { ...S.workflowDot, background: 'var(--dsw-alias-state-error-primary)' }
+                : S.workflowDot,
+          }),
           h('span', { key: 'text', style: S.nodeName }, name),
         ]))
       }
