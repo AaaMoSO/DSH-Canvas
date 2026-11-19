@@ -520,7 +520,57 @@ async function describeExtension(entry) {
     hasPack,
     client,
     icon: icon !== null && /\.(svg|png|jpe?g|webp|gif)$/i.test(icon) ? icon : null,
+    // What this extension wants the user to fill in: declared in its own manifest, drawn by the
+    // canvas' settings window. Empty when the extension needs no input.
+    settings: settingsFields(manifest.settings),
   }
+}
+
+/**
+ * Normalise an extension's declared settings fields. The manifest owns the format; this only
+ * refuses entries the window could not draw.
+ */
+function settingsFields(raw) {
+  if (Array.isArray(raw) !== true) return []
+  const types = new Set(['text', 'path', 'number', 'boolean', 'select'])
+  const fields = []
+  for (const entry of raw.slice(0, 40)) {
+    if (entry === null || typeof entry !== 'object') continue
+    const key = typeof entry.key === 'string' ? entry.key.trim() : ''
+    if (/^[A-Za-z0-9_-]{1,64}$/.test(key) !== true) continue
+    const type = types.has(entry.type) ? entry.type : 'text'
+    const field = { key, type }
+    if (typeof entry.label === 'string') field.label = entry.label
+    else if (entry.label !== null && typeof entry.label === 'object') {
+      field.label = {}
+      for (const language of ['en', 'zh']) {
+        if (typeof entry.label[language] === 'string') field.label[language] = entry.label[language].slice(0, 120)
+      }
+    }
+    if (typeof entry.hint === 'string') field.hint = entry.hint.slice(0, 240)
+    else if (entry.hint !== null && typeof entry.hint === 'object') {
+      field.hint = {}
+      for (const language of ['en', 'zh']) {
+        if (typeof entry.hint[language] === 'string') field.hint[language] = entry.hint[language].slice(0, 240)
+      }
+    }
+    if (typeof entry.placeholder === 'string') field.placeholder = entry.placeholder.slice(0, 200)
+    if (typeof entry.default === 'string' || typeof entry.default === 'number' || typeof entry.default === 'boolean') {
+      field.default = entry.default
+    }
+    if (type === 'select' && Array.isArray(entry.options)) {
+      field.options = entry.options.slice(0, 40).map((option) => {
+        if (typeof option === 'string') return { value: option.slice(0, 120), label: option.slice(0, 120) }
+        if (option === null || typeof option !== 'object') return null
+        const value = String(option.value ?? '')
+        if (value === '') return null
+        const label = option.label !== null && typeof option.label === 'object' ? option.label : String(option.label ?? value)
+        return { value: value.slice(0, 120), label: typeof label === 'string' ? label.slice(0, 120) : label }
+      }).filter((option) => option !== null)
+    }
+    fields.push(field)
+  }
+  return fields
 }
 
 /** Normalise a path an extension asked to be served from its own folder; null when unsafe. */

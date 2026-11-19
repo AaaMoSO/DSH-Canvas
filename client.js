@@ -1533,9 +1533,10 @@ const thumbCache = new Map()
         left: '50%',
         top: '50%',
         transform: 'translate(-50%, -50%)',
-        width: '420px',
-        maxWidth: '92%',
-        maxHeight: '78%',
+        width: '640px',
+        height: '420px',
+        maxWidth: '94%',
+        maxHeight: '84%',
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
@@ -1545,6 +1546,77 @@ const thumbCache = new Map()
         boxShadow: '0 18px 40px rgba(0, 0, 0, 0.32)',
         zIndex: 30,
         overflow: 'hidden',
+      },
+      settingsPanes: {
+        display: 'flex',
+        flex: '1',
+        minHeight: 0,
+      },
+      settingsIndex: {
+        width: '176px',
+        flex: 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px',
+        padding: '8px',
+        boxSizing: 'border-box',
+        overflowY: 'auto',
+        borderRight: '1px solid var(--dsw-alias-border-l2)',
+      },
+      settingsIndexItem: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        width: '100%',
+        padding: '6px 8px',
+        boxSizing: 'border-box',
+        border: 'none',
+        borderRadius: '6px',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+        textAlign: 'left',
+        fontSize: '12px',
+      },
+      settingsIndexItemActive: {
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      settingsIndexIcon: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '18px',
+        height: '18px',
+        flex: 'none',
+        borderRadius: '5px',
+        background: 'var(--dsw-alias-bg-base)',
+        color: 'var(--dsw-alias-label-tertiary)',
+      },
+      settingsIndexIconImage: {
+        width: '18px',
+        height: '18px',
+        flex: 'none',
+        borderRadius: '5px',
+        objectFit: 'cover',
+        display: 'block',
+      },
+      settingsIndexName: {
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      },
+      settingsPanel: {
+        flex: '1',
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+      },
+      settingsSectionTitle: {
+        padding: '12px 12px 0',
+        fontSize: '12px',
+        fontWeight: '500',
+        color: 'var(--dsw-alias-label-primary)',
       },
       settingsHeader: {
         display: 'flex',
@@ -1566,25 +1638,6 @@ const thumbCache = new Map()
         background: 'transparent',
         color: 'var(--dsw-alias-label-secondary)',
         cursor: 'pointer',
-      },
-      settingsTabs: {
-        display: 'flex',
-        gap: '6px',
-        padding: '8px 12px 0',
-        flexWrap: 'wrap',
-      },
-      settingsTab: {
-        padding: '3px 10px',
-        borderRadius: '999px',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'transparent',
-        color: 'var(--dsw-alias-label-secondary)',
-        fontSize: '11px',
-        cursor: 'pointer',
-      },
-      settingsTabActive: {
-        borderColor: 'var(--dsw-alias-brand-primary)',
-        color: 'var(--dsw-alias-brand-primary)',
       },
       settingsBody: {
         display: 'flex',
@@ -2263,7 +2316,6 @@ const thumbCache = new Map()
         panels: [],
         hovers: [],
         backends: [],
-        settings: [],
       })
       const [openPanels, setOpenPanels] = useStored('openPanels', [])
       // The settings window is a canvas feature: extensions only add sections to it.
@@ -2658,7 +2710,7 @@ const thumbCache = new Map()
           const payload = await fetch('/node-canvas/extensions', { cache: 'no-store' })
             .then((response) => (response.ok === true ? response.json() : null))
           const formats = []
-          const features = { nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [], settings: [] }
+          const features = { nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [] }
           const sources = [...(payload?.extensions ?? [])].reverse()
           for (const extension of sources) {
             if (typeof extension.client !== 'string' || extension.client === '') continue
@@ -2683,8 +2735,6 @@ const thumbCache = new Map()
                   registerExtensionHover: (hover) => add(features.hovers, hover, (value) => typeof value.render === 'function'),
                   /** An execution backend: the canvas keeps editing, this runs the graph. */
                   registerBackend: (backend) => add(features.backends, backend, (value) => typeof value.id === 'string' && typeof value.start === 'function'),
-                  /** A section of the settings window: fields the extension needs the user to fill in. */
-                  registerSettings: (section) => add(features.settings, section, (value) => typeof value.id === 'string' && Array.isArray(value.fields)),
                 })
               } else if (module.adapter !== null && typeof module.adapter === 'object') {
                 // One-release compatibility with the first adapter-only shape.
@@ -2702,7 +2752,6 @@ const thumbCache = new Map()
             panels: features.panels.reverse(),
             hovers: features.hovers.reverse(),
             backends: features.backends.reverse(),
-            settings: features.settings.reverse(),
           })
         } catch {
           // The Host not answering leaves the registered capabilities as they were.
@@ -4001,8 +4050,9 @@ const thumbCache = new Map()
         return ''
       }
 
+      /** Extensions that declared settings fields in their own manifest. */
       function settingsSections() {
-        return Array.isArray(extensionFeatures.settings) ? extensionFeatures.settings : []
+        return (Array.isArray(extensions) ? extensions : []).filter((extension) => Array.isArray(extension.settings) && extension.settings.length > 0)
       }
 
       function settingsSection(id) {
@@ -4034,7 +4084,7 @@ const thumbCache = new Map()
             if (cancelled) return
             const stored = payload !== null && payload.values !== null && typeof payload.values === 'object' ? payload.values : {}
             const draft = {}
-            for (const field of section.fields) {
+            for (const field of section.settings) {
               const value = stored[field.key]
               draft[field.key] = value !== undefined
                 ? value
@@ -4052,7 +4102,7 @@ const thumbCache = new Map()
         return () => {
           cancelled = true
         }
-      }, [settingsDialog, extensionFeatures.settings])
+      }, [settingsDialog, extensions])
 
       /** Write the form back into the extension's folder; its host module picks it up next call. */
       async function saveSettings() {
@@ -4060,7 +4110,7 @@ const thumbCache = new Map()
         const section = settingsSection(settingsDialog.id)
         if (section === null) return
         const values = {}
-        for (const field of section.fields) {
+        for (const field of section.settings) {
           const raw = settingsDraft[field.key]
           if (field.type === 'boolean') values[field.key] = raw === true
           else if (field.type === 'number') {
@@ -8317,7 +8367,8 @@ const thumbCache = new Map()
             },
           }, option)))
 
-      // One window for every extension that needs the user to fill something in.
+      // One window for every extension that declared settings in its manifest: an index on the
+      // left, the selected extension's form on the right.
       const settingsSectionItem = settingsDialog === null ? null : settingsSection(settingsDialog.id)
       const settingsEl = settingsDialog === null
         ? null
@@ -8340,80 +8391,101 @@ const thumbCache = new Map()
                 onClick: closeSettings,
               }, Glyph('close', 14)),
             ]),
-            settingsSections().length > 1
-              ? h('div', { key: 'tabs', style: S.settingsTabs }, settingsSections().map((item) => h('button', {
-                  key: 'tab:' + item.id,
-                  type: 'button',
-                  style: item.id === settingsDialog.id
-                    ? { ...S.settingsTab, ...S.settingsTabActive }
-                    : S.settingsTab,
-                  onClick: () => {
-                    setSettingsError(null)
-                    setSettingsDialog({ id: item.id })
-                  },
-                }, settingsText(item.title ?? item.id))))
-              : null,
-            h('div', { key: 'body', style: S.settingsBody }, settingsSectionItem === null
-              ? h('div', { key: 'empty', style: S.settingsHint }, tr('settings.empty'))
-              : settingsSectionItem.fields.map((field) => h('label', {
-                  key: 'field:' + field.key,
-                  style: S.settingsField,
-                }, [
-                  h('span', { key: 'label', style: S.settingsFieldLabel }, settingsText(field.label ?? field.key)),
-                  field.type === 'boolean'
-                    ? h('input', {
-                        key: 'input',
-                        type: 'checkbox',
-                        checked: settingsDraft[field.key] === true,
-                        style: { width: '14px', height: '14px' },
-                        onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.checked })),
-                      })
-                    : field.type === 'select'
-                      ? h('select', {
-                          key: 'input',
-                          value: settingsDraft[field.key] ?? '',
-                          style: S.settingsInput,
-                          onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
-                        }, (field.options ?? []).map((option) => {
-                          const value = typeof option === 'string' ? option : String(option.value ?? '')
-                          const label = typeof option === 'string' ? option : settingsText(option.label ?? value)
-                          return h('option', { key: 'option:' + value, value }, label)
-                        }))
-                      : h('input', {
-                          key: 'input',
-                          type: field.type === 'number' ? 'number' : 'text',
-                          value: settingsDraft[field.key] ?? '',
-                          placeholder: typeof field.placeholder === 'string' ? field.placeholder : '',
-                          style: S.settingsInput,
-                          onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
-                        }),
-                  field.hint === undefined
-                    ? null
-                    : h('span', { key: 'hint', style: S.settingsHint }, settingsText(field.hint)),
-                ]))),
-            settingsError === null
-              ? null
-              : h('div', {
-                  key: 'error',
-                  style: { padding: '0 12px 8px', fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' },
-                }, settingsError),
-            h('div', { key: 'footer', style: S.settingsFooter }, [
-              h('span', { key: 'stored', style: S.settingsHint }, tr('settings.stored')),
-              h('button', {
-                key: 'cancel',
-                type: 'button',
-                style: S.dialogButton,
-                onClick: closeSettings,
-              }, tr('settings.cancel')),
-              h('button', {
-                key: 'save',
-                type: 'button',
-                disabled: settingsBusy,
-                style: { ...S.dialogButton, ...S.dialogButtonPrimary, opacity: settingsBusy ? 0.6 : 1 },
-                onClick: () => {
-                  void saveSettings()
-                },
-              }, settingsBusy ? tr('settings.saving') : tr('settings.save')),
+            h('div', { key: 'panes', style: S.settingsPanes }, [
+              h('div', { key: 'index', style: S.settingsIndex }, settingsSections().length === 0
+                ? h('div', { key: 'empty', style: { ...S.settingsHint, padding: '6px 8px' } }, tr('settings.empty'))
+                : settingsSections().map((item) => {
+                    const active = settingsDialog.id === item.id
+                    return h('button', {
+                      key: 'section:' + item.id,
+                      type: 'button',
+                      title: item.name ?? item.id,
+                      style: active ? { ...S.settingsIndexItem, ...S.settingsIndexItemActive } : S.settingsIndexItem,
+                      onClick: () => {
+                        setSettingsError(null)
+                        setSettingsDialog({ id: item.id })
+                      },
+                    }, [
+                      item.icon === null || item.icon === undefined
+                        ? h('span', { key: 'icon', style: S.settingsIndexIcon }, Glyph('puzzle', 13))
+                        : h('img', {
+                            key: 'icon',
+                            src: extensionIconUrl(item),
+                            alt: '',
+                            draggable: false,
+                            style: S.settingsIndexIconImage,
+                            onError: (event) => {
+                              event.currentTarget.style.visibility = 'hidden'
+                            },
+                          }),
+                      h('span', { key: 'name', style: S.settingsIndexName }, item.name ?? item.id),
+                    ])
+                  })),
+              h('div', { key: 'panel', style: S.settingsPanel }, settingsSectionItem === null
+                ? h('div', { key: 'empty', style: { ...S.settingsHint, padding: '12px' } }, tr('settings.empty'))
+                : [
+                    h('div', { key: 'section-title', style: S.settingsSectionTitle }, settingsSectionItem.name ?? settingsSectionItem.id),
+                    h('div', { key: 'fields', style: S.settingsBody }, settingsSectionItem.settings.map((field) => h('label', {
+                      key: 'field:' + field.key,
+                      style: S.settingsField,
+                    }, [
+                      h('span', { key: 'label', style: S.settingsFieldLabel }, settingsText(field.label ?? field.key)),
+                      field.type === 'boolean'
+                        ? h('input', {
+                            key: 'input',
+                            type: 'checkbox',
+                            checked: settingsDraft[field.key] === true,
+                            style: { width: '14px', height: '14px' },
+                            onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.checked })),
+                          })
+                        : field.type === 'select'
+                          ? h('select', {
+                              key: 'input',
+                              value: settingsDraft[field.key] ?? '',
+                              style: S.settingsInput,
+                              onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
+                            }, (field.options ?? []).map((option) => {
+                              const value = typeof option === 'string' ? option : String(option.value ?? '')
+                              const label = typeof option === 'string' ? option : settingsText(option.label ?? value)
+                              return h('option', { key: 'option:' + value, value }, label)
+                            }))
+                          : h('input', {
+                              key: 'input',
+                              type: field.type === 'number' ? 'number' : 'text',
+                              value: settingsDraft[field.key] ?? '',
+                              placeholder: typeof field.placeholder === 'string' ? field.placeholder : '',
+                              style: S.settingsInput,
+                              onChange: (event) => setSettingsDraft((current) => ({ ...current, [field.key]: event.target.value })),
+                            }),
+                      field.hint === undefined
+                        ? null
+                        : h('span', { key: 'hint', style: S.settingsHint }, settingsText(field.hint)),
+                    ]))),
+                    settingsError === null
+                      ? null
+                      : h('div', {
+                          key: 'error',
+                          style: { padding: '0 12px 8px', fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' },
+                        }, settingsError),
+                    h('div', { key: 'footer', style: S.settingsFooter }, [
+                      h('span', { key: 'stored', style: S.settingsHint }, tr('settings.stored')),
+                      h('button', {
+                        key: 'cancel',
+                        type: 'button',
+                        style: S.dialogButton,
+                        onClick: closeSettings,
+                      }, tr('settings.cancel')),
+                      h('button', {
+                        key: 'save',
+                        type: 'button',
+                        disabled: settingsBusy,
+                        style: { ...S.dialogButton, ...S.dialogButtonPrimary, opacity: settingsBusy ? 0.6 : 1 },
+                        onClick: () => {
+                          void saveSettings()
+                        },
+                      }, settingsBusy ? tr('settings.saving') : tr('settings.save')),
+                    ]),
+                  ]),
             ]),
           ])
 

@@ -32,14 +32,31 @@ export function setup(api) {
   api.registerToolbarAction({ id, title, icon?, label?, run(helpers) })
   api.registerPanel({ id, title, width?, render({ React, helpers, close, notify }) })
   api.registerExtensionHover({ render({ extension, React, iconUrl }) })
-  api.registerSettings({ id, title, fields: [ { key, type, label, placeholder?, hint?, default?, options? } ] })
 }
 ```
 
-`registerSettings` 在拼图菜单里 "+" 下方的**设置**窗口里加一节表单，用来填写只有用户才知道的东西
-（例如 ComfyUI 的安装目录、Python 路径）。`type` 取 `text / path / number / boolean / select`；
-`label` 与 `hint` 可以是字符串，也可以是 `{ en, zh }`，画布会按当前语言取用。保存时写入该拓展目录下的
-`settings.json`（扁平值），并让拓展的 `host.mjs` 重新加载，因此 `host.mjs` 里直接读这个文件即可。
+## 设置项（extension.json）
+
+需要用户填写的东西（例如 ComfyUI 的安装目录、Python 路径）写在拓展自己的 `extension.json` 里，
+画布只负责把它画出来：
+
+```json
+{
+  "id": "example",
+  "name": "Example",
+  "settings": [
+    { "key": "root", "type": "path", "label": { "en": "Folder", "zh": "目录" }, "hint": { "en": "…", "zh": "…" } },
+    { "key": "url", "type": "text", "placeholder": "http://127.0.0.1:8188" },
+    { "key": "auto", "type": "boolean", "default": true },
+    { "key": "timeout", "type": "number", "default": 600000 }
+  ]
+}
+```
+
+- `type` 取 `text / path / number / boolean / select`（`select` 用 `options: [{ value, label }]`）；
+- `label` 与 `hint` 可以是一条字符串，也可以是 `{ en, zh }`，画布按当前语言取用；
+- 只声明字段，不存值：保存时画布把值写成该拓展目录下的 `settings.json`（扁平值），并让
+  `host.mjs` 重新加载，所以 `host.mjs` 里直接读这个文件即可。
 
 `registerExtensionHover` 用来**替换拓展图标的原生悬停提示**：注册后画布不再显示 `title`，而是在图标
 左侧留出的位置渲染你的卡片（`extension` 里带 `name / description / icon / present` 等字段）。

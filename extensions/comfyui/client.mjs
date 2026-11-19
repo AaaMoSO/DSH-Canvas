@@ -334,61 +334,8 @@ const backend = {
   },
 }
 
-/**
- * The settings window asks for what only the user knows: where ComfyUI and its Python live. The
- * values land in this extension's own settings.json, which host.mjs reads on every call.
- */
-const settingsSection = {
-  id: 'comfyui',
-  title: 'ComfyUI',
-  fields: [
-    {
-      key: 'comfyuiRoot',
-      type: 'path',
-      label: { en: 'ComfyUI folder', zh: 'ComfyUI 根目录' },
-      placeholder: 'D:\\ComfyUI',
-      hint: { en: 'The folder that holds main.py.', zh: '包含 main.py 的那个文件夹。' },
-    },
-    {
-      key: 'pythonExe',
-      type: 'path',
-      label: { en: 'Python executable', zh: 'Python 解释器' },
-      placeholder: 'D:\\ComfyUI\\python\\python.exe',
-      hint: { en: 'Leave empty to use the python on PATH.', zh: '留空则使用 PATH 里的 python。' },
-    },
-    {
-      key: 'comfyuiUrl',
-      type: 'text',
-      label: { en: 'Service URL', zh: '服务地址' },
-      placeholder: 'http://127.0.0.1:8188',
-      default: 'http://127.0.0.1:8188',
-      hint: { en: 'Where the canvas reaches ComfyUI.', zh: '画布访问 ComfyUI 的地址。' },
-    },
-    {
-      key: 'autostart',
-      type: 'boolean',
-      label: { en: 'Start the service with the canvas', zh: '随画布自动启动服务' },
-      default: true,
-    },
-    {
-      key: 'startupTimeoutMs',
-      type: 'number',
-      label: { en: 'Startup timeout (ms)', zh: '启动超时（毫秒）' },
-      default: 600000,
-    },
-    {
-      key: 'stopExternal',
-      type: 'boolean',
-      label: { en: 'Stop services this extension started', zh: '停止由本拓展启动的服务' },
-      default: true,
-    },
-  ],
-}
-
 /** Entry point used by the canvas: an extension registers capabilities, it does not replace any. */
 export function setup(api) {
   api.registerWorkflowFormat(adapter)
   api.registerBackend(backend)
-  // An older canvas knows nothing about settings; registration is simply skipped there.
-  if (typeof api.registerSettings === 'function') api.registerSettings(settingsSection)
 }
