@@ -958,6 +958,7 @@ const thumbCache = new Map()
       'notice.writeBackFailed': 'Could not update the backend workflow: {message}',
       'notice.backendNeeded': 'Start the {name} service first (top right).',
       'notice.mixedWorkflow': 'This workflow mixes local and ComfyUI nodes; split it before running.',
+    'notice.mixedCanvas': 'This canvas already mixes local and ComfyUI nodes; split it before adding more.',
       'notice.localOnly': 'This workflow runs locally; ComfyUI nodes cannot be added to it.',
       'notice.remoteOnly': 'This workflow runs on ComfyUI; local nodes cannot be added to it.',
       'notice.backendNodes': 'Loaded {n} node types from {name}.',
@@ -1096,6 +1097,7 @@ const thumbCache = new Map()
       'notice.writeBackFailed': '无法把工作流写回 ComfyUI：{message}',
       'notice.backendNeeded': '请先启动 {name} 服务（右上角）。',
       'notice.mixedWorkflow': '这个工作流同时包含本地节点与 ComfyUI 节点，请先拆开再运行。',
+    'notice.mixedCanvas': '这个画布已经混用了本地与 ComfyUI 节点，请先拆开再加入新节点。',
       'notice.localOnly': '这是本地工作流，不能加入 ComfyUI 节点。',
       'notice.remoteOnly': '这是 ComfyUI 工作流，不能加入本地节点。',
       'notice.backendNodes': '已从 {name} 载入 {n} 个节点类型。',
@@ -2827,6 +2829,10 @@ const thumbCache = new Map()
       function pasteClipboard(payload, offset) {
         if (payload === null || payload === undefined || payload.nodes.length === 0) return 0
         const kind = canvasKind(graphRef.current)
+        if (kind === 'mixed') {
+          showNotice(tr('notice.mixedCanvas'))
+          return 0
+        }
         if (kind === 'remote' || kind === 'local') {
           const foreign = payload.nodes.some((node) => nodeKindOf(node.type) !== kind)
           if (foreign) {
@@ -2848,7 +2854,14 @@ const thumbCache = new Map()
           from: [map.get(link.from[0]), link.from[1]],
           to: [map.get(link.to[0]), link.to[1]],
         }))
-        updateGraph({ nodes: [...current.nodes, ...nodes], links: [...current.links, ...links] })
+        // Pasting into an empty canvas makes that canvas the payload's kind.
+        const extra = kind !== null
+          ? current.extra
+          : {
+              ...(current.extra ?? {}),
+              source: payload.nodes.every((node) => nodeKindOf(node.type) === 'remote') ? 'remote' : 'local',
+            }
+        updateGraph({ nodes: [...current.nodes, ...nodes], links: [...current.links, ...links], extra })
         select(new Set(nodes.map((node) => 'n:' + node.id)))
         return nodes.length
       }
@@ -3053,7 +3066,7 @@ const thumbCache = new Map()
 
       /** Place a node declared by a library pack, centred on `at` (the view centre by default). */
       function createFromType(entry, at) {
-        if (rejectMixedNode(entry.def.type)) return
+        if (rejectMixedNode(entry.def.type, entry.pack)) return
         const current = graphRef.current
         const currentView = viewRef.current
         const stagger = (current.nodes.length % 6) * 24
@@ -3065,7 +3078,15 @@ const thumbCache = new Map()
           : at
         const node = nodeForType(entry, point)
         pushHistory()
-        updateGraph({ nodes: [...current.nodes, node], links: current.links })
+        // The first node decides what the canvas is, and that decision is written down.
+        const source = nodeKindOf(entry.def.type, entry.pack) === 'remote'
+          ? (typeof entry.pack?.remote === 'string' && entry.pack.remote !== '' ? entry.pack.remote : 'remote')
+          : 'local'
+        updateGraph({
+          nodes: [...current.nodes, node],
+          links: current.links,
+          extra: { ...(current.extra ?? {}), source },
+        })
         select(new Set(['n:' + node.id]))
       }
 
@@ -3695,7 +3716,7 @@ const thumbCache = new Map()
           // A local workflow with the same name would be overwritten by the first save; in that
           // case the backend copy opens as a draft instead of silently taking over the name.
           const clash = workflows.some((item) => item.name === name)
-          importWorkflowText(text, name, clash ? null : { adopt: name })
+          importWorkflowText(text, name, clash ? null : { adopt: name, source: backend.id })
           if (clash === true) showNotice(tr('notice.backendDraft', { name }))
         } catch (error) {
           showNotice(tr('notice.runFailed', { message: error.message }))
@@ -4176,6 +4197,9 @@ const thumbCache = new Map()
         }
         if (typeof sourceName === 'string' && sourceName !== '') {
           next = { ...next, extra: { ...(next.extra ?? {}), comfyuiSource: sourceName } }
+        }
+        if (typeof options?.source === 'string' && options.source !== '') {
+          next = { ...next, extra: { ...(next.extra ?? {}), source: options.source } }
         }
         pushHistory()
         updateGraph(next)
@@ -5280,7 +5304,8 @@ const thumbCache = new Map()
       }, [packsReady, packs])
 
       /** A node is "remote" when its pack says a backend owns it; unknown types count as local. */
-      function nodeKindOf(type) {
+      function nodeKindOf(type, pack) {
+        if (pack !== null && pack !== undefined && typeof pack.remote === 'string' && pack.remote !== '') return 'remote'
         const entry = defsByType.get(type)
         return entry !== undefined && typeof entry.def.remote === 'string' && entry.def.remote !== ''
           ? 'remote'
@@ -5289,6 +5314,14 @@ const thumbCache = new Map()
 
       /** What a graph is made of: remote, local, mixed, or null when it has no nodes. */
       function canvasKind(graph) {
+        // An empty canvas is no kind at all: whatever is dropped in first decides it.
+        if (Array.isArray(graph?.nodes) !== true || graph.nodes.length === 0) return null
+        // A stamped document wins over guessing: after a reload the packs that define its nodes
+        // may not be loaded yet, and a ComfyUI node must not pass for a local one.
+        const stamped = typeof graph?.extra?.source === 'string' && graph.extra.source !== ''
+          ? graph.extra.source
+          : null
+        if (stamped !== null) return stamped === 'local' ? 'local' : 'remote'
         let kind = null
         for (const node of graph.nodes) {
           const nodeKind = nodeKindOf(node.type)
@@ -5302,10 +5335,16 @@ const thumbCache = new Map()
        * Backends do not interoperate: a ComfyUI node cannot run in a local workflow and a local
        * node cannot be sent to ComfyUI. Refuse the insertion instead of failing at run time.
        */
-      function rejectMixedNode(type) {
+      function rejectMixedNode(type, pack) {
         const kind = canvasKind(graphRef.current)
-        if (kind === null || kind === 'mixed') return false
-        if (nodeKindOf(type) === kind) return false
+        // A document that already holds both kinds is not allowed to grow any further: whatever
+        // was added before the guard existed must be split up first.
+        if (kind === 'mixed') {
+          showNotice(tr('notice.mixedCanvas'))
+          return true
+        }
+        if (kind === null) return false
+        if (nodeKindOf(type, pack) === kind) return false
         showNotice(kind === 'remote' ? tr('notice.remoteOnly') : tr('notice.localOnly'))
         return true
       }
