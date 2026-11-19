@@ -210,6 +210,69 @@ function createRunController() {
   return { start, stop, subscribe, snapshot, refreshRuns, setBackends, startRemoteRun, cancelRemoteRun }
 }
 
+/**
+ * The panel's shared state, owned outside React.
+ *
+ * The main slot is keyed: switching to the conversation unmounts this panel. Everything a
+ * remount needs (the canvas document, the libraries, the sources, the extension tables) lives
+ * here, so a remount renders the same view instead of rebuilding it. Purely transient UI (menus,
+ * dialogs, drags, previews) stays in component state.
+ */
+function createCanvasStore() {
+  const values = new Map()
+  const listeners = new Set()
+  let version = 0
+
+  return {
+    ensure(key, initial) {
+      if (values.has(key) !== true) values.set(key, typeof initial === 'function' ? initial() : initial)
+      return values.get(key)
+    },
+    get(key) {
+      return values.get(key)
+    },
+    set(key, next) {
+      const current = values.get(key)
+      const value = typeof next === 'function' ? next(current) : next
+      if (Object.is(value, current)) return
+      values.set(key, value)
+      version += 1
+      for (const listener of [...listeners]) {
+        try {
+          listener(version)
+        } catch {
+          // A broken subscriber must not stop the others.
+        }
+      }
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    version() {
+      return version
+    },
+  }
+}
+
+let canvasStore = null
+
+function getCanvasStore() {
+  if (canvasStore === null) canvasStore = createCanvasStore()
+  return canvasStore
+}
+
+/** One shared value: the panel is a view over it, and a remount reads what is already there. */
+function useStored(key, initial) {
+  const store = getCanvasStore()
+  const [, bump] = React.useReducer((value) => value + 1, 0)
+  React.useEffect(() => store.subscribe(() => bump()), [store])
+  const setValue = React.useCallback((next) => store.set(key, next), [store, key])
+  return [store.ensure(key, initial), setValue]
+}
+
 let runController = null
 
 /** Created lazily, once per page, so it outlives every panel mount. */
@@ -1861,16 +1924,16 @@ const thumbCache = new Map()
     function Panel() {
       useLocaleRefresh()
 
-      const [graph, setGraph] = React.useState(loadGraph)
-      const [view, setView] = React.useState(loadView)
-      const [selection, setSelection] = React.useState(() => new Set())
-      const [history, setHistory] = React.useState({ past: [], future: [] })
+      const [graph, setGraph] = useStored('graph', loadGraph)
+      const [view, setView] = useStored('view', loadView)
+      const [selection, setSelection] = useStored('selection', () => new Set())
+      const [history, setHistory] = useStored('history', () => ({ past: [], future: [] }))
       const [editing, setEditing] = React.useState(null)
       const [menu, setMenu] = React.useState(null)
       // The toolbar menu under the hamburger; content comes later.
       const [account, setAccount] = React.useState(null)
       // Width of the menu column (null = follow the toolbar) and its share of the height.
-      const [layout, setLayout] = React.useState(() => {
+      const [layout, setLayout] = useStored('layout', () => {
         try {
           const raw = localStorage.getItem(LAYOUT_KEY)
           const parsed = raw === null ? null : JSON.parse(raw)
@@ -1903,9 +1966,9 @@ const thumbCache = new Map()
       const [marquee, setMarquee] = React.useState(null)
       const [hoverPort, setHoverPort] = React.useState(null)
       const [dragging, setDragging] = React.useState(false)
-      const [packs, setPacks] = React.useState([])
+      const [packs, setPacks] = useStored('packs', [])
       // Local is the plugin's own node/workflow protocol; everything else is a backend's source.
-      const [activeSource, setActiveSource] = React.useState(() => {
+      const [activeSource, setActiveSource] = useStored('source', () => {
         try {
           const raw = localStorage.getItem(SOURCE_KEY)
           return typeof raw === 'string' && raw !== '' ? raw : 'local'
@@ -1913,25 +1976,25 @@ const thumbCache = new Map()
           return 'local'
         }
       })
-      const [packsReady, setPacksReady] = React.useState(false)
+      const [packsReady, setPacksReady] = useStored('packsReady', false)
       // Model files for a pack's file-backed dropdowns, keyed `packId:folder`.
-      const [fileLists, setFileLists] = React.useState({})
+      const [fileLists, setFileLists] = useStored('fileLists', {})
       // Output images for a node's preview area, keyed `<root>|<prefix>`.
-      const [outputLists, setOutputLists] = React.useState({})
+      const [outputLists, setOutputLists] = useStored('outputLists', {})
       // The workflow library and the name the canvas is currently saved under.
-      const [workflows, setWorkflows] = React.useState([])
-      const [workflowsReady, setWorkflowsReady] = React.useState(false)
-      const [currentWorkflow, setCurrentWorkflow] = React.useState(loadStoredWorkflow)
+      const [workflows, setWorkflows] = useStored('workflows', [])
+      const [workflowsReady, setWorkflowsReady] = useStored('workflowsReady', false)
+      const [currentWorkflow, setCurrentWorkflow] = useStored('currentWorkflow', loadStoredWorkflow)
       // The saved copy of that workflow; when the canvas differs from it the workflow is a draft.
-      const [baseline, setBaseline] = React.useState(loadBaseline)
+      const [baseline, setBaseline] = useStored('baseline', loadBaseline)
       // Runs known to the Host, newest first: mirrored from the run controller.
       const runController = getRunController()
       const [runs, setRuns] = React.useState(() => runController.snapshot().runs)
       // Each workflow keeps its own canvas document, so switching never duplicates or drops edits.
-      const workflowGraphsRef = React.useRef(new Map())
+      const workflowGraphsRef = React.useRef(getCanvasStore().ensure('workflowGraphs', new Map()))
       // Every workflow that was opened or saved this session keeps its own saved copy, so
       // switching back to an untouched one is still "saved", not "draft".
-      const workflowBaselinesRef = React.useRef(new Map())
+      const workflowBaselinesRef = React.useRef(getCanvasStore().ensure('workflowBaselines', new Map()))
       // Naming dialog for "save" (when unnamed) and "save as": `{ mode, value, error }`.
       const [dialog, setDialog] = React.useState(null)
       // The workflow row the pointer is on; its run control floats beside the menu.
@@ -1943,21 +2006,21 @@ const thumbCache = new Map()
       // Backends are *services*: enabling one starts its server, so ComfyUI workflows can run while
       // local workflows keep running on this plugin's own executor.
       // status: idle (never started / stopped), starting (booting), ready (answering).
-      const [serviceStates, setServiceStates] = React.useState({})
+      const [serviceStates, setServiceStates] = useStored('serviceStates', {})
       // Ticks once a second while something is booting, so the icon can count the seconds.
       const [serviceClock, setServiceClock] = React.useState(0)
       const [remoteRun, setRemoteRun] = React.useState(() => runController.snapshot().remoteRun)
       // Workflows that live in a backend (ComfyUI's own list), shown next to ours.
-      const [backendWorkflows, setBackendWorkflows] = React.useState({ source: null, names: [] })
+      const [backendWorkflows, setBackendWorkflows] = useStored('backendWorkflows', () => ({ source: null, names: [] }))
 // Extension packages: the puzzle menu, the add dialog, and the list from the Host.
-      const [extensions, setExtensions] = React.useState([])
+      const [extensions, setExtensions] = useStored('extensions', [])
       const [extensionMenu, setExtensionMenu] = React.useState(false)
       const [extensionDialog, setExtensionDialog] = React.useState(null)
       // Format adapters contributed by extensions, e.g. the ComfyUI workflow reader/writer.
-      const [adapters, setAdapters] = React.useState([])
+      const [adapters, setAdapters] = useStored('adapters', [])
       // Everything else an extension can add: node views, node menu items, toolbar actions,
       // panels. All of it is additive; none of it is required for a node to work.
-      const [extensionFeatures, setExtensionFeatures] = React.useState({
+      const [extensionFeatures, setExtensionFeatures] = useStored('extensionFeatures', {
         nodeViews: [],
         nodeMenus: [],
         toolbarActions: [],
@@ -5115,9 +5178,15 @@ const thumbCache = new Map()
       // so it is dropped instead of resurrected.
       React.useEffect(() => {
         if (packsReady !== true) return
+        const store = getCanvasStore()
+        if (store.ensure('draftApplied', false) === true) return
         const draft = pendingDraftRef.current
-        if (draft === null) return
+        if (draft === null) {
+          store.set('draftApplied', true)
+          return
+        }
         pendingDraftRef.current = null
+        store.set('draftApplied', true)
         const usable = draft.graph.nodes.every((node) => defsByType.get(node.type) !== undefined)
         if (usable !== true) {
           clearDraft()
