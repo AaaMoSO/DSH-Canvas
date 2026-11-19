@@ -956,6 +956,7 @@ const thumbCache = new Map()
       'notice.backendStopFailed': '{name} is still running; it may belong to another program.',
       'notice.writeBackDone': 'Saved “{name}” into the backend workflow list.',
       'notice.writeBackFailed': 'Could not update the backend workflow: {message}',
+    'notice.noBackendForGraph': 'These nodes do not belong to a running backend.',
       'notice.backendNeeded': 'Start the {name} service first (top right).',
       'notice.mixedWorkflow': 'This workflow mixes local and ComfyUI nodes; split it before running.',
     'notice.mixedCanvas': 'This canvas already mixes local and ComfyUI nodes; split it before adding more.',
@@ -1095,6 +1096,7 @@ const thumbCache = new Map()
       'notice.backendStopFailed': '{name} 仍在运行，可能由其他程序启动。',
       'notice.writeBackDone': '已把「{name}」写入后端的工作流列表。',
       'notice.writeBackFailed': '无法把工作流写回 ComfyUI：{message}',
+    'notice.noBackendForGraph': '这些节点不属于任何可用的后端。',
       'notice.backendNeeded': '请先启动 {name} 服务（右上角）。',
       'notice.mixedWorkflow': '这个工作流同时包含本地节点与 ComfyUI 节点，请先拆开再运行。',
     'notice.mixedCanvas': '这个画布已经混用了本地与 ComfyUI 节点，请先拆开再加入新节点。',
@@ -3427,9 +3429,75 @@ const thumbCache = new Map()
         return null
       }
 
+      /** The backend a mapped canvas belongs to: its stamp first, then the node definitions. */
+      function mappedBackendOf(graph) {
+        const stamped = typeof graph?.extra?.source === 'string' && graph.extra.source !== ''
+          ? graph.extra.source
+          : null
+        if (stamped !== null && stamped !== 'local') {
+          const owner = backends.find((backend) => backend.id === stamped)
+          if (owner !== undefined) return owner
+        }
+        return remoteOwnerOf(graph)
+      }
+
+      /** The workflow format that belongs to that backend's extension. */
+      function adapterFor(owner) {
+        const match = adapters.find((adapter) => adapter.extension === owner.extension)
+        if (match !== undefined) return match
+        return adapters.length === 1 ? adapters[0] : undefined
+      }
+
+      /**
+       * A mapped workflow lives on its backend. Saving writes the backend's own file and leaves no
+       * copy in the local library, so the two lists cannot drift apart.
+       */
+      async function saveMappedWorkflow(name, options) {
+        const graph = graphRef.current
+        const owner = mappedBackendOf(graph)
+        if (owner === null) {
+          showNotice(tr('notice.writeBackFailed', { message: tr('notice.noBackendForGraph') }))
+          return
+        }
+        if (isServiceReady(owner.id) !== true) {
+          showNotice(tr('notice.backendNeeded', { name: owner.name ?? owner.id }))
+          return
+        }
+        const adapter = adapterFor(owner)
+        if (adapter === undefined || typeof adapter.serialize !== 'function') {
+          showNotice(tr('notice.writeBackFailed', { message: tr('notice.noBackendForGraph') }))
+          return
+        }
+        const asCopy = options?.asCopy === true
+        const mapped = typeof graph.extra?.comfyuiSource === 'string' && graph.extra.comfyuiSource.trim() !== ''
+          ? graph.extra.comfyuiSource.trim()
+          : null
+        const target = asCopy === true || mapped === null ? name : mapped
+        try {
+          await owner.writeWorkflow(target, adapter.serialize(graph, adapterContext()))
+        } catch (error) {
+          showNotice(tr('notice.writeBackFailed', { message: error.message }))
+          return
+        }
+        updateGraph({
+          extra: { ...(graph.extra ?? {}), comfyuiSource: target, source: owner.id },
+        })
+        setCurrentWorkflow(target)
+        const savedCopy = { name: target, json: graphSignature(graphRef.current) }
+        setBaseline(savedCopy)
+        storeBaseline(savedCopy)
+        showNotice(tr('notice.writeBackDone', { name: target }))
+        void loadBackendWorkflows(owner.id)
+      }
+
       /** Write the canvas document into the workflow library under `name`. */
       async function writeWorkflow(name, options) {
-        // "Save as" starts a new mapped workflow; a plain save keeps the existing mapping.
+        // A mapped canvas is saved where it came from, not into the local library.
+        if (canvasKind(graphRef.current) === 'remote') {
+          await saveMappedWorkflow(name, options)
+          return
+        }
+        // "Save as" starts a new local workflow; a plain save keeps the existing name.
         if (options?.asCopy === true) {
           const current = graphRef.current
           updateGraph({ nodes: current.nodes, links: current.links, extra: { ...(current.extra ?? {}), comfyuiSource: name } })
@@ -3448,29 +3516,9 @@ const thumbCache = new Map()
           setBaseline(savedCopy)
           storeBaseline(savedCopy)
           showNotice(tr('notice.saved', { name }))
-          void writeBackWorkflow(name)
           loadWorkflows()
         } catch (error) {
           showNotice(tr('notice.saveFailed', { message: error.message }))
-        }
-      }
-
-      /** Save also updates the backend's own copy, so opening it there shows the current graph. */
-      async function writeBackWorkflow(name) {
-        const graph = graphRef.current
-        if (canvasKind(graph) !== 'remote') return
-        // A mapped workflow keeps updating the file it came from, even after a rename.
-        const source = graph.extra !== null && typeof graph.extra === 'object' ? graph.extra.comfyuiSource : undefined
-        const target = typeof source === 'string' && source.trim() !== '' ? source.trim() : name
-        const owner = remoteOwnerOf(graph)
-        if (owner === null || typeof owner.writeWorkflow !== 'function') return
-        const adapter = adapters[0]
-        if (adapter === undefined || typeof adapter.serialize !== 'function') return
-        try {
-          await owner.writeWorkflow(target, adapter.serialize(graph, adapterContext()))
-          showNotice(tr('notice.writeBackDone', { name: target }))
-        } catch (error) {
-          showNotice(tr('notice.writeBackFailed', { message: error.message }))
         }
       }
 
@@ -3557,9 +3605,23 @@ const thumbCache = new Map()
           setDialog({ ...dialog, value, error: problem })
           return
         }
-        if (dialog.mode === 'saveAs' && workflows.some((item) => item.name === name)) {
-          setDialog({ ...dialog, value, error: tr('dialog.exists') })
-          return
+        if (dialog.mode === 'saveAs') {
+          const mappedOwner = canvasKind(graphRef.current) === 'remote' ? mappedBackendOf(graphRef.current) : null
+          if (mappedOwner !== null && typeof mappedOwner.listWorkflows === 'function') {
+            let names = []
+            try {
+              names = await mappedOwner.listWorkflows()
+            } catch {
+              names = []
+            }
+            if (Array.isArray(names) && names.includes(name)) {
+              setDialog({ ...dialog, value, error: tr('dialog.exists') })
+              return
+            }
+          } else if (workflows.some((item) => item.name === name)) {
+            setDialog({ ...dialog, value, error: tr('dialog.exists') })
+            return
+          }
         }
         if (dialog.mode === 'rename') {
           if (name === dialog.origin) {

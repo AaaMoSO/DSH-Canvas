@@ -1,11 +1,11 @@
 {
   "format": "node-canvas-workflow",
   "version": 2,
-  "name": "sd.cpp 图生图",
+  "name": "sd.cpp 文生图",
   "graph": {
     "nodes": [
       {
-        "id": "n6dqr94b",
+        "id": "nl94uzq4",
         "x": -1,
         "y": -31,
         "w": 302,
@@ -32,7 +32,7 @@
         ]
       },
       {
-        "id": "nevv70o7",
+        "id": "ni0awhfe",
         "x": -1,
         "y": 99,
         "w": 332,
@@ -94,7 +94,7 @@
         ]
       },
       {
-        "id": "nw9d4szk",
+        "id": "nn7olhuy",
         "x": -1,
         "y": 359,
         "w": 422,
@@ -121,7 +121,7 @@
         ]
       },
       {
-        "id": "nvoopxo5",
+        "id": "nfw6leqe",
         "x": -1,
         "y": 809,
         "w": 422,
@@ -148,151 +148,28 @@
         ]
       },
       {
-        "id": "nv1qw6pi",
-        "x": -1,
+        "id": "nn23piiq",
+        "x": 399,
         "y": 949,
-        "w": 322,
-        "h": 372,
-        "title": "LoadImage",
-        "type": "LoadImage",
+        "w": 302,
+        "h": 122,
+        "title": "SDCppEmptyLatentImage",
+        "type": "SDCppEmptyLatentImage",
         "mode": 0,
         "widgets": {
-          "image": "char_front.png",
-          "widget_1": "image"
+          "width": 576,
+          "height": 864
         },
         "inputs": [
           {
-            "id": "i:image",
-            "name": "image",
-            "type": "COMBO"
-          }
-        ],
-        "outputs": [
-          {
-            "id": "o:IMAGE",
-            "name": "IMAGE",
-            "type": "IMAGE"
-          },
-          {
-            "id": "o:MASK",
-            "name": "MASK",
-            "type": "MASK"
-          }
-        ]
-      },
-      {
-        "id": "naiv6d7k",
-        "x": 369,
-        "y": 949,
-        "w": 332,
-        "h": 172,
-        "title": "SDCppUpscale",
-        "type": "SDCppUpscale",
-        "mode": 0,
-        "widgets": {
-          "upscaler": "RealESRGAN_x4plus",
-          "repeats": 1,
-          "tile_size": 128
-        },
-        "inputs": [
-          {
-            "id": "i:image",
-            "name": "image",
-            "type": "IMAGE"
-          },
-          {
-            "id": "i:upscaler",
-            "name": "upscaler",
-            "type": "COMBO"
-          },
-          {
-            "id": "i:repeats",
-            "name": "repeats",
-            "type": "INT"
-          },
-          {
-            "id": "i:tile_size",
-            "name": "tile_size",
-            "type": "INT"
-          }
-        ],
-        "outputs": [
-          {
-            "id": "o:image",
-            "name": "image",
-            "type": "IMAGE"
-          }
-        ]
-      },
-      {
-        "id": "nj4lve0l",
-        "x": 729,
-        "y": 949,
-        "w": 322,
-        "h": 182,
-        "title": "SDCppFitResolution",
-        "type": "SDCppFitResolution",
-        "mode": 0,
-        "widgets": {
-          "max_side": 1280,
-          "max_tokens": 4600,
-          "multiple_of": 16
-        },
-        "inputs": [
-          {
-            "id": "i:image",
-            "name": "image",
-            "type": "IMAGE"
-          },
-          {
-            "id": "i:max_side",
-            "name": "max_side",
-            "type": "INT"
-          },
-          {
-            "id": "i:max_tokens",
-            "name": "max_tokens",
-            "type": "INT"
-          },
-          {
-            "id": "i:multiple_of",
-            "name": "multiple_of",
-            "type": "INT"
-          }
-        ],
-        "outputs": [
-          {
-            "id": "o:image",
-            "name": "image",
-            "type": "IMAGE"
-          },
-          {
-            "id": "o:width",
+            "id": "i:width",
             "name": "width",
             "type": "INT"
           },
           {
-            "id": "o:height",
+            "id": "i:height",
             "name": "height",
             "type": "INT"
-          }
-        ]
-      },
-      {
-        "id": "ntds9rwf",
-        "x": 399,
-        "y": 949,
-        "w": 282,
-        "h": 92,
-        "title": "SDCppVAEEncode",
-        "type": "SDCppVAEEncode",
-        "mode": 0,
-        "widgets": {},
-        "inputs": [
-          {
-            "id": "i:pixels",
-            "name": "pixels",
-            "type": "IMAGE"
           }
         ],
         "outputs": [
@@ -304,7 +181,7 @@
         ]
       },
       {
-        "id": "nujshvcw",
+        "id": "nl4vr6xj",
         "x": 399,
         "y": 99,
         "w": 322,
@@ -348,7 +225,7 @@
         ]
       },
       {
-        "id": "n0zwujdf",
+        "id": "n1moj7as",
         "x": 779,
         "y": -31,
         "w": 332,
@@ -361,8 +238,8 @@
           "cfg": 1,
           "sampler_name": "euler",
           "scheduler": "discrete",
-          "denoise": 0.55,
-          "cache_mode": "disabled",
+          "denoise": 1,
+          "cache_mode": "easycache",
           "cache_threshold": 0.25,
           "lora": "style-impasto.safetensors",
           "lora_strength": 1,
@@ -454,7 +331,7 @@
         ]
       },
       {
-        "id": "nhk5rlmd",
+        "id": "n6yn1zxy",
         "x": 1149,
         "y": -31,
         "w": 242,
@@ -479,16 +356,16 @@
         ]
       },
       {
-        "id": "ny9nduuo",
-        "x": 1425,
-        "y": 69,
+        "id": "njo3lhrz",
+        "x": 1429,
+        "y": -31,
         "w": 332,
         "h": 332,
         "title": "SaveImage",
         "type": "SaveImage",
         "mode": 0,
         "widgets": {
-          "filename_prefix": "sd.cpp_i2i"
+          "filename_prefix": "sd.cpp_t2i"
         },
         "inputs": [
           {
@@ -513,123 +390,90 @@
     ],
     "links": [
       {
-        "id": "lfis00ls",
+        "id": "lj3xtntl",
         "from": [
-          "n6dqr94b",
+          "nl94uzq4",
           "o:vae"
         ],
         "to": [
-          "nevv70o7",
+          "ni0awhfe",
           "i:vae"
         ]
       },
       {
-        "id": "l5c2g4ge",
+        "id": "lmsn32th",
         "from": [
-          "nevv70o7",
+          "ni0awhfe",
           "o:sdcpp_model"
         ],
         "to": [
-          "n0zwujdf",
+          "n1moj7as",
           "i:model"
         ]
       },
       {
-        "id": "lwd7kiig",
+        "id": "lid1ynar",
         "from": [
-          "nw9d4szk",
+          "nn7olhuy",
           "o:conditioning"
         ],
         "to": [
-          "n0zwujdf",
+          "n1moj7as",
           "i:positive"
         ]
       },
       {
-        "id": "lmypem9q",
+        "id": "li6g0xal",
         "from": [
-          "nvoopxo5",
+          "nfw6leqe",
           "o:conditioning"
         ],
         "to": [
-          "n0zwujdf",
+          "n1moj7as",
           "i:negative"
         ]
       },
       {
-        "id": "l8xwcc3w",
+        "id": "l61tl2hj",
         "from": [
-          "nv1qw6pi",
-          "o:IMAGE"
-        ],
-        "to": [
-          "naiv6d7k",
-          "i:image"
-        ]
-      },
-      {
-        "id": "lm7s5rwo",
-        "from": [
-          "naiv6d7k",
-          "o:image"
-        ],
-        "to": [
-          "nj4lve0l",
-          "i:image"
-        ]
-      },
-      {
-        "id": "lccbj5kc",
-        "from": [
-          "nj4lve0l",
-          "o:image"
-        ],
-        "to": [
-          "ntds9rwf",
-          "i:pixels"
-        ]
-      },
-      {
-        "id": "l8f7agrc",
-        "from": [
-          "ntds9rwf",
+          "nn23piiq",
           "o:latent"
         ],
         "to": [
-          "n0zwujdf",
+          "n1moj7as",
           "i:latent_image"
         ]
       },
       {
-        "id": "l0q7zr4q",
+        "id": "l5h0s6g6",
         "from": [
-          "nujshvcw",
+          "nl4vr6xj",
           "o:seed_source"
         ],
         "to": [
-          "n0zwujdf",
+          "n1moj7as",
           "i:seed_source"
         ]
       },
       {
-        "id": "lc8kl550",
+        "id": "lz0m41ds",
         "from": [
-          "n0zwujdf",
+          "n1moj7as",
           "o:samples"
         ],
         "to": [
-          "nhk5rlmd",
+          "n6yn1zxy",
           "i:samples"
         ]
       },
       {
-        "id": "lfvjqfkw",
+        "id": "lrpgt7jb",
         "from": [
-          "nhk5rlmd",
+          "n6yn1zxy",
           "o:image"
         ],
         "to": [
-          "ny9nduuo",
+          "njo3lhrz",
           "i:images"
         ]
       }
@@ -643,7 +487,8 @@
           0
         ]
       },
-      "comfyuiSource": "sd.cpp 图生图"
+      "comfyuiSource": "sd.cpp 文生图",
+      "source": "comfyui"
     },
     "config": {}
   }

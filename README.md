@@ -11,8 +11,9 @@ remote execution backend when you need its node pack.
   (programs). A workflow stores types and widget values only — definitions and programs always
   come from the installed packs.
 - **Workflows**: save / save as / export / rename / delete, plus a status pill that tells whether
-  the canvas still equals its saved copy. A workflow opened from a backend's list keeps that
-  backend's file as its saved copy.
+  the canvas still equals its saved copy. A workflow opened from a backend's list lives on that
+  backend: saving writes the backend's own file and keeps no local copy, so the two libraries
+  never drift apart. Save as creates the new file on the backend and the canvas follows its name.
 - **Extensions**: capability packages that enhance the plugin (workflow formats, node views,
   toolbar actions, panels, hover cards, execution backends). Drag a folder into the puzzle menu to
   register one; order them by dragging, top wins. See [extensions/README.md](extensions/README.md).
