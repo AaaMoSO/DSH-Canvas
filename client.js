@@ -7009,6 +7009,19 @@ const thumbCache = new Map()
       // of an animated counter (see minimapShift usage below).
       const minimapShift = slide === null ? 0 : (slide.minimap ?? 0)
 
+      /**
+       * Chrome anchored to the sheet's right edge travels with the slide; this cancels exactly
+       * that shift, on the same clock, so the element keeps its place on screen. It rides in its
+       * own layer so the pixels are rasterised once instead of per frame.
+       */
+      function doorPinned() {
+        return {
+          transform: 'translate3d(' + (-pageShift) + 'px, 0, 0)',
+          transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
+          backfaceVisibility: 'hidden',
+        }
+      }
+
       // The canvas is "saved" only while it still equals the copy it was loaded from; any edit
       // (or never having saved it) makes it the one temporary workflow.
       const canvasJson = graphSignature(graph)
@@ -7080,11 +7093,8 @@ const thumbCache = new Map()
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            // The sheet slides under this cluster; the counter-shift keeps it still. It always
-            // rides in its own layer, so the pixels are rasterised once instead of per frame.
-            transform: 'translate3d(' + (-pageShift) + 'px, 0, 0)',
-            transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
-            backfaceVisibility: 'hidden',
+            // The sheet slides under this cluster; the counter-shift keeps it still.
+            ...doorPinned(),
           },
         }, [
           h('button', {
@@ -8218,7 +8228,9 @@ const thumbCache = new Map()
         : h('div', {
             key: 'extension-menu',
             ref: extensionMenuRef,
+            className: 'nc-menu-scroll',
             style: {
+              ...doorPinned(),
               position: 'absolute',
               right: '10px',
               top: '45px',
@@ -8510,6 +8522,7 @@ const thumbCache = new Map()
         : h('div', {
             key: 'extension-hover',
             style: {
+              ...doorPinned(),
               position: 'absolute',
               right: '57px',
               top: extensionHover.top + 'px',
