@@ -312,6 +312,22 @@ const backend = {
     const payload = await call('/workflow/list')
     return payload.workflows ?? []
   },
+  /** Rename one of ComfyUI's own workflow files. */
+  async renameWorkflow(from, to) {
+    return call('/workflow/rename', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+    })
+  },
+  /** Delete one of ComfyUI's own workflow files. */
+  async deleteWorkflow(name) {
+    return call('/workflow/delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+  },
   async readWorkflow(name) {
     const payload = await call('/workflow/read?name=' + encodeURIComponent(name))
     return payload.text

@@ -640,7 +640,6 @@ const thumbCache = new Map()
       'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
       'source.local': 'Local',
       'source.counts': '{nodes} nodes · {workflows} workflows',
-      'library.sourceWorkflows': '{name} workflows ({n})',
       'library.workflows.sourceEmpty': 'This source has no workflows yet.',
       'library.sourceOffline': 'This source is not running; start it from the extensions menu.',
       'library.noPorts': 'No ports or widgets.',
@@ -779,7 +778,6 @@ const thumbCache = new Map()
       'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
       'source.local': '本地',
       'source.counts': '{nodes} 节点 · {workflows} 工作流',
-      'library.sourceWorkflows': '{name} 工作流（{n}）',
       'library.workflows.sourceEmpty': '该源还没有工作流。',
       'library.sourceOffline': '该源未启动，可在拓展菜单里点亮它。',
       'library.noPorts': '没有端口或控件。',
@@ -3167,6 +3165,10 @@ const thumbCache = new Map()
             setDialog(null)
             return
           }
+          if (typeof dialog.source === 'string' && dialog.source !== '') {
+            await renameBackendWorkflow(dialog.source, dialog.origin, name)
+            return
+          }
           await renameWorkflow(dialog.origin, name)
           return
         }
@@ -3196,6 +3198,10 @@ const thumbCache = new Map()
       }
 
       function workflowRunState(name) {
+        if (remoteRun !== null && remoteRun.label === name) {
+          if (remoteRun.status === 'running') return 'running'
+          if (remoteRun.status === 'error') return 'error'
+        }
         const latest = latestRun(name)
         if (latest === null) return 'idle'
         if (latest.status === 'running') return 'running'
@@ -3446,7 +3452,7 @@ const thumbCache = new Map()
           rememberRemoteRun(null)
           return
         }
-        setRemoteRun({ id: stored.id, backend: backend.id, status: 'running', startedAt: stored.startedAt, error: null })
+        setRemoteRun({ id: stored.id, backend: backend.id, status: 'running', startedAt: stored.startedAt, error: null, label: typeof stored.label === 'string' ? stored.label : null })
         void followBackendRun(backend, stored.id)
       }, [extensionFeatures.backends])
 
@@ -3595,7 +3601,7 @@ const thumbCache = new Map()
             throw new Error('backend returned no run id')
           }
           const startedAt = Date.now()
-          setRemoteRun({ id: started.id, backend: backend.id, status: 'running', startedAt, error: null })
+          setRemoteRun({ id: started.id, backend: backend.id, status: 'running', startedAt, error: null, label })
           rememberRemoteRun({ id: started.id, backendId: backend.id, label, startedAt, status: 'running' })
           await followBackendRun(backend, started.id)
         } catch (error) {
@@ -3729,6 +3735,99 @@ const thumbCache = new Map()
         }
       }
 
+      /** The backend this source's workflows belong to, if it can do the work. */
+      function sourceBackendFor(action) {
+        return backends.find((item) => item.id === activeSource
+          && isServiceReady(item.id) === true
+          && typeof item[action] === 'function')
+          ?? backends.find((item) => isServiceReady(item.id) === true && typeof item[action] === 'function')
+          ?? null
+      }
+
+      /** Run one of the source's workflows; the row button turns into its stop button. */
+      async function runBackendWorkflow(name) {
+        const backend = sourceBackendFor('readWorkflow')
+        if (backend === null) {
+          showNotice(tr('notice.backendNeeded', { name: activeSource }))
+          return
+        }
+        if (remoteRun !== null && remoteRun.status === 'running' && remoteRun.label === name) {
+          try {
+            if (typeof backend.cancel === 'function') await backend.cancel()
+          } catch {
+            // The job may have finished between the poll and the click.
+          }
+          rememberRemoteRun(null)
+          setRemoteRun(null)
+          return
+        }
+        let graph
+        try {
+          graph = graphFromText(await backend.readWorkflow(name))
+        } catch (error) {
+          showNotice(tr('notice.runFailed', { message: error.message }))
+          return
+        }
+        if (graph.nodes.length === 0) return
+        await runOnBackend(backend, graph, name)
+      }
+
+      /** Rename a workflow in the selected source (the file the source owns). */
+      async function renameBackendWorkflow(sourceId, from, to) {
+        const backend = sourceBackendFor('renameWorkflow')
+        if (backend === null) return
+        try {
+          await backend.renameWorkflow(from, to)
+          // A workflow the canvas is showing follows its file.
+          if (currentWorkflow === from) {
+            const graph = graphRef.current
+            const extra = graph.extra !== null && typeof graph.extra === 'object'
+              ? { ...graph.extra, comfyuiSource: to }
+              : { comfyuiSource: to }
+            const nextGraph = { ...graph, extra }
+            updateGraph({ extra })
+            setCurrentWorkflow(to)
+            const saved = { name: to, json: graphSignature(nextGraph) }
+            workflowBaselinesRef.current.delete(from)
+            workflowBaselinesRef.current.set(to, saved.json)
+            workflowGraphsRef.current.delete(from)
+            setBaseline(saved)
+            storeBaseline(saved)
+          }
+          setDialog(null)
+          showNotice(tr('notice.renamed', { to }))
+          void loadBackendWorkflows(sourceId)
+        } catch (error) {
+          setDialog((current) => (current === null ? current : { ...current, error: error.message }))
+        }
+      }
+
+      /** Delete a workflow in the selected source; the canvas becomes a draft when it showed it. */
+      async function deleteBackendWorkflow(sourceId, name) {
+        const backend = sourceBackendFor('deleteWorkflow')
+        if (backend === null) return
+        try {
+          await backend.deleteWorkflow(name)
+          workflowGraphsRef.current.delete(name)
+          workflowBaselinesRef.current.delete(name)
+          if (currentWorkflow === name) {
+            setCurrentWorkflow(null)
+            setBaseline(null)
+            clearBaseline()
+            const graph = graphRef.current
+            if (graph.extra !== null && typeof graph.extra === 'object' && graph.extra.comfyuiSource !== undefined) {
+              const extra = { ...graph.extra }
+              delete extra.comfyuiSource
+              updateGraph({ extra })
+            }
+          }
+          setDialog(null)
+          void loadBackendWorkflows(sourceId)
+        } catch (error) {
+          showNotice(tr('notice.saveFailed', { message: error.message }))
+        }
+      }
+
       function cancelRunHide() {
         if (runHideTimerRef.current !== 0) {
           clearTimeout(runHideTimerRef.current)
@@ -3789,25 +3888,29 @@ const thumbCache = new Map()
         }
       }
 
+      /** Turn extension output into a canvas document; the native shape always works. */
+      function graphFromText(text) {
+        const parsed = JSON.parse(text)
+        let imported = null
+        for (const adapter of adapters) {
+          if (typeof adapter.parse !== 'function') continue
+          try {
+            imported = adapter.parse(parsed, adapterContext())
+          } catch {
+            imported = null
+          }
+          if (imported !== null && imported !== undefined) break
+        }
+        const native = parsed !== null && typeof parsed === 'object'
+          ? (parsed.graph !== null && typeof parsed.graph === 'object' ? parsed.graph : parsed)
+          : null
+        return normalizeGraph(imported ?? native ?? {})
+      }
+
       function importWorkflowText(text, sourceName, options) {
         let next
         try {
-          const parsed = JSON.parse(text)
-          // Extensions bring their own formats; the native shape is always understood.
-          let imported = null
-          for (const adapter of adapters) {
-            if (typeof adapter.parse !== 'function') continue
-            try {
-              imported = adapter.parse(parsed, adapterContext())
-            } catch {
-              imported = null
-            }
-            if (imported !== null && imported !== undefined) break
-          }
-          const native = parsed !== null && typeof parsed === 'object'
-            ? (parsed.graph !== null && typeof parsed.graph === 'object' ? parsed.graph : parsed)
-            : null
-          next = normalizeGraph(imported ?? native ?? {})
+          next = graphFromText(text)
         } catch {
           showNotice(tr('notice.badFile'))
           return
@@ -6519,26 +6622,52 @@ const thumbCache = new Map()
           h('span', { key: 'text', style: S.nodeName }, item.name),
         ]))
       }
+      // A backend's workflows are just its source's workflows: same rows, no heading, no colour.
       const remoteNames = backendWorkflows.source === activeSource ? backendWorkflows.names : []
-      if (remoteNames.length > 0) {
-        workflowRows.push(h('div', {
-          key: 'workflow-backend-head',
-          style: { ...S.libraryHint, marginTop: '6px' },
-        }, tr('library.sourceWorkflows', { n: remoteNames.length, name: (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name })))
-        for (const name of remoteNames) {
-          workflowRows.push(h('button', {
-            key: 'backend-workflow:' + name,
-            type: 'button',
-            title: name,
-            style: S.nodeRow,
-            onClick: () => {
-              void openBackendWorkflow(name)
-            },
-          }, [
-            h('span', { key: 'dot', style: { ...S.workflowDot, background: 'var(--dsw-alias-state-business-primary)' } }),
-            h('span', { key: 'text', style: S.nodeName }, name),
-          ]))
-        }
+      for (const name of remoteNames) {
+        const active = name === currentWorkflow
+        workflowRows.push(h('button', {
+          key: 'backend-workflow:' + name,
+          type: 'button',
+          title: name,
+          style: active
+            ? { ...S.nodeRow, ...S.workflowRow, color: 'var(--dsw-alias-brand-primary)' }
+            : { ...S.nodeRow, ...S.workflowRow },
+          onClick: () => {
+            void openBackendWorkflow(name)
+          },
+          onPointerEnter: (event) => {
+            const page = pageRef.current
+            if (page === null) return
+            const rect = event.currentTarget.getBoundingClientRect()
+            const pageRect = page.getBoundingClientRect()
+            cancelRunHide()
+            setRunHover({
+              name,
+              top: Math.round(rect.top - pageRect.top),
+              height: Math.round(rect.height),
+            })
+          },
+          onPointerLeave: scheduleRunHide,
+          onContextMenu: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openMenu(event, [
+              {
+                label: tr('menu.renameWorkflow'),
+                run: () => setDialog({ mode: 'rename', source: activeSource, origin: name, value: name, error: null }),
+              },
+              { separator: true },
+              {
+                label: tr('menu.deleteWorkflow'),
+                run: () => setDialog({ mode: 'delete', source: activeSource, value: name, error: null }),
+              },
+            ])
+          },
+        }, [
+          h('span', { key: 'dot', style: S.workflowDot }),
+          h('span', { key: 'text', style: S.nodeName }, name),
+        ]))
       }
       if (activeSource === 'local' && workflowsReady !== true) {
         workflowRows.push(h('div', { key: 'workflow-loading', style: S.libraryHint }, tr('library.loading')))
@@ -6747,6 +6876,9 @@ const thumbCache = new Map()
 
       // The run control sits outside the panel, in line with the hovered row. Its wrapper starts
       // exactly at the panel edge, so travelling right from the row never crosses dead space.
+      const runHoverRemote = runHover !== null
+        && backendWorkflows.source === activeSource
+        && backendWorkflows.names.includes(runHover.name)
       const runButtonEl = runHover === null || barMenu === null || barMenu.open !== true
         || barSection !== 'workflows'
         ? null
@@ -6773,7 +6905,7 @@ const thumbCache = new Map()
             onPointerDown: (event) => event.stopPropagation(),
             onClick: (event) => {
               event.stopPropagation()
-              void runWorkflow(runHover.name)
+              void (runHoverRemote ? runBackendWorkflow(runHover.name) : runWorkflow(runHover.name))
             },
           }, Glyph(workflowRunState(runHover.name) === 'running' ? 'pause' : 'play', 12)))
 
@@ -7508,7 +7640,11 @@ const thumbCache = new Map()
                   : { ...S.dialogButton, ...S.dialogButtonPrimary },
                 onClick: () => {
                   if (dialog.mode === 'delete') {
-                    void deleteWorkflow(dialog.value)
+                    if (typeof dialog.source === 'string' && dialog.source !== '') {
+                      void deleteBackendWorkflow(dialog.source, dialog.value)
+                    } else {
+                      void deleteWorkflow(dialog.value)
+                    }
                     return
                   }
                   if (dialog.mode === 'remove-extension') {

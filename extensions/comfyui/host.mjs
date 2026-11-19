@@ -13,7 +13,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, openSync, readFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -459,12 +459,16 @@ export function setup(api) {
 
   // The edited graph is written where ComfyUI's own workflow list reads it, so the next start
   // opens the current version instead of the one that was imported.
+  const workflowNameOf = (value) => String(value ?? '').trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 120)
+
   api.route('POST', '/workflow/write', async ({ body }) => {
     const config = await settings()
     const root = typeof config.comfyuiRoot === 'string' ? config.comfyuiRoot : ''
     if (root === '') return { status: 400, body: { ok: false, error: 'settings.json 缺少 comfyuiRoot' } }
-    const rawName = body !== null && typeof body === 'object' && typeof body.name === 'string' ? body.name.trim() : ''
-    const name = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/^\.+|\.+$/g, '').slice(0, 120)
+    const name = workflowNameOf(body !== null && typeof body === 'object' ? body.name : '')
     if (name === '') return { status: 400, body: { ok: false, error: 'body.name is required' } }
     const workflow = body !== null && typeof body === 'object' ? body.workflow : null
     if (workflow === null || typeof workflow !== 'object' || Array.isArray(workflow.nodes) !== true) {
@@ -485,13 +489,55 @@ export function setup(api) {
     const config = await settings()
     const root = typeof config.comfyuiRoot === 'string' ? config.comfyuiRoot : ''
     if (root === '') return { status: 400, body: { ok: false, error: 'settings.json 缺少 comfyuiRoot' } }
-    const name = (query.get('name') ?? '').replace(/[\\/:*?"<>|]/g, '-').replace(/^\.+|\.+$/g, '')
+    const name = workflowNameOf(query.get('name'))
     if (name === '') return { status: 400, body: { ok: false, error: 'name is required' } }
     try {
       const text = await readFile(path.join(root, 'user', 'default', 'workflows', name + '.json'), 'utf8')
       return { status: 200, body: { ok: true, name, text } }
     } catch {
       return { status: 404, body: { ok: false, error: 'workflow not found: ' + name } }
+    }
+  })
+
+  api.route('POST', '/workflow/rename', async ({ body }) => {
+    const config = await settings()
+    const root = typeof config.comfyuiRoot === 'string' ? config.comfyuiRoot : ''
+    if (root === '') return { status: 400, body: { ok: false, error: 'settings.json 缺少 comfyuiRoot' } }
+    const from = workflowNameOf(body !== null && typeof body === 'object' ? body.from : '')
+    const to = workflowNameOf(body !== null && typeof body === 'object' ? body.to : '')
+    if (from === '' || to === '') return { status: 400, body: { ok: false, error: 'from and to are required' } }
+    if (from === to) return { status: 200, body: { ok: true, name: to } }
+    const dir = path.join(root, 'user', 'default', 'workflows')
+    try {
+      await stat(path.join(dir, from + '.json'))
+    } catch {
+      return { status: 404, body: { ok: false, error: 'workflow not found: ' + from } }
+    }
+    try {
+      await stat(path.join(dir, to + '.json'))
+      return { status: 409, body: { ok: false, error: 'a workflow named ' + to + ' already exists' } }
+    } catch {
+      // The target is free.
+    }
+    try {
+      await rename(path.join(dir, from + '.json'), path.join(dir, to + '.json'))
+      return { status: 200, body: { ok: true, name: to } }
+    } catch (error) {
+      return { status: 500, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }
+    }
+  })
+
+  api.route('POST', '/workflow/delete', async ({ body }) => {
+    const config = await settings()
+    const root = typeof config.comfyuiRoot === 'string' ? config.comfyuiRoot : ''
+    if (root === '') return { status: 400, body: { ok: false, error: 'settings.json 缺少 comfyuiRoot' } }
+    const name = workflowNameOf(body !== null && typeof body === 'object' ? body.name : '')
+    if (name === '') return { status: 400, body: { ok: false, error: 'body.name is required' } }
+    try {
+      await rm(path.join(root, 'user', 'default', 'workflows', name + '.json'), { force: true })
+      return { status: 200, body: { ok: true, name } }
+    } catch (error) {
+      return { status: 500, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }
     }
   })
 
