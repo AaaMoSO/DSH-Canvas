@@ -16,6 +16,207 @@ const EXTENSION_ARM_MS = 30
 // A backend run outlives the panel: the panel is unmounted when the sidebar shows the chat.
 const REMOTE_RUN_KEY = 'dsh.node-canvas.remoteRun.v1'
 const REMOTE_RUN_MAX_AGE = 6 * 60 * 60 * 1000
+const RUNS_POLL_MS = 2500
+const REMOTE_POLL_MS = 800
+
+/**
+ * The run domain, owned outside the panel.
+ *
+ * The panel unmounts whenever the sidebar shows the conversation (the main slot is keyed), so
+ * polling, following and remembering runs cannot live in a component effect. This controller is
+ * created once per page and reports snapshots to whatever panel happens to be mounted.
+ */
+function createRunController() {
+  const listeners = new Set()
+  let runs = []
+  let remoteRun = null
+  let backends = []
+  let runsTimer = 0
+  let runsSignature = ''
+  let followToken = 0
+  let started = false
+
+  function snapshot() {
+    return { runs, remoteRun }
+  }
+
+  function emit() {
+    const value = snapshot()
+    for (const listener of [...listeners]) {
+      try {
+        listener(value)
+      } catch {
+        // A broken subscriber must not stop the others.
+      }
+    }
+  }
+
+  function subscribe(listener) {
+    listeners.add(listener)
+    listener(snapshot())
+    return () => {
+      listeners.delete(listener)
+    }
+  }
+
+  function remember(note) {
+    try {
+      if (note === null) localStorage.removeItem(REMOTE_RUN_KEY)
+      else localStorage.setItem(REMOTE_RUN_KEY, JSON.stringify(note))
+    } catch {
+      // Losing the note only costs the automatic resume.
+    }
+  }
+
+  function readNote() {
+    try {
+      const raw = localStorage.getItem(REMOTE_RUN_KEY)
+      return raw === null ? null : JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+
+  function setRemoteRun(next) {
+    remoteRun = next
+    if (next === null || next.status !== 'running') remember(null)
+    else remember({ id: next.id, backendId: next.backend, label: next.label ?? null, startedAt: next.startedAt, status: 'running' })
+    emit()
+  }
+
+  async function refreshRuns() {
+    try {
+      const response = await fetch('/node-canvas/runs', { cache: 'no-store' })
+      if (response.ok !== true) return
+      const payload = await response.json()
+      if (Array.isArray(payload.runs) !== true) return
+      // Polling must not repaint the panel when nothing moved.
+      const signature = payload.runs.map((run) => run.id + ':' + run.status + ':' + (run.finishedAt ?? 0)).join('|')
+      if (signature === runsSignature) return
+      runsSignature = signature
+      runs = payload.runs
+      emit()
+    } catch {
+      // A Host that is not answering leaves the dots at their last state.
+    }
+  }
+
+  function start() {
+    if (started === true) return
+    started = true
+    void refreshRuns()
+    runsTimer = setInterval(() => {
+      void refreshRuns()
+    }, RUNS_POLL_MS)
+    restoreRemote()
+  }
+
+  function stop() {
+    started = false
+    if (runsTimer !== 0) {
+      clearInterval(runsTimer)
+      runsTimer = 0
+    }
+    followToken += 1
+  }
+
+  function setBackends(list) {
+    backends = Array.isArray(list) ? list : []
+    if (remoteRun === null) restoreRemote()
+  }
+
+  /** Pick up a run that was still going when the panel went away. */
+  function restoreRemote() {
+    const stored = readNote()
+    if (stored === null || typeof stored !== 'object') return
+    if (stored.status !== 'running' || typeof stored.id !== 'string') {
+      remember(null)
+      return
+    }
+    if (typeof stored.startedAt === 'number' && Date.now() - stored.startedAt > REMOTE_RUN_MAX_AGE) {
+      remember(null)
+      return
+    }
+    const backend = backends.find((item) => item.id === stored.backendId)
+    if (backend === undefined) {
+      remember(null)
+      return
+    }
+    setRemoteRun({
+      id: stored.id,
+      backend: backend.id,
+      status: 'running',
+      startedAt: stored.startedAt,
+      error: null,
+      label: typeof stored.label === 'string' ? stored.label : null,
+      images: 0,
+    })
+    void follow(backend, stored.id)
+  }
+
+  /** Submit a prompt, or stop the run already in flight. Throws so the panel can report it. */
+  async function startRemoteRun(backend, prompt, label) {
+    if (remoteRun !== null && remoteRun.status === 'running') {
+      await cancelRemoteRun()
+      return
+    }
+    const started = await backend.start({ prompt, label })
+    if (started === null || typeof started?.id !== 'string' || started.id === '') {
+      throw new Error('backend returned no run id')
+    }
+    setRemoteRun({ id: started.id, backend: backend.id, status: 'running', startedAt: Date.now(), error: null, label, images: 0 })
+    void follow(backend, started.id)
+  }
+
+  async function cancelRemoteRun() {
+    const current = remoteRun
+    followToken += 1
+    setRemoteRun(null)
+    if (current === null) return
+    const backend = backends.find((item) => item.id === current.backend)
+    try {
+      if (backend !== undefined && typeof backend.cancel === 'function') await backend.cancel()
+    } catch {
+      // The job may have finished between the poll and the click.
+    }
+  }
+
+  async function follow(backend, id) {
+    const token = ++followToken
+    // Backends own their queueing; polling is enough and needs no streaming channel.
+    for (let attempt = 0; attempt < 1800; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, REMOTE_POLL_MS))
+      if (token !== followToken) return
+      const current = remoteRun
+      if (current === null || current.id !== id || current.status !== 'running') return
+      let state = null
+      try {
+        state = await backend.poll(id)
+      } catch {
+        continue
+      }
+      if (state === null || state.status === 'queued' || state.status === 'running') continue
+      if (token !== followToken) return
+      setRemoteRun({
+        ...current,
+        status: state.status,
+        error: state.error ?? null,
+        images: Array.isArray(state.images) ? state.images.length : 0,
+      })
+      return
+    }
+  }
+
+  return { start, stop, subscribe, snapshot, refreshRuns, setBackends, startRemoteRun, cancelRemoteRun }
+}
+
+let runController = null
+
+/** Created lazily, once per page, so it outlives every panel mount. */
+function getRunController() {
+  if (runController === null) runController = createRunController()
+  return runController
+}
 // Node shapes a backend produced, cached so a reload does not need the backend running.
 const REMOTE_PACK_KEY = 'dsh.node-canvas.remotePacks.v2'
 // Which source (Local, ComfyUI, …) the libraries are showing.
@@ -1723,8 +1924,9 @@ const thumbCache = new Map()
       const [currentWorkflow, setCurrentWorkflow] = React.useState(loadStoredWorkflow)
       // The saved copy of that workflow; when the canvas differs from it the workflow is a draft.
       const [baseline, setBaseline] = React.useState(loadBaseline)
-      // Runs known to the Host, newest first: drives the library dots across tabs.
-      const [runs, setRuns] = React.useState([])
+      // Runs known to the Host, newest first: mirrored from the run controller.
+      const runController = getRunController()
+      const [runs, setRuns] = React.useState(() => runController.snapshot().runs)
       // Each workflow keeps its own canvas document, so switching never duplicates or drops edits.
       const workflowGraphsRef = React.useRef(new Map())
       // Every workflow that was opened or saved this session keeps its own saved copy, so
@@ -1744,11 +1946,9 @@ const thumbCache = new Map()
       const [serviceStates, setServiceStates] = React.useState({})
       // Ticks once a second while something is booting, so the icon can count the seconds.
       const [serviceClock, setServiceClock] = React.useState(0)
-      const [remoteRun, setRemoteRun] = React.useState(null)
+      const [remoteRun, setRemoteRun] = React.useState(() => runController.snapshot().remoteRun)
       // Workflows that live in a backend (ComfyUI's own list), shown next to ours.
       const [backendWorkflows, setBackendWorkflows] = React.useState({ source: null, names: [] })
-      const remoteRunRef = React.useRef(null)
-      remoteRunRef.current = remoteRun
 // Extension packages: the puzzle menu, the add dialog, and the list from the Host.
       const [extensions, setExtensions] = React.useState([])
       const [extensionMenu, setExtensionMenu] = React.useState(false)
@@ -2065,31 +2265,18 @@ const thumbCache = new Map()
           })
       }, [])
 
-      // The workflow list shows live run state, so it is polled while the panel is open.
-      const runsSignatureRef = React.useRef('')
-      const loadRuns = React.useCallback(() => {
-        fetch('/node-canvas/runs', { cache: 'no-store' })
-          .then((response) => (response.ok === true ? response.json() : null))
-          .then((payload) => {
-            if (payload === null || Array.isArray(payload.runs) !== true) return
-            // Polling must not repaint the whole canvas when nothing moved.
-            const signature = payload.runs
-              .map((run) => run.id + ':' + run.status + ':' + (run.finishedAt ?? 0))
-              .join('|')
-            if (signature === runsSignatureRef.current) return
-            runsSignatureRef.current = signature
-            setRuns(payload.runs)
-          })
-          .catch(() => {
-            // A Host that is not answering simply leaves the dots at their last state.
-          })
-      }, [])
+      /** Ask the controller for a fresh run list (the controller owns the polling). */
+      function loadRuns() {
+        void runController.refreshRuns()
+      }
 
       React.useEffect(() => {
-        loadRuns()
-        const timer = setInterval(loadRuns, 2500)
-        return () => clearInterval(timer)
-      }, [loadRuns])
+        // Subscribing is the panel's only job here: polling continues while it is unmounted.
+        return runController.subscribe((snapshot) => {
+          setRuns(snapshot.runs)
+          setRemoteRun(snapshot.remoteRun)
+        })
+      }, [runController])
 
       React.useEffect(() => {
         loadPacks()
@@ -3420,49 +3607,30 @@ const thumbCache = new Map()
         }
       }
 
-      function rememberRemoteRun(run) {
-        try {
-          if (run === null) localStorage.removeItem(REMOTE_RUN_KEY)
-          else localStorage.setItem(REMOTE_RUN_KEY, JSON.stringify(run))
-        } catch {
-          // Losing the note only costs the automatic resume.
-        }
-      }
-
-      /** Pick up a run that was still going when the panel went away. */
-      const restoreRemoteRun = React.useCallback(() => {
-        let stored = null
-        try {
-          const raw = localStorage.getItem(REMOTE_RUN_KEY)
-          stored = raw === null ? null : JSON.parse(raw)
-        } catch {
-          stored = null
-        }
-        if (stored === null || typeof stored !== 'object') return
-        if (stored.status !== 'running' || typeof stored.id !== 'string') {
-          rememberRemoteRun(null)
-          return
-        }
-        if (typeof stored.startedAt === 'number' && Date.now() - stored.startedAt > REMOTE_RUN_MAX_AGE) {
-          rememberRemoteRun(null)
-          return
-        }
-        const backend = extensionFeatures.backends.find((item) => item.id === stored.backendId)
-        if (backend === undefined) {
-          rememberRemoteRun(null)
-          return
-        }
-        setRemoteRun({ id: stored.id, backend: backend.id, status: 'running', startedAt: stored.startedAt, error: null, label: typeof stored.label === 'string' ? stored.label : null })
-        void followBackendRun(backend, stored.id)
-      }, [extensionFeatures.backends])
-
       const backends = extensionFeatures.backends
 
-      // The panel is unmounted while the chat is open; a backend run keeps going there and is
-      // picked up again here instead of looking interrupted.
+      // The controller keeps following a backend run while the panel is gone; it only needs to
+      // know which backends exist.
       React.useEffect(() => {
-        restoreRemoteRun()
-      }, [restoreRemoteRun])
+        runController.setBackends(backends)
+      }, [runController, backends])
+
+      // A backend run settling is reported once, by the panel that happens to be mounted.
+      const previousRemoteRunRef = React.useRef(remoteRun)
+      React.useEffect(() => {
+        const previous = previousRemoteRunRef.current
+        previousRemoteRunRef.current = remoteRun
+        if (previous === null || previous.status !== 'running') return
+        if (remoteRun !== null && remoteRun.status === 'running') return
+        if (remoteRun === null) return
+        if (remoteRun.status === 'done') {
+          // The backend wrote new files; drop the cached listings so previews reload.
+          setOutputLists({})
+          showNotice(tr('notice.backendDone', { n: remoteRun.images ?? 0 }))
+        } else {
+          showNotice(tr('notice.runFailed', { message: remoteRun.error ?? remoteRun.status }))
+        }
+      }, [remoteRun])
 
       // A source can disappear (its extension was removed): the libraries go back to Local.
       React.useEffect(() => {
@@ -3575,19 +3743,8 @@ const thumbCache = new Map()
         return null
       }
 
-      /** Hand the compiled prompt to the active backend and follow it until it finishes. */
+      /** Hand the compiled prompt to the run controller, which follows it in the background. */
       async function runOnBackend(backend, graph, label) {
-        const current = remoteRunRef.current
-        if (current !== null && current.status === 'running') {
-          try {
-            if (typeof backend.cancel === 'function') await backend.cancel()
-          } catch {
-            // The job may have finished between the poll and the click.
-          }
-          rememberRemoteRun(null)
-          setRemoteRun(null)
-          return
-        }
         let prompt
         try {
           prompt = toPrompt(graph)
@@ -3596,42 +3753,9 @@ const thumbCache = new Map()
           return
         }
         try {
-          const started = await backend.start({ prompt, label })
-          if (started === null || typeof started?.id !== 'string' || started.id === '') {
-            throw new Error('backend returned no run id')
-          }
-          const startedAt = Date.now()
-          setRemoteRun({ id: started.id, backend: backend.id, status: 'running', startedAt, error: null, label })
-          rememberRemoteRun({ id: started.id, backendId: backend.id, label, startedAt, status: 'running' })
-          await followBackendRun(backend, started.id)
+          await runController.startRemoteRun(backend, prompt, label)
         } catch (error) {
           showNotice(tr('notice.runFailed', { message: error.message }))
-        }
-      }
-
-      async function followBackendRun(backend, id) {
-        // Backends own their own queueing; polling is enough and needs no streaming channel.
-        for (let attempt = 0; attempt < 1800; attempt += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 800))
-          const current = remoteRunRef.current
-          if (current === null || current.id !== id || current.status !== 'running') return
-          let state = null
-          try {
-            state = await backend.poll(id)
-          } catch {
-            continue
-          }
-          if (state === null || state.status === 'queued' || state.status === 'running') continue
-          rememberRemoteRun(null)
-          setRemoteRun({ id, backend: backend.id, status: state.status, startedAt: current.startedAt, error: state.error ?? null })
-          if (state.status === 'done') {
-            // The backend wrote new files; drop the cached listings so previews reload.
-            setOutputLists({})
-            showNotice(tr('notice.backendDone', { n: (state.images ?? []).length }))
-          } else {
-            showNotice(tr('notice.runFailed', { message: state.error ?? state.status }))
-          }
-          return
         }
       }
 
@@ -3752,13 +3876,7 @@ const thumbCache = new Map()
           return
         }
         if (remoteRun !== null && remoteRun.status === 'running' && remoteRun.label === name) {
-          try {
-            if (typeof backend.cancel === 'function') await backend.cancel()
-          } catch {
-            // The job may have finished between the poll and the click.
-          }
-          rememberRemoteRun(null)
-          setRemoteRun(null)
+          await runController.cancelRemoteRun()
           return
         }
         let graph
@@ -7727,6 +7845,9 @@ const thumbCache = new Map()
     return {
       inject: ['slots'],
       apply(ctx) {
+        const runs = getRunController()
+        runs.start()
+        ctx.effect(() => () => runs.stop())
         const locale = ctx.get('locale')
         if (locale !== undefined && locale !== null) {
           ctx.effect(() => {
