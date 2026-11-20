@@ -2593,8 +2593,6 @@ const thumbCache = new Map()
             const small = box.width < 460 || box.height < 300
             setCompact((current) => (current === small ? current : small))
           }
-          // The overview's box follows the shell without waiting for a render.
-          paintMinimapBox(viewRef.current.x, viewRef.current.y, viewRef.current.k)
           const left = shell.getBoundingClientRect().left
           const shift = shellLeftRef.current - left
           shellLeftRef.current = left
@@ -2602,12 +2600,28 @@ const thumbCache = new Map()
           // left edge travels without the layout changing; correcting here would double up.
           if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
           if (Math.abs(shift) > 0.5) {
+            // The canvas is a child of the shell, so the layout has already carried it along by
+            // `shift`. React would only answer on a later render, which is the frame of ghosting;
+            // this observer runs after layout and before paint, so writing the counter here keeps
+            // the canvas dead still in the very frame the sidebar moved. The layout effect below
+            // clears it again as soon as the compensated view is painted.
+            const layer = graphLayerRef.current
+            if (layer !== null) layer.style.transform = 'translate(' + shift + 'px, 0px)'
+            paintMinimapBox(viewRef.current.x + shift, viewRef.current.y, viewRef.current.k)
             setView((current) => ({ ...current, x: current.x + shift }))
           }
         })
         observer.observe(shell)
         return () => observer.disconnect()
       }, [])
+
+      // The resize observer counters the sidebar's move with a transform for one frame; once the
+      // compensated view is committed this takes it back in the same frame, so the canvas is never
+      // shifted twice and never lags behind.
+      React.useLayoutEffect(() => {
+        const layer = graphLayerRef.current
+        if (layer !== null && layer.style.transform !== '') layer.style.transform = ''
+      }, [view])
 
       function syncShell() {
         const shell = shellRef.current
