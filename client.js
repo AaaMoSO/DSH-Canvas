@@ -2509,9 +2509,6 @@ const thumbCache = new Map()
       const comboAnchorRef = React.useRef(null)
       const phantomRef = React.useRef(null)
       const nodeDragRef = React.useRef(null)
-      // The view and size as they were before the door started moving; the overview box is drawn
-      // from these until the per-frame tracker takes over in the first animated frame.
-      const minimapFreezeRef = React.useRef(null)
       const propsDirtyRef = React.useRef(false)
       const noticeTimerRef = React.useRef(0)
 
@@ -5709,10 +5706,7 @@ const thumbCache = new Map()
       function openDoor() {
         const page = pageRef.current
         if (page === null || doorPhaseRef.current !== 'idle') return
-        minimapFreezeRef.current = {
-          view: { x: viewRef.current.x, y: viewRef.current.y, k: viewRef.current.k },
-          size: { w: size.w, h: size.h },
-        }
+        // The door resizes the sheet; the overview reads the shell itself, so it needs no snapshot.
         const rect = page.getBoundingClientRect()
         doorCellRef.current = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
         doorCorrectedRef.current = false
@@ -5724,12 +5718,8 @@ const thumbCache = new Map()
       function closeDoor() {
         const cell = doorCellRef.current
         if (cell === null || doorPhaseRef.current !== 'open') return
-        minimapFreezeRef.current = {
-          view: { x: viewRef.current.x, y: viewRef.current.y, k: viewRef.current.k },
-          size: { w: size.w, h: size.h },
-        }
         doorPhaseRef.current = 'closing'
-        setSlide({ page: 0, content: 0, animate: false, minimap: 0 })
+        setSlide({ page: 0, content: 0, animate: false })
       }
 
       React.useLayoutEffect(() => {
@@ -5758,7 +5748,7 @@ const thumbCache = new Map()
             width: cell.left + cell.width,
             height: cell.height,
           })
-          setSlide({ page: cell.left, content: 0, animate: false, minimap: -cell.left })
+          setSlide({ page: cell.left, content: 0, animate: false })
           return undefined
         }
 
@@ -5768,7 +5758,7 @@ const thumbCache = new Map()
           // its final viewport before the slide starts, instead of changing mid-way.
           syncShell()
           const frame = requestAnimationFrame(() => {
-            setSlide({ page: 0, content: cell.left, animate: true, minimap: -cell.left })
+            setSlide({ page: 0, content: cell.left, animate: true })
           })
           return () => cancelAnimationFrame(frame)
         }
@@ -5776,7 +5766,7 @@ const thumbCache = new Map()
         if (phase === 'closing') {
           doorPhaseRef.current = 'closingNow'
           const frame = requestAnimationFrame(() => {
-            setSlide({ page: cell.left, content: -cell.left, animate: true, minimap: 0 })
+            setSlide({ page: cell.left, content: -cell.left, animate: true })
           })
           return () => cancelAnimationFrame(frame)
         }
@@ -6985,9 +6975,11 @@ const thumbCache = new Map()
           style: {
             ...S.minimap,
             pointerEvents: 'auto',
-            // Static inside the canvas sheet: the sheet's own counter-move carries it, exactly
-            // like the nodes, so nothing in here animates per frame and nothing can shimmer.
-            transform: minimapShift === 0 ? 'none' : 'translateX(' + minimapShift + 'px)',
+            // The overview belongs to the window, not to the graph: it sits in the shell and
+            // cancels the page's own slide with the same transition, so it never moves on screen
+            // while the sheet travels under it.
+            transform: pageShift === 0 ? 'none' : 'translateX(' + (-pageShift) + 'px)',
+            transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
           },
           title: tr('minimap'),
           onPointerDown: onMinimapPointerDown,
@@ -7009,9 +7001,6 @@ const thumbCache = new Map()
       const animating = slide !== null && slide.animate === true
       const canvasShift = slide === null ? 0 : slide.content
       const pageShift = slide === null ? 0 : slide.page
-      // The overview rides inside the canvas sheet, so it needs its own static offset instead
-      // of an animated counter (see minimapShift usage below).
-      const minimapShift = slide === null ? 0 : (slide.minimap ?? 0)
 
       /**
        * A window centred in the sheet: widening it by cell.left would move the centre by half of
@@ -7292,7 +7281,7 @@ const thumbCache = new Map()
           willChange: animating ? 'transform' : 'auto',
           transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
         },
-      }, [graphLayer, renderMinimap()])
+      }, [graphLayer])
       const shell = h('div', {
         key: 'shell',
         ref: shellRef,
@@ -7305,7 +7294,7 @@ const thumbCache = new Map()
         onPointerUp: onShellPointerUp,
         onPointerCancel: onShellPointerCancel,
         onContextMenu: onShellContextMenu,
-      }, [canvasContent, emptyEl, noticeEl, renderMenu(), renderProperties()])
+      }, [canvasContent, renderMinimap(), emptyEl, noticeEl, renderMenu(), renderProperties()])
 
       // Where the menu is, in the only frame the panel has: the page. Everything else about it —
       // the band under it, both drag handles — is a calc() of these three variables, so a window
