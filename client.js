@@ -2729,6 +2729,9 @@ const thumbCache = new Map()
       React.useEffect(() => {
         // The edit is the workflow's new content: once the user stops moving, write it back.
         if (currentWorkflow === null) return undefined
+        // Before the packs are in, the graph still lacks its widget schemas: writing that back
+        // would store a hollow workflow that no longer runs.
+        if (packsReady !== true) return undefined
         const json = graphSignature(graph)
         if (baseline !== null && baseline.name === currentWorkflow && baseline.json === json) {
           return undefined
