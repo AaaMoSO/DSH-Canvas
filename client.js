@@ -7175,7 +7175,8 @@ const thumbCache = new Map()
           height: Math.max(2, nodeHeight(node) * scale),
           rx: 1.5,
           fill: 'var(--dsw-alias-label-secondary)',
-          opacity: 0.55,
+          // Light enough that the crosshair pointer stays readable over a dense block of them.
+          opacity: 0.3,
         }))
         children.push(h('rect', {
           key: 'viewport',
