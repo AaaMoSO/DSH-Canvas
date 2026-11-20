@@ -8,8 +8,13 @@ remote execution backend when you need its node pack.
 
 - **Infinite canvas**: create nodes, wire ports, marquee/zoom/pan, groups, undo, minimap.
 - **Node packs**: a pack is a folder with `pack.json` (node definitions) and `nodes/<Type>.mjs`
-  (programs). A workflow stores types and widget values only — definitions and programs always
-  come from the installed packs.
+  (programs). A workflow stores types, widget values and each node's origin — definitions and
+  programs always come from the installed packs.
+- **Ownership**: every node records the pack that produced it — `origin`, written when the node
+  is created and, for a file that predates the field, once when it is first opened. Values are
+  `local:<pack>` or `remote:<pack>`. The canvas kind (local / remote / mixed) is the set of its
+  nodes' origins and a node's definition comes from its own pack, so a type that two packs both
+  declare is never a guess: a node whose pack is missing shows no shape instead of another pack's.
 - **Workflows**: save / save as / export / rename / delete, plus a status pill that tells whether
   the canvas still equals its saved copy. A workflow opened from a backend's list lives on that
   backend: saving writes the backend's own file and keeps no local copy, so the two libraries
@@ -60,7 +65,7 @@ index.js       host: packs, workflows, output files, extension routes
 executor.js    generic executor: graph → programs, locks, per-run workspace
 packs/         node packs
 extensions/    capability packages (a ComfyUI format adapter + backend, a hover card)
-workflows/     saved workflows (v2: types + values, no definitions)
+workflows/     saved workflows (v3: types, values, and the pack each node came from)
 locale/        plugin name/description shown by the harness
 ```
 
