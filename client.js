@@ -6941,12 +6941,11 @@ const thumbCache = new Map()
         const ox = (width - graphWidth * scale) / 2 - bounds.minX * scale
         const oy = (height - graphHeight * scale) / 2 - bounds.minY * scale
         miniGeomRef.current = { ox, oy, scale }
-        // Before the first animated frame the panel already has its final size while the view is
-        // still the old one; drawing the box from those would stretch it the wrong way for one
-        // frame, so the pre-door snapshot is used instead.
-        const frozen = slide === null ? null : minimapFreezeRef.current
-        const boxView = frozen === null ? view : frozen.view
-        const boxSize = frozen === null ? size : frozen.size
+        // The viewport box follows the shell's live rectangle, read in the same render: no measured
+        // snapshot sits between the layout and the overview any more.
+        const shellRect = shellRef.current === null ? null : shellRef.current.getBoundingClientRect()
+        const boxView = view
+        const boxSize = shellRect === null ? size : { w: shellRect.width, h: shellRect.height }
         const viewport = {
           x: -boxView.x / boxView.k,
           y: -boxView.y / boxView.k,
