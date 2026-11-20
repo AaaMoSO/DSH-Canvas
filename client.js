@@ -2729,6 +2729,19 @@ const thumbCache = new Map()
       }, [])
 
       React.useEffect(() => {
+        // The edit is the workflow's new content: once the user stops moving, write it back.
+        if (currentWorkflow === null) return undefined
+        const json = graphSignature(graph)
+        if (baseline !== null && baseline.name === currentWorkflow && baseline.json === json) {
+          return undefined
+        }
+        const timer = setTimeout(() => {
+          void autosaveWorkflow(currentWorkflow)
+        }, 800)
+        return () => clearTimeout(timer)
+      }, [graph, currentWorkflow, baseline])
+
+      React.useEffect(() => {
         // Writing before the packs have filled the nodes in would store empty widget values.
         if (packsReady !== true) return undefined
         const timer = setTimeout(() => {
@@ -3937,6 +3950,31 @@ const thumbCache = new Map()
         storeBaseline(savedCopy)
         showNotice(tr('notice.writeBackDone', { name: target }))
         void loadBackendWorkflows(owner.id)
+      }
+
+      /**
+       * Write the canvas back into the workflow it is bound to. The canvas *is* that workflow, so
+       * this is not a "save" the user asks for: it is the edit taking effect.
+       */
+      async function autosaveWorkflow(name) {
+        if (name === null) return
+        // A mapped canvas is written back to its backend by hand, never in the background.
+        if (canvasKind(graphRef.current) === 'remote') return
+        try {
+          const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ graph: serializeGraph(graphRef.current) }),
+          })
+          if (response.ok !== true) throw new Error('HTTP ' + response.status)
+          workflowGraphsRef.current.set(name, graphRef.current)
+          const savedCopy = { name, json: graphSignature(graphRef.current) }
+          workflowBaselinesRef.current.set(name, savedCopy.json)
+          setBaseline(savedCopy)
+          storeBaseline(savedCopy)
+        } catch (error) {
+          showNotice(tr('notice.saveFailed', { message: error.message }))
+        }
       }
 
       /** Write the canvas document into the workflow library under `name`. */
