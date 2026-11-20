@@ -7740,8 +7740,19 @@ const thumbCache = new Map()
         }, barSection === section.id ? '▾' : '▸'),
       ]))
 
+      /**
+       * Shapes a backend produced stay in memory even while it is down: a saved graph still has to
+       * draw its nodes. The library, though, may only offer them while that backend is running —
+       * otherwise the last session's nodes sit there as if they could be used.
+       */
+      function packVisible(pack) {
+        const source = sourceOfPack(pack)
+        if (source === 'local') return true
+        return isServiceReady(source) === true
+      }
+
       const packRows = []
-      for (const pack of packs.filter((item) => sourceOfPack(item) === activeSource)) {
+      for (const pack of packs.filter((item) => sourceOfPack(item) === activeSource && packVisible(item))) {
         const expanded = openPack === pack.id
         packRows.push(h('button', {
           key: 'pack:' + pack.id,
@@ -7912,7 +7923,7 @@ const thumbCache = new Map()
       for (const source of sources) {
         const active = source.id === activeSource
         const nodes = packs
-          .filter((pack) => sourceOfPack(pack) === source.id)
+          .filter((pack) => sourceOfPack(pack) === source.id && packVisible(pack))
           .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
         const workflowsHere = source.id === 'local'
           ? workflows.length
@@ -7951,8 +7962,14 @@ const thumbCache = new Map()
         + '.nc-resize-x:active,.nc-resize-y:active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent)}')
 
       // The selected library fills the room under the menu, spanning the same width.
+      const packEmptyRow = h('div', { key: 'pack-empty', style: S.libraryHint },
+        activeSource === 'local'
+          ? tr('library.empty')
+          : (isServiceReady(activeSource) === true
+            ? tr('library.sourceEmpty')
+            : tr('library.sourceOffline')))
       const submenuRows = barSection === 'nodes'
-        ? packRows
+        ? (packRows.length === 0 ? [packEmptyRow] : packRows)
         : (barSection === 'workflows' ? workflowRows : sourceRows)
 
       /** The miniature itself: ports on both sides, widget bars underneath. */
