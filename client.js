@@ -1153,6 +1153,8 @@ const thumbCache = new Map()
       'canvas.kind.remote': 'Remote',
       'canvas.kind.mixed': 'Mixed',
       'canvas.kind.resolving': 'Unresolved',
+      'node.sourceLocal': 'Local',
+      'node.sourceRemote': 'Remote',
       grid: 'Show or hide the grid',
       minimap: 'Overview',
       'empty.title': 'An empty canvas',
@@ -1325,6 +1327,8 @@ const thumbCache = new Map()
       'canvas.kind.remote': '远程',
       'canvas.kind.mixed': '混合',
       'canvas.kind.resolving': '未定',
+      'node.sourceLocal': '本地',
+      'node.sourceRemote': '远程',
       grid: '显示或隐藏网格',
       minimap: '缩略图',
       'empty.title': '画布是空的',
@@ -2236,6 +2240,20 @@ const thumbCache = new Map()
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
+      },
+      // The source a node records, in the header: short, quiet, and never in the way of the title.
+      nodeSource: {
+        flex: '0 0 auto',
+        maxWidth: '68px',
+        padding: '0 6px',
+        borderRadius: '999px',
+        fontSize: '10px',
+        lineHeight: '16px',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        opacity: 0.78,
+        pointerEvents: 'none',
       },
       titleInput: {
         flex: 1,
@@ -4812,6 +4830,20 @@ const thumbCache = new Map()
         return backends.find((backend) => backend.id === pack.remote) ?? null
       }
 
+      /**
+       * What a node's header says about its source: the local library by name, or the backend that
+       * signed it. The pack id is left out on purpose — it repeats what the type already tells.
+       */
+      function sourceLabelOf(node) {
+        const kind = originKind(node.origin)
+        if (kind === 'local') return tr('node.sourceLocal')
+        if (kind === 'remote') {
+          const backend = backendOfOrigin(node.origin)
+          return backend === null ? tr('node.sourceRemote') : (backend.name ?? backend.id)
+        }
+        return ''
+      }
+
       /** The backend that owns a remote workflow, taken from what its nodes say. */
       function remoteOwnerOf(graph) {
         for (const node of graph.nodes) {
@@ -6919,6 +6951,7 @@ const thumbCache = new Map()
         const widgetSpecs = widgetSpecsOf(node)
         const portRows = Math.max(sockets.length, node.outputs.length)
         const skin = nodeSkin(node)
+        const sourceLabel = sourceLabelOf(node)
         const preview = previewOf(node)
         // An extension may add an extra area below the controls for node types it knows.
         const view = preview === null && phantom !== true ? nodeViewOf(node) : null
@@ -7036,6 +7069,14 @@ const thumbCache = new Map()
                     setEditing({ kind: 'title', nodeId: node.id })
                   },
                 }, node.title === '' ? tr('node.new', { n: '' }).trim() : node.title),
+            sourceLabel === '' ? null : h('span', {
+              key: 'source',
+              style: {
+                ...S.nodeSource,
+                color: skin.text,
+                background: 'color-mix(in srgb, ' + skin.text + ' 14%, transparent)',
+              },
+            }, sourceLabel),
           ]),
           h('div', {
             key: 'ports',
