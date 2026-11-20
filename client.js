@@ -5684,8 +5684,10 @@ const thumbCache = new Map()
         resizeRef.current = {
           mode,
           pointerId: event.pointerId,
-          x: event.clientX,
-          y: event.clientY,
+          x0: event.clientX,
+          y0: event.clientY,
+          width0: Math.round(rect.width),
+          height0: Math.round(rect.height),
           width: Math.round(rect.width),
           height: Math.round(rect.height),
           split: undefined,
@@ -5700,14 +5702,15 @@ const thumbCache = new Map()
         const pageRect = page.getBoundingClientRect()
         if (drag.mode === 'width') {
           const maxWidth = Math.max(MENU_MIN_WIDTH, Math.round(pageRect.width - 16))
-          drag.width = Math.min(maxWidth, Math.max(MENU_MIN_WIDTH, Math.round(drag.width + event.clientX - drag.x)))
-          drag.x = event.clientX
+          // Measured from where the press started rather than added up move by move: a drag that
+          // runs into a limit and comes back re-attaches to the cursor instead of staying offset by
+          // however far it overshot.
+          drag.width = Math.min(maxWidth, Math.max(MENU_MIN_WIDTH, Math.round(drag.width0 + event.clientX - drag.x0)))
           setMenuVar('--nc-menu-w', drag.width + 'px')
           return
         }
         const available = menuAvailable(pageRect.height, barMenu.top)
-        const height = Math.min(available - 100, Math.max(120, Math.round(drag.height + event.clientY - drag.y)))
-        drag.y = event.clientY
+        const height = Math.min(available - 100, Math.max(120, Math.round(drag.height0 + event.clientY - drag.y0)))
         drag.height = height
         drag.split = height / Math.max(1, available)
         setMenuVar('--nc-menu-split', String(drag.split))
