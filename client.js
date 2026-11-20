@@ -1036,6 +1036,8 @@ const thumbCache = new Map()
       'menu.deleteWorkflow': 'Delete',
       'notice.runFailed': 'Could not run: {message}',
       'workflow.run': 'Run this workflow',
+      'workflow.running': 'Running',
+      'workflow.failed': 'Failed',
       'workflow.stop': 'Stop this run',
       'canvas.run': 'Run the canvas (temporary workflow)',
       'canvas.runSaved': 'Run “{name}”',
@@ -1203,6 +1205,8 @@ const thumbCache = new Map()
       'menu.deleteWorkflow': '删除',
       'notice.runFailed': '运行失败：{message}',
       'workflow.run': '运行此工作流',
+      'workflow.running': '运行中',
+      'workflow.failed': '出错',
       'workflow.stop': '停止运行',
       'canvas.run': '运行画布（临时工作流）',
       'canvas.runSaved': '运行「{name}」',
@@ -1577,6 +1581,25 @@ const thumbCache = new Map()
         flexDirection: 'row',
         alignItems: 'center',
         gap: '7px',
+        position: 'relative',
+        // Room for this row's own status capsule, pinned to the right edge.
+        paddingRight: '64px',
+      },
+      // The capsule describes one workflow's run, right on its own row.
+      workflowState: {
+        position: 'absolute',
+        right: '6px',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        height: '16px',
+        padding: '0 7px',
+        borderRadius: '8px',
+        fontSize: '10px',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
       },
       workflowDot: {
         width: '6px',
@@ -7896,6 +7919,23 @@ const thumbCache = new Map()
                 : S.workflowDot,
           }),
           h('span', { key: 'text', style: S.nodeName }, name),
+          // One capsule per workflow, describing that workflow's own run.
+          state === 'running' || state === 'error'
+            ? h('span', {
+                key: 'state',
+                style: state === 'running'
+                  ? {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-success-primary)',
+                    }
+                  : {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-error-primary)',
+                    },
+              }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
+            : null,
         ]))
       }
       if (activeSource === 'local' && workflowsReady !== true) {
@@ -8088,40 +8128,6 @@ const thumbCache = new Map()
             onDoubleClick: () => resetResize('height'),
           })
 
-      // The saved/draft capsule belongs to the workflow library, not to the toolbar: it sits on
-      // the right edge of the band, over whatever tail a long workflow name would have reached.
-      const workflowBadge = barSection !== 'workflows'
-        ? null
-        : h('div', {
-            key: 'workflow-badge',
-            style: {
-              position: 'absolute',
-              top: '10px',
-              right: '10px',
-              zIndex: 2,
-              pointerEvents: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              height: '18px',
-              padding: '0 8px',
-              borderRadius: '9px',
-              fontSize: '10px',
-              background: canvasDirty
-                ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 16%, var(--dsw-alias-bg-base))'
-                : 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 16%, var(--dsw-alias-bg-base))',
-              color: canvasDirty
-                ? 'var(--dsw-alias-state-business-primary)'
-                : 'var(--dsw-alias-state-success-primary)',
-            },
-          }, [
-            h('span', {
-              key: 'dot',
-              style: { width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' },
-            }),
-            h('span', { key: 'text' }, canvasDirty ? tr('canvas.draft') : tr('canvas.saved')),
-          ])
-
       const barSubmenuEl = barMenu === null || barMenu.open !== true || barSection === null
         ? null
         : h('div', {
@@ -8158,7 +8164,7 @@ const thumbCache = new Map()
                 + BAND_MS + 'ms cubic-bezier(0.22, 0.61, 0.36, 1)'
                 + (bandClosing === true ? ' forwards' : ''),
             },
-          }, workflowBadge === null ? submenuRows : [workflowBadge].concat(submenuRows)))
+          }, submenuRows))
 
       // The run control sits outside the panel, in line with the hovered row. Its wrapper starts
       // exactly at the panel edge, so travelling right from the row never crosses dead space.
