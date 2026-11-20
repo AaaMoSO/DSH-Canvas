@@ -1582,8 +1582,6 @@ const thumbCache = new Map()
         alignItems: 'center',
         gap: '7px',
         position: 'relative',
-        // Room for this row's own status capsule, pinned to the right edge.
-        paddingRight: '64px',
       },
       // The capsule describes one workflow's run, right on its own row.
       workflowState: {
