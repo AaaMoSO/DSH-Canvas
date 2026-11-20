@@ -2512,6 +2512,10 @@ const thumbCache = new Map()
       // Set by the press that opens the door: the sidebar goes away once the sheet covers it.
       const collapseAfterOpenRef = React.useRef(false)
       const settleFrameRef = React.useRef(0)
+      // The host's slot element, kept so an unmount can still measure it.
+      const slotElRef = React.useRef(null)
+      // True while the sidebar is hidden because this panel hid it.
+      const sidebarHiddenByUsRef = React.useRef(false)
       const doorCorrectedRef = React.useRef(false)
       const shellLeftRef = React.useRef(0)
       const dragRef = React.useRef(null)
@@ -2549,6 +2553,7 @@ const thumbCache = new Map()
       React.useEffect(() => {
         const slot = hostSlot()
         if (slot === null) return undefined
+        slotElRef.current = slot
         const update = () => {
           const full = slot.getBoundingClientRect().left < WINDOW_FULL_LEFT
           setWindowFull((current) => (current === full ? current : full))
@@ -2674,6 +2679,11 @@ const thumbCache = new Map()
           if (barMenuTimerRef.current !== 0) clearTimeout(barMenuTimerRef.current)
           if (bandTimerRef.current !== 0) clearTimeout(bandTimerRef.current)
           if (settleFrameRef.current !== 0) cancelAnimationFrame(settleFrameRef.current)
+          // Leaving the canvas must not leave the host without its sidebar.
+          if (sidebarHiddenByUsRef.current === true && slotLeft() < WINDOW_FULL_LEFT) {
+            sidebarHiddenByUsRef.current = false
+            toggleHostSidebar()
+          }
         }
       }, [])
 
@@ -5756,6 +5766,7 @@ const thumbCache = new Map()
 
       /** The element the host gives the canvas: its left edge is what the sidebar leaves free. */
       function hostSlot() {
+        if (slotElRef.current !== null) return slotElRef.current
         const page = pageRef.current
         return page === null ? null : page.parentElement
       }
@@ -5821,6 +5832,8 @@ const thumbCache = new Map()
           waitSlotSettled((left) => {
             const cell = doorCellRef.current
             if (cell !== null) doorCellRef.current = { ...cell, left }
+            // The sidebar is back once the slot starts below the canvas again.
+            if (left >= WINDOW_FULL_LEFT) sidebarHiddenByUsRef.current = false
             windowBusyRef.current = false
             closeDoor()
           })
@@ -5828,6 +5841,7 @@ const thumbCache = new Map()
         }
         if (doorPhaseRef.current === 'open') {
           // The sheet is already open; what is left is putting the sidebar away.
+          sidebarHiddenByUsRef.current = true
           toggleHostSidebar()
           return
         }
@@ -5940,6 +5954,7 @@ const thumbCache = new Map()
             if (collapseAfterOpenRef.current === true) {
               collapseAfterOpenRef.current = false
               // The sheet covers the sidebar now, so putting it away cannot be seen.
+              sidebarHiddenByUsRef.current = true
               toggleHostSidebar()
               windowBusyRef.current = false
             }
