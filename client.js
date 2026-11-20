@@ -931,7 +931,7 @@ const thumbCache = new Map()
     }
 
     const EN = {
-      title: 'Node canvas',
+      title: 'DSH Canvas',
       'fullscreen.enter': 'Hide the sidebar',
       'fullscreen.exit': 'Show the sidebar',
       barMenu: 'Menu',
@@ -1098,7 +1098,7 @@ const thumbCache = new Map()
     }
 
     const ZH = {
-      title: '节点画布',
+      title: 'DSH Canvas',
       'fullscreen.enter': '隐藏侧栏，让画布铺满窗口',
       'fullscreen.exit': '恢复侧栏',
       barMenu: '菜单',

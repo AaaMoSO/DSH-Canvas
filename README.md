@@ -1,4 +1,4 @@
-# Node Canvas — a ComfyUI-shaped infinite canvas for DeepSeek Harness
+# DSH Canvas — a ComfyUI-shaped infinite canvas for DeepSeek Harness
 
 A DSH client plugin: an infinite node canvas in the sidebar. Nodes, ports and workflows are
 ComfyUI-shaped, but the runtime is our own Node executor — and a running ComfyUI can be used as a

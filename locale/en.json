@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Node canvas",
+    "title": "DSH Canvas",
     "description": "An infinite canvas in the sidebar for arranging nodes and wiring their ports into a graph."
   }
 }
