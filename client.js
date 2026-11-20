@@ -1576,10 +1576,10 @@ const thumbCache = new Map()
         background: 'var(--dsw-alias-brand-primary)',
       },
       // Run status of a library workflow: grey idle, green running, red failed.
-      // The workflow the canvas currently shows: colour plus a tint, so the row reads as selected.
+      // The workflow the canvas currently shows, tinted like the menu's own active row.
       workflowRowActive: {
         color: 'var(--dsw-alias-brand-primary)',
-        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent)',
+        background: 'var(--dsw-alias-bg-layer-1)',
         borderRadius: '6px',
       },
       workflowRow: {
