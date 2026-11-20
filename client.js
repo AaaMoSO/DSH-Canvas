@@ -1576,6 +1576,12 @@ const thumbCache = new Map()
         background: 'var(--dsw-alias-brand-primary)',
       },
       // Run status of a library workflow: grey idle, green running, red failed.
+      // The workflow the canvas currently shows: colour plus a tint, so the row reads as selected.
+      workflowRowActive: {
+        color: 'var(--dsw-alias-brand-primary)',
+        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent)',
+        borderRadius: '6px',
+      },
       workflowRow: {
         display: 'flex',
         flexDirection: 'row',
@@ -7855,7 +7861,7 @@ const thumbCache = new Map()
           type: 'button',
           title: item.name,
           style: active
-            ? { ...S.nodeRow, ...S.workflowRow, color: 'var(--dsw-alias-brand-primary)' }
+            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
             : { ...S.nodeRow, ...S.workflowRow },
           onClick: () => {
             void openWorkflow(item.name)
@@ -7927,7 +7933,7 @@ const thumbCache = new Map()
           type: 'button',
           title: name,
           style: active
-            ? { ...S.nodeRow, ...S.workflowRow, color: 'var(--dsw-alias-brand-primary)' }
+            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
             : { ...S.nodeRow, ...S.workflowRow },
           onClick: () => {
             void openBackendWorkflow(name)
