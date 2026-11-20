@@ -77,6 +77,11 @@ The rules that keep it that way:
 - **Derived geometry lives in CSS.** The library menu publishes `--nc-menu-top`, `-w` and `-split`
   on the page; the band under it and both drag handles are `calc()` of those, so a window resize
   never reaches JavaScript. A drag writes the variable directly and re-renders only on release.
+- **The canvas is drawn in the window, not in the layout.** It lives in a fixed layer whose origin
+  is the window's corner; the shell only decides the hole, written as a `clip-path` after layout
+  and before paint. A sidebar toggle, a window resize or the fullscreen slide can therefore move or
+  resize the shell without touching a single coordinate inside the graph. While the door is open the
+  layer cancels the sheet's transform, because a transformed ancestor would otherwise own it.
 - **Chrome that must not move cancels the transform it rides.** During the fullscreen slide the
   page translates by `pageShift`; the overview cancels it with the same value and the same
   transition, so it stays put on screen without a second reference frame.
