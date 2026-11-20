@@ -649,6 +649,25 @@ const thumbCache = new Map()
     }
 
     /**
+     * What a graph is made of, read from the origins its nodes record. Nothing is inferred: a node
+     * says where it came from, and the canvas is the set of those answers.
+     */
+    function canvasKind(graph) {
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
+      if (nodes.length === 0) return null
+      let kind = null
+      for (const node of nodes) {
+        const owner = originKind(node.origin)
+        // A node that has not been stamped yet leaves the canvas undecided; callers treat that as
+        // "no kind yet" instead of inventing one.
+        if (owner === null) return null
+        if (kind === null) kind = owner
+        else if (kind !== owner) return 'mixed'
+      }
+      return kind
+    }
+
+    /**
      * The origin a node from an older file should get: the library that declares its type. A
      * document bound to a backend prefers that side's declaration, a local one prefers the local
      * library. This runs once per node and never again; afterwards the node answers for itself.
@@ -3400,7 +3419,11 @@ const thumbCache = new Map()
           return 0
         }
         if (kind === 'remote' || kind === 'local') {
-          const foreign = payload.nodes.some((node) => nodeKindOf(node.type) !== kind)
+          // A node with no origin is not foreign, it is undecided: the effect stamps it afterwards.
+          const foreign = payload.nodes.some((node) => {
+            const owner = originKind(node.origin)
+            return owner !== null && owner !== kind
+          })
           if (foreign) {
             showNotice(kind === 'remote' ? tr('notice.remoteOnly') : tr('notice.localOnly'))
             return 0
@@ -3420,11 +3443,8 @@ const thumbCache = new Map()
           from: [map.get(link.from[0]), link.from[1]],
           to: [map.get(link.to[0]), link.to[1]],
         }))
-        // Pasting into an empty canvas makes that canvas the payload's kind.
-        const extra = kind !== null
-          ? current.extra
-          : { ...(current.extra ?? {}) }
-        updateGraph({ nodes: [...current.nodes, ...nodes], links: [...current.links, ...links], extra })
+        // The pasted nodes keep the origins they carry, which is what makes the canvas their kind.
+        updateGraph({ nodes: [...current.nodes, ...nodes], links: [...current.links, ...links] })
         select(new Set(nodes.map((node) => 'n:' + node.id)))
         return nodes.length
       }
@@ -3632,7 +3652,7 @@ const thumbCache = new Map()
 
       /** Place a node declared by a library pack, centred on `at` (the view centre by default). */
       function createFromType(entry, at) {
-        if (rejectMixedNode(entry.def.type, entry.pack)) return
+        if (rejectMixedNode(entry.pack)) return
         const current = graphRef.current
         const currentView = viewRef.current
         const stagger = (current.nodes.length % 6) * 24
@@ -3990,20 +4010,13 @@ const thumbCache = new Map()
       }
 
       /**
-       * The backend a mapped canvas belongs to. The node definitions decide it — a document stamp
-       * only remains as a fallback for a canvas whose packs are not loaded yet.
+       * The backend a mapped canvas belongs to, read from the origins its nodes record. A canvas
+       * whose packs are not loaded yet falls back to the only backend that writes workflows.
        */
       function mappedBackendOf(graph) {
         const derived = remoteOwnerOf(graph)
-        if (derived !== null && derived !== undefined) return derived
-        const stamped = typeof graph?.extra?.source === 'string' && graph.extra.source !== ''
-          ? graph.extra.source
-          : null
-        if (stamped !== null && stamped !== 'local') {
-          const owner = backends.find((backend) => backend.id === stamped)
-          if (owner !== undefined) return owner
-        }
-        return derived ?? null
+        if (derived !== null) return derived
+        return backends.find((backend) => typeof backend.writeWorkflow === 'function') ?? null
       }
 
       /** The workflow format that belongs to that backend's extension. */
@@ -4292,7 +4305,7 @@ const thumbCache = new Map()
           }
           const entry = definitionFor(node)
           // Packs may still be in flight; only refuse a type once the definitions are known.
-          if (entry === undefined && defsByType.size > 0) {
+          if (entry === undefined && libraries.size > 0) {
             throw new Error(tr('notice.unknownType', { type: node.type.trim() }))
           }
           const exclusive = entry !== undefined && entry.def.concurrency === 'exclusive'
@@ -4789,15 +4802,21 @@ const thumbCache = new Map()
         return () => clearInterval(timer)
       }, [booting])
 
-      /** The backend that owns a remote workflow, taken from the pack its nodes came from. */
+      /** The backend a node's origin names, taken from the pack that signed it. */
+      function backendOfOrigin(origin) {
+        const packId = packIdOfOrigin(origin)
+        if (packId === '') return null
+        const pack = packs.find((item) => item.id === packId
+          && typeof item.remote === 'string' && item.remote !== '')
+        if (pack === undefined) return null
+        return backends.find((backend) => backend.id === pack.remote) ?? null
+      }
+
+      /** The backend that owns a remote workflow, taken from what its nodes say. */
       function remoteOwnerOf(graph) {
         for (const node of graph.nodes) {
-          const entry = definitionFor(node)
-          if (entry === undefined) continue
-          const owner = typeof entry.def.remote === 'string' && entry.def.remote !== ''
-            ? entry.def.remote
-            : (typeof entry.pack?.remote === 'string' && entry.pack.remote !== '' ? entry.pack.remote : '')
-          if (owner !== '') return backends.find((backend) => backend.id === owner) ?? null
+          const owner = backendOfOrigin(node.origin)
+          if (owner !== null) return owner
         }
         return null
       }
@@ -6263,79 +6282,11 @@ const thumbCache = new Map()
       }
 
       // The pack definitions are the widget schema: a node's `widgets` array is positional, so
-      // the type has to be looked up to know which inputs become controls and in what order.
-      // Who declares what. A type may be declared by a local pack and by one or more backends; the
-      // owner is decided by a fixed priority, never by the order the packs happened to arrive in.
-      const declarations = new Map()
-      for (const pack of packs) {
-        const backend = typeof pack.remote === 'string' && pack.remote !== '' ? pack.remote : null
-        for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
-          if (typeof def.type !== 'string' || def.type === '') continue
-          let slot = declarations.get(def.type)
-          if (slot === undefined) {
-            slot = { local: null, remotes: new Map() }
-            declarations.set(def.type, slot)
-          }
-          // The first local declaration wins, and the first declaration of each backend wins;
-          // duplicates inside one pack list cannot shadow each other either.
-          if (backend === null) {
-            if (slot.local === null) slot.local = { def, pack }
-          } else if (slot.remotes.has(backend) !== true) {
-            slot.remotes.set(backend, { def, pack })
-          }
-        }
-      }
-
-      /**
-       * The backend a document is written back to, taken from the document's own identity. This is
-       * the context a node type is resolved in: inside a mapped workflow, the backend's own
-       * declaration of a type outranks the local one, which is what keeps an overlapping type from
-       * turning the whole document into "mixed".
-       */
-      function mappedContextOf(graph) {
-        const mapped = typeof graph?.extra?.comfyuiSource === 'string' && graph.extra.comfyuiSource !== ''
-        if (mapped !== true) return null
-        const writer = backends.find((backend) => typeof backend.writeWorkflow === 'function')
-        return writer === undefined ? null : writer.id
-      }
-
-      /**
-       * The type's owner, resolved in a canvas context: the context backend's own declaration first,
-       * then a local pack, then any backend that declares it. Nothing depends on list order.
-       */
-      function ownerOf(type, context) {
-        const slot = declarations.get(type)
-        if (slot === undefined) return { kind: 'unknown', backend: null }
-        if (context !== null && context !== undefined && slot.remotes.has(context)) {
-          return { kind: 'remote', backend: context }
-        }
-        if (slot.local !== null) return { kind: 'local', backend: null }
-        if (slot.remotes.size === 0) return { kind: 'unknown', backend: null }
-        return { kind: 'remote', backend: [...slot.remotes.keys()].sort()[0] }
-      }
-
-      /** The declaration that describes this type in this context: the owner's, and nobody else's. */
-      function defOf(type, context) {
-        const owner = ownerOf(type, context)
-        if (owner.kind === 'unknown') return undefined
-        const slot = declarations.get(type)
-        if (slot === undefined) return undefined
-        return owner.kind === 'local' ? slot.local : slot.remotes.get(owner.backend)
-      }
-
-      // The context this canvas resolves in, and the same answers as a table for the helpers that
-      // were written against one. It holds the owner's declaration per type, never another pack's.
-      const canvasContext = mappedContextOf(graph)
-      const defsByType = new Map()
-      for (const type of declarations.keys()) {
-        const entry = defOf(type, canvasContext)
-        if (entry !== undefined) defsByType.set(type, entry)
-      }
-
-      // How one node's definition is found. The origin index replaces this table next.
-      const definitionFor = (node) => defsByType.get(node.type)
-      // The same packs, indexed by the origin they sign their nodes with.
+      // the definition has to be found to know which inputs become controls and in what order.
+      // Definitions are indexed by the origin a node carries, so a type two libraries both declare
+      // is not a question: a node asks its own pack, and only its own pack.
       const libraries = librariesOf(packs)
+      const definitionFor = (node) => defOfNode(node, libraries)
 
       // Definitions live in the packs, so every node is re-derived whenever the pack set
       // changes. The effect compares the derived shape first and only writes real differences,
@@ -6404,38 +6355,10 @@ const thumbCache = new Map()
       }, [packsReady, packs])
 
       /**
-       * What owns a node type. This is only a view of `ownerOf`: local pack first, then the one
-       * backend that declares it, otherwise unknown — never a guess.
-       */
-      function nodeKindOf(type) {
-        return ownerOf(type, mappedContextOf(graphRef.current)).kind
-      }
-
-      /**
-       * What a graph is made of, derived from its nodes and nothing else. The document carries no
-       * source stamp any more: a stamp can outlive the content it described, which is how a rebuilt
-       * canvas kept being treated as its old backend's workflow.
-       */
-      function canvasKind(graph) {
-        const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
-        if (nodes.length === 0) return null
-        const context = mappedContextOf(graph)
-        let kind = null
-        for (const node of nodes) {
-          const owner = ownerOf(node.type, context)
-          // Undecidable while a type cannot be resolved; callers treat that as "no kind yet".
-          if (owner.kind === 'unknown') return null
-          if (kind === null) kind = owner.kind
-          else if (kind !== owner.kind) return 'mixed'
-        }
-        return kind
-      }
-
-      /**
        * Backends do not interoperate: a ComfyUI node cannot run in a local workflow and a local
        * node cannot be sent to ComfyUI. Refuse the insertion instead of failing at run time.
        */
-      function rejectMixedNode(type, pack) {
+      function rejectMixedNode(pack) {
         const kind = canvasKind(graphRef.current)
         // A document that already holds both kinds is not allowed to grow any further: whatever
         // was added before the guard existed must be split up first.
@@ -6444,7 +6367,7 @@ const thumbCache = new Map()
           return true
         }
         if (kind === null) return false
-        if (nodeKindOf(type, pack) === kind) return false
+        if (originKind(originOfPack(pack)) === kind) return false
         showNotice(kind === 'remote' ? tr('notice.remoteOnly') : tr('notice.localOnly'))
         return true
       }
