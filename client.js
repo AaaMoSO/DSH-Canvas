@@ -4940,7 +4940,7 @@ const thumbCache = new Map()
         }
         let graph
         try {
-          graph = graphFromText(await backend.readWorkflow(name))
+          graph = graphFromText(await backend.readWorkflow(name), name)
         } catch (error) {
           showNotice(tr('notice.runFailed', { message: error.message }))
           return
@@ -5065,8 +5065,12 @@ const thumbCache = new Map()
         }
       }
 
-      /** Turn extension output into a canvas document; the native shape always works. */
-      function graphFromText(text) {
+      /**
+       * Turn extension output into a canvas document; the native shape always works. Only a
+       * document an adapter recognised is bound to the file that produced it: a native file keeps
+       * the accounts its own nodes carry.
+       */
+      function graphFromText(text, sourceName) {
         const parsed = JSON.parse(text)
         let imported = null
         for (const adapter of adapters) {
@@ -5081,13 +5085,25 @@ const thumbCache = new Map()
         const native = parsed !== null && typeof parsed === 'object'
           ? (parsed.graph !== null && typeof parsed.graph === 'object' ? parsed.graph : parsed)
           : null
-        return normalizeGraph(imported ?? native ?? {})
+        const graph = imported ?? native ?? {}
+        // The binding is made before the nodes are stamped: a mapped document stamps the backend's
+        // library, not the local one that happens to declare the same type.
+        if (imported !== null && imported !== undefined
+          && typeof sourceName === 'string' && sourceName !== '') {
+          const extra = graph.extra !== null && typeof graph.extra === 'object'
+            && Array.isArray(graph.extra) !== true
+            ? { ...graph.extra, comfyuiSource: sourceName }
+            : { comfyuiSource: sourceName }
+          return normalizeGraph({ ...graph, extra })
+        }
+        return normalizeGraph(graph)
       }
 
       function importWorkflowText(text, sourceName, options) {
         let next
         try {
-          next = graphFromText(text)
+          // The source name binds an adapter's document to its backend; it is not a canvas name.
+          next = graphFromText(text, sourceName)
         } catch {
           showNotice(tr('notice.badFile'))
           return
@@ -5095,9 +5111,6 @@ const thumbCache = new Map()
         if (next.nodes.length === 0 && next.links.length === 0) {
           showNotice(tr('notice.badFile'))
           return
-        }
-        if (typeof sourceName === 'string' && sourceName !== '') {
-          next = { ...next, extra: { ...(next.extra ?? {}), comfyuiSource: sourceName } }
         }
         pushHistory()
         updateGraph(next)
