@@ -6163,7 +6163,16 @@ const thumbCache = new Map()
       // the type has to be looked up to know which inputs become controls and in what order.
       const defsByType = new Map()
       for (const pack of packs) {
+        const fromBackend = typeof pack.remote === 'string' && pack.remote !== ''
         for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
+          // A type can be declared twice: locally, and by a backend that also exposes it. The
+          // local pack runs here, so it owns the type; the cached backend pack only fills in the
+          // types nothing local declares.
+          const existing = defsByType.get(def.type)
+          if (fromBackend === true && existing !== undefined) {
+            const owner = existing.pack
+            if (typeof owner?.remote !== 'string' || owner.remote === '') continue
+          }
           defsByType.set(def.type, { def, pack })
         }
       }
