@@ -7895,6 +7895,23 @@ const thumbCache = new Map()
                 : S.workflowDot,
           }),
           h('span', { key: 'text', style: S.nodeName }, item.name),
+          // This row's own run, described where the row is.
+          state === 'running' || state === 'error'
+            ? h('span', {
+                key: 'state',
+                style: state === 'running'
+                  ? {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-success-primary)',
+                    }
+                  : {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-error-primary)',
+                    },
+              }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
+            : null,
         ]))
       }
       // A backend's workflows are just its source's workflows: same rows, no heading, no colour.
