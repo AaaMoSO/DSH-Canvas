@@ -3287,10 +3287,7 @@ const thumbCache = new Map()
         // Pasting into an empty canvas makes that canvas the payload's kind.
         const extra = kind !== null
           ? current.extra
-          : {
-              ...(current.extra ?? {}),
-              source: payload.nodes.every((node) => nodeKindOf(node.type) === 'remote') ? 'remote' : 'local',
-            }
+          : { ...(current.extra ?? {}) }
         updateGraph({ nodes: [...current.nodes, ...nodes], links: [...current.links, ...links], extra })
         select(new Set(nodes.map((node) => 'n:' + node.id)))
         return nodes.length
@@ -3509,14 +3506,10 @@ const thumbCache = new Map()
           : at
         const node = nodeForType(entry, point)
         pushHistory()
-        // The first node decides what the canvas is, and that decision is written down.
-        const source = nodeKindOf(entry.def.type, entry.pack) === 'remote'
-          ? (typeof entry.pack?.remote === 'string' && entry.pack.remote !== '' ? entry.pack.remote : 'remote')
-          : 'local'
         updateGraph({
           nodes: [...current.nodes, node],
           links: current.links,
-          extra: { ...(current.extra ?? {}), source },
+          extra: current.extra,
         })
         select(new Set(['n:' + node.id]))
       }
@@ -3913,7 +3906,7 @@ const thumbCache = new Map()
           return
         }
         updateGraph({
-          extra: { ...(graph.extra ?? {}), comfyuiSource: target, source: owner.id },
+          extra: { ...(graph.extra ?? {}), comfyuiSource: target },
         })
         setCurrentWorkflow(target)
         const savedCopy = { name: target, json: graphSignature(graphRef.current) }
@@ -4941,9 +4934,6 @@ const thumbCache = new Map()
         }
         if (typeof sourceName === 'string' && sourceName !== '') {
           next = { ...next, extra: { ...(next.extra ?? {}), comfyuiSource: sourceName } }
-        }
-        if (typeof options?.source === 'string' && options.source !== '') {
-          next = { ...next, extra: { ...(next.extra ?? {}), source: options.source } }
         }
         pushHistory()
         updateGraph(next)
