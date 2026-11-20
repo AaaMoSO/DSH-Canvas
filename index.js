@@ -1220,7 +1220,8 @@ async function readWorkflow(name) {
 
 async function writeWorkflow(name, graph) {
   await mkdir(WORKFLOWS_DIR, { recursive: true })
-  const document = { format: 'node-canvas-workflow', version: 2, name, graph }
+  // v3: every node carries the pack that produced it, so a document is never guessed at again.
+  const document = { format: 'node-canvas-workflow', version: 3, name, graph }
   await writeFile(path.join(WORKFLOWS_DIR, name + '.json'), JSON.stringify(document, null, 2), 'utf8')
 }
 

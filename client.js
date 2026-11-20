@@ -579,12 +579,87 @@ const thumbCache = new Map()
     // own file. A graph loaded before the packs arrive is re-hydrated as soon as they do.
     let packsCache = []
 
-    function defsOf(packs) {
-      const map = new Map()
+    /**
+     * Where a node came from, as the one thing a node records about itself: `<scope>:<pack>`,
+     * e.g. `local:comfyui-sdcpp` or `remote:comfyui:core`. The scope is part of the value, so a
+     * node can be told apart without the library that produced it being loaded at all.
+     */
+    const ORIGIN_LOCAL = 'local'
+    const ORIGIN_REMOTE = 'remote'
+
+    function originOfPack(pack) {
+      if (pack === null || typeof pack !== 'object') return undefined
+      const id = typeof pack.id === 'string' && pack.id !== '' ? pack.id : ''
+      const remote = typeof pack.remote === 'string' && pack.remote !== '' ? pack.remote : ''
+      if (remote !== '') return ORIGIN_REMOTE + ':' + (id === '' ? remote : id)
+      return id === '' ? ORIGIN_LOCAL : ORIGIN_LOCAL + ':' + id
+    }
+
+    /** `local` | `remote` | null, read straight off the value a node carries. */
+    function originKind(origin) {
+      if (typeof origin !== 'string' || origin === '') return null
+      if (origin === ORIGIN_LOCAL || origin.startsWith(ORIGIN_LOCAL + ':')) return ORIGIN_LOCAL
+      if (origin === ORIGIN_REMOTE || origin.startsWith(ORIGIN_REMOTE + ':')) return ORIGIN_REMOTE
+      return null
+    }
+
+    function packIdOfOrigin(origin) {
+      const at = typeof origin === 'string' ? origin.indexOf(':') : -1
+      return at < 0 ? '' : origin.slice(at + 1)
+    }
+
+    /**
+     * Definitions by origin: `Map<origin, Map<type, { def, pack }>>`. The only place a node's
+     * definition is looked up, so a type that two libraries both declare can never be confused
+     * again: a node asks the pack that produced it.
+     */
+    function librariesOf(packs) {
+      const libraries = new Map()
       for (const pack of Array.isArray(packs) ? packs : []) {
-        for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) map.set(def.type, { def, pack })
+        const origin = originOfPack(pack)
+        if (origin === undefined) continue
+        let types = libraries.get(origin)
+        if (types === undefined) {
+          types = new Map()
+          libraries.set(origin, types)
+        }
+        for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
+          if (typeof def.type !== 'string' || def.type === '') continue
+          if (types.has(def.type)) continue
+          types.set(def.type, { def, pack })
+        }
       }
-      return map
+      return libraries
+    }
+
+    function defOfNode(node, libraries) {
+      if (node === null || typeof node !== 'object') return undefined
+      const types = libraries.get(node.origin)
+      if (types === undefined) return undefined
+      return types.get(String(node.type === undefined || node.type === null ? '' : node.type).trim())
+    }
+
+    /** Every origin that declares a type; only used to stamp files written before the field. */
+    function originsOfType(type, libraries) {
+      const found = []
+      for (const [origin, types] of libraries) {
+        if (types.has(type)) found.push(origin)
+      }
+      return found.sort()
+    }
+
+    /**
+     * The origin a node from an older file should get: the library that declares its type. A
+     * document bound to a backend prefers that side's declaration, a local one prefers the local
+     * library. This runs once per node and never again; afterwards the node answers for itself.
+     */
+    function stampOrigin(node, graph, libraries) {
+      const type = String(node === null || node === undefined || node.type === undefined ? '' : node.type).trim()
+      const origins = originsOfType(type, libraries)
+      if (origins.length === 0) return undefined
+      const mapped = typeof graph?.extra?.comfyuiSource === 'string' && graph.extra.comfyuiSource !== ''
+      const wanted = mapped ? ORIGIN_REMOTE : ORIGIN_LOCAL
+      return origins.find((origin) => originKind(origin) === wanted) ?? origins[0]
     }
 
     /** A port id derived from its name, so links survive pack updates and round trips. */
@@ -637,9 +712,9 @@ const thumbCache = new Map()
      * Fill one node from its pack definition. Widget values are matched by name, so a pack that
      * adds, removes or reorders widgets never silently shifts a stored value onto another control.
      */
-    function hydrateNode(node, defs) {
+    function hydrateNode(node, definitionOf) {
       const store = widgetStoreOf(node)
-      const entry = defs.get(node.type)
+      const entry = definitionOf(node)
       if (entry === undefined) {
         // Unknown type: keep the stored ports so the wiring still renders, and mark the node.
         return {
@@ -684,9 +759,8 @@ const thumbCache = new Map()
       }
     }
 
-    function hydrateGraph(graph, defs) {
-      if (defs.size === 0) return graph
-      return { ...graph, nodes: graph.nodes.map((node) => hydrateNode(node, defs)) }
+    function hydrateGraph(graph, definitionOf) {
+      return { ...graph, nodes: graph.nodes.map((node) => hydrateNode(node, definitionOf)) }
     }
 
     /** What goes into a workflow file: the graph itself, never a copy of the node definitions. */
@@ -700,6 +774,8 @@ const thumbCache = new Map()
           h: node.h,
           title: node.title,
           type: node.type,
+          // Who produced the node. Written once, when it was created; never inferred again.
+          ...(typeof node.origin === 'string' && node.origin !== '' ? { origin: node.origin } : {}),
           mode: node.mode,
           ...(node.color === null || node.color === undefined ? {} : { color: node.color }),
           widgets: widgetStoreOf(node),
@@ -778,6 +854,8 @@ const thumbCache = new Map()
           h: Math.max(floor, num(item.h, 0)),
           title: typeof item.title === 'string' ? item.title : '',
           type: typeof item.type === 'string' ? item.type : '',
+          // A node's own account of where it came from; absent only in files that predate it.
+          ...(typeof item.origin === 'string' && item.origin !== '' ? { origin: item.origin } : {}),
           mode: num(item.mode, 0),
           widgetStore: store,
           // Filled from the pack on the next render; nothing about the node is stored here.
@@ -834,7 +912,16 @@ const thumbCache = new Map()
           : {},
       }
       // Definitions come from the packs; when they are known the nodes are filled in right away.
-      return hydrateGraph(graph, defsOf(packsCache))
+      // A node written before ORIGIN existed is stamped here, once, from the library that
+      // declares its type; from then on the node carries its own answer.
+      const libraries = librariesOf(packsCache)
+      if (libraries.size === 0) return graph
+      const stamped = graph.nodes.map((node) => {
+        if (typeof node.origin === 'string' && node.origin !== '') return node
+        const origin = stampOrigin(node, graph, libraries)
+        return origin === undefined ? node : { ...node, origin }
+      })
+      return hydrateGraph({ ...graph, nodes: stamped }, (node) => defOfNode(node, libraries))
     }
 
     function loadGraph() {
@@ -3376,7 +3463,7 @@ const thumbCache = new Map()
           && typeof node.preview.root === 'string') {
           return node.preview
         }
-        const entry = defsByType.get(node.type)
+        const entry = definitionFor(node)
         return entry === undefined ? null : snapshotPreview(entry.def, entry.pack)
       }
 
@@ -3522,6 +3609,8 @@ const thumbCache = new Map()
             + multilineCount * 6,
           1,
         )
+        // The library the node was dragged from is the answer, recorded at creation.
+        const origin = originOfPack(pack)
         // Nothing about the node is copied: the definition (and its program) stays in the pack.
         const base = {
           id: uid('n'),
@@ -3531,13 +3620,14 @@ const thumbCache = new Map()
           h: 2 * BORDER + HEADER_H + rows * PORT_H + PAD_TOP + PAD_BOTTOM,
           title: def.display_name || def.type,
           type: def.type,
+          ...(origin === undefined ? {} : { origin }),
           mode: 0,
           widgetStore: {},
           color: null,
           inputs: [],
           outputs: [],
         }
-        return hydrateNode(base, new Map([[def.type, { def, pack }]]))
+        return hydrateNode(base, (node) => (node.type === def.type ? { def, pack } : undefined))
       }
 
       /** Place a node declared by a library pack, centred on `at` (the view centre by default). */
@@ -4200,7 +4290,7 @@ const thumbCache = new Map()
             if (value === null || value === undefined) continue
             inputs[spec.name] = value
           }
-          const entry = defsByType.get(node.type.trim())
+          const entry = definitionFor(node)
           // Packs may still be in flight; only refuse a type once the definitions are known.
           if (entry === undefined && defsByType.size > 0) {
             throw new Error(tr('notice.unknownType', { type: node.type.trim() }))
@@ -4702,7 +4792,7 @@ const thumbCache = new Map()
       /** The backend that owns a remote workflow, taken from the pack its nodes came from. */
       function remoteOwnerOf(graph) {
         for (const node of graph.nodes) {
-          const entry = defsByType.get(node.type)
+          const entry = definitionFor(node)
           if (entry === undefined) continue
           const owner = typeof entry.def.remote === 'string' && entry.def.remote !== ''
             ? entry.def.remote
@@ -6229,6 +6319,11 @@ const thumbCache = new Map()
         if (entry !== undefined) defsByType.set(type, entry)
       }
 
+      // How one node's definition is found. The origin index replaces this table next.
+      const definitionFor = (node) => defsByType.get(node.type)
+      // The same packs, indexed by the origin they sign their nodes with.
+      const libraries = librariesOf(packs)
+
       // Definitions live in the packs, so every node is re-derived whenever the pack set
       // changes. The effect compares the derived shape first and only writes real differences,
       // which keeps it from looping.
@@ -6236,8 +6331,15 @@ const thumbCache = new Map()
         if (packsReady !== true) return
         let changed = false
         const nodes = graph.nodes.map((node) => {
-          const next = hydrateNode(node, defsByType)
-          const same = Boolean(node.missing) === Boolean(next.missing)
+          // A node from a file that predates the field is stamped once, as soon as the packs can
+          // say which one declares its type. A node that already answers is never asked again.
+          const origin = typeof node.origin === 'string' && node.origin !== ''
+            ? node.origin
+            : stampOrigin(node, graph, libraries)
+          const stamped = origin === undefined || origin === node.origin ? node : { ...node, origin }
+          const next = hydrateNode(stamped, definitionFor)
+          const same = stamped === node
+            && Boolean(node.missing) === Boolean(next.missing)
             && (node.inputs?.length ?? 0) === next.inputs.length
             && (node.outputs?.length ?? 0) === next.outputs.length
             && (node.widgetSpecs?.length ?? 0) === next.widgetSpecs.length
@@ -6278,12 +6380,12 @@ const thumbCache = new Map()
         }
         pendingDraftRef.current = null
         store.set('draftApplied', true)
-        const usable = draft.graph.nodes.every((node) => defsByType.get(node.type) !== undefined)
+        const usable = draft.graph.nodes.every((node) => definitionFor(node) !== undefined)
         if (usable !== true) {
           clearDraft()
           return
         }
-        updateGraph(hydrateGraph(draft.graph, defsByType))
+        updateGraph(hydrateGraph(draft.graph, definitionFor))
         if (draft.workflow !== null) setCurrentWorkflow(draft.workflow)
         setBaseline(loadBaseline())
       }, [packsReady, packs])
@@ -6340,7 +6442,7 @@ const thumbCache = new Map()
         if (Array.isArray(node.widgetSpecs) && node.widgetSpecs.length > 0) {
           return node.widgetSpecs.map((spec, index) => ({ ...spec, index }))
         }
-        const entry = defsByType.get(node.type)
+        const entry = definitionFor(node)
         if (entry === undefined) return []
         const modelsRoot = typeof entry.pack?.modelsRoot === 'string' ? entry.pack.modelsRoot : ''
         const specs = []
@@ -6357,7 +6459,7 @@ const thumbCache = new Map()
         if (Array.isArray(node.widgetSpecs) && node.widgetSpecs.length > 0) {
           return node.widgetSpecs.map((spec) => spec.name)
         }
-        const entry = defsByType.get(node.type)
+        const entry = definitionFor(node)
         if (entry === undefined) return []
         return (Array.isArray(entry.def.inputs) ? entry.def.inputs : [])
           .filter((spec) => spec.widget === true)
