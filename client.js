@@ -2599,7 +2599,8 @@ const thumbCache = new Map()
           // The door moves the sheet with a transform and the graph with its counter, so the
           // left edge travels without the layout changing; correcting here would double up.
           if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
-          if (Math.abs(shift) > 0.5) {
+          const moved = Math.abs(shift) > 0.5
+          if (moved) {
             // The canvas is a child of the shell, so the layout has already carried it along by
             // `shift`. React would only answer on a later render, which is the frame of ghosting;
             // this observer runs after layout and before paint, so writing the counter here keeps
@@ -2607,9 +2608,11 @@ const thumbCache = new Map()
             // clears it again as soon as the compensated view is painted.
             const layer = graphLayerRef.current
             if (layer !== null) layer.style.transform = 'translate(' + shift + 'px, 0px)'
-            paintMinimapBox(viewRef.current.x + shift, viewRef.current.y, viewRef.current.k)
-            setView((current) => ({ ...current, x: current.x + shift }))
           }
+          // The overview's box answers the size change of this frame whether or not the shell also
+          // moved sideways: it is drawn here, before paint, instead of waiting for a render.
+          paintMinimapBox(viewRef.current.x + (moved ? shift : 0), viewRef.current.y, viewRef.current.k)
+          if (moved) setView((current) => ({ ...current, x: current.x + shift }))
         })
         observer.observe(shell)
         return () => observer.disconnect()
