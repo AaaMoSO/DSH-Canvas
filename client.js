@@ -6161,20 +6161,56 @@ const thumbCache = new Map()
 
       // The pack definitions are the widget schema: a node's `widgets` array is positional, so
       // the type has to be looked up to know which inputs become controls and in what order.
-      const defsByType = new Map()
+      // Who declares what. A type may be declared by a local pack and by one or more backends; the
+      // owner is decided by a fixed priority, never by the order the packs happened to arrive in.
+      const declarations = new Map()
       for (const pack of packs) {
-        const fromBackend = typeof pack.remote === 'string' && pack.remote !== ''
+        const backend = typeof pack.remote === 'string' && pack.remote !== '' ? pack.remote : null
         for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
-          // A type can be declared twice: locally, and by a backend that also exposes it. The
-          // local pack runs here, so it owns the type; the cached backend pack only fills in the
-          // types nothing local declares.
-          const existing = defsByType.get(def.type)
-          if (fromBackend === true && existing !== undefined) {
-            const owner = existing.pack
-            if (typeof owner?.remote !== 'string' || owner.remote === '') continue
+          if (typeof def.type !== 'string' || def.type === '') continue
+          let slot = declarations.get(def.type)
+          if (slot === undefined) {
+            slot = { local: null, remotes: new Map() }
+            declarations.set(def.type, slot)
           }
-          defsByType.set(def.type, { def, pack })
+          // The first local declaration wins, and the first declaration of each backend wins;
+          // duplicates inside one pack list cannot shadow each other either.
+          if (backend === null) {
+            if (slot.local === null) slot.local = { def, pack }
+          } else if (slot.remotes.has(backend) !== true) {
+            slot.remotes.set(backend, { def, pack })
+          }
         }
+      }
+
+      /**
+       * The type's one and only owner: a local pack if one declares it, otherwise the backend that
+       * declares it (the lowest backend id when several do, so the answer never depends on order),
+       * otherwise nothing at all.
+       */
+      function ownerOf(type) {
+        const slot = declarations.get(type)
+        if (slot === undefined) return { kind: 'unknown', backend: null }
+        if (slot.local !== null) return { kind: 'local', backend: null }
+        if (slot.remotes.size === 0) return { kind: 'unknown', backend: null }
+        return { kind: 'remote', backend: [...slot.remotes.keys()].sort()[0] }
+      }
+
+      /** The declaration that describes this type: the owner's, and nobody else's. */
+      function defOf(type) {
+        const slot = declarations.get(type)
+        if (slot === undefined) return undefined
+        if (slot.local !== null) return slot.local
+        const owner = ownerOf(type)
+        return owner.backend === null ? undefined : slot.remotes.get(owner.backend)
+      }
+
+      // The same answer as a table, for the helpers that were written against one. It holds the
+      // owner's declaration per type, so nothing downstream can read another pack's schema.
+      const defsByType = new Map()
+      for (const type of declarations.keys()) {
+        const entry = defOf(type)
+        if (entry !== undefined) defsByType.set(type, entry)
       }
 
       // Definitions live in the packs, so every node is re-derived whenever the pack set
@@ -6237,19 +6273,11 @@ const thumbCache = new Map()
       }, [packsReady, packs])
 
       /**
-       * What owns a node type: the pack that declares it. `unknown` when no loaded pack declares
-       * it — never `local`, because guessing local is what used to mislabel ComfyUI documents.
+       * What owns a node type. This is only a view of `ownerOf`: local pack first, then the one
+       * backend that declares it, otherwise unknown — never a guess.
        */
-      function nodeKindOf(type, pack) {
-        if (pack !== null && pack !== undefined && Array.isArray(pack.nodes) === true) {
-          return typeof pack.remote === 'string' && pack.remote !== '' ? 'remote' : 'local'
-        }
-        const entry = defsByType.get(type)
-        if (entry === undefined) return 'unknown'
-        return typeof entry.def.remote === 'string' && entry.def.remote !== ''
-          || typeof entry.pack?.remote === 'string' && entry.pack.remote !== ''
-          ? 'remote'
-          : 'local'
+      function nodeKindOf(type) {
+        return ownerOf(type).kind
       }
 
       /**
