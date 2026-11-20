@@ -3857,8 +3857,13 @@ const thumbCache = new Map()
         return null
       }
 
-      /** The backend a mapped canvas belongs to: its stamp first, then the node definitions. */
+      /**
+       * The backend a mapped canvas belongs to. The node definitions decide it — a document stamp
+       * only remains as a fallback for a canvas whose packs are not loaded yet.
+       */
       function mappedBackendOf(graph) {
+        const derived = remoteOwnerOf(graph)
+        if (derived !== null && derived !== undefined) return derived
         const stamped = typeof graph?.extra?.source === 'string' && graph.extra.source !== ''
           ? graph.extra.source
           : null
@@ -3866,7 +3871,7 @@ const thumbCache = new Map()
           const owner = backends.find((backend) => backend.id === stamped)
           if (owner !== undefined) return owner
         }
-        return remoteOwnerOf(graph)
+        return derived ?? null
       }
 
       /** The workflow format that belongs to that backend's extension. */
@@ -4631,9 +4636,11 @@ const thumbCache = new Map()
       function remoteOwnerOf(graph) {
         for (const node of graph.nodes) {
           const entry = defsByType.get(node.type)
-          if (entry !== undefined && typeof entry.def.remote === 'string' && entry.def.remote !== '') {
-            return backends.find((backend) => backend.id === entry.def.remote) ?? null
-          }
+          if (entry === undefined) continue
+          const owner = typeof entry.def.remote === 'string' && entry.def.remote !== ''
+            ? entry.def.remote
+            : (typeof entry.pack?.remote === 'string' && entry.pack.remote !== '' ? entry.pack.remote : '')
+          if (owner !== '') return backends.find((backend) => backend.id === owner) ?? null
         }
         return null
       }
@@ -6156,28 +6163,35 @@ const thumbCache = new Map()
         setBaseline(loadBaseline())
       }, [packsReady, packs])
 
-      /** A node is "remote" when its pack says a backend owns it; unknown types count as local. */
+      /**
+       * What owns a node type: the pack that declares it. `unknown` when no loaded pack declares
+       * it — never `local`, because guessing local is what used to mislabel ComfyUI documents.
+       */
       function nodeKindOf(type, pack) {
-        if (pack !== null && pack !== undefined && typeof pack.remote === 'string' && pack.remote !== '') return 'remote'
+        if (pack !== null && pack !== undefined && Array.isArray(pack.nodes) === true) {
+          return typeof pack.remote === 'string' && pack.remote !== '' ? 'remote' : 'local'
+        }
         const entry = defsByType.get(type)
-        return entry !== undefined && typeof entry.def.remote === 'string' && entry.def.remote !== ''
+        if (entry === undefined) return 'unknown'
+        return typeof entry.def.remote === 'string' && entry.def.remote !== ''
+          || typeof entry.pack?.remote === 'string' && entry.pack.remote !== ''
           ? 'remote'
           : 'local'
       }
 
-      /** What a graph is made of: remote, local, mixed, or null when it has no nodes. */
+      /**
+       * What a graph is made of, derived from its nodes and nothing else. The document carries no
+       * source stamp any more: a stamp can outlive the content it described, which is how a rebuilt
+       * canvas kept being treated as its old backend's workflow.
+       */
       function canvasKind(graph) {
-        // An empty canvas is no kind at all: whatever is dropped in first decides it.
-        if (Array.isArray(graph?.nodes) !== true || graph.nodes.length === 0) return null
-        // A stamped document wins over guessing: after a reload the packs that define its nodes
-        // may not be loaded yet, and a ComfyUI node must not pass for a local one.
-        const stamped = typeof graph?.extra?.source === 'string' && graph.extra.source !== ''
-          ? graph.extra.source
-          : null
-        if (stamped !== null) return stamped === 'local' ? 'local' : 'remote'
+        const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
+        if (nodes.length === 0) return null
         let kind = null
-        for (const node of graph.nodes) {
+        for (const node of nodes) {
           const nodeKind = nodeKindOf(node.type)
+          // Undecidable while a type cannot be resolved; callers treat that as "no kind yet".
+          if (nodeKind === 'unknown') return null
           if (kind === null) kind = nodeKind
           else if (kind !== nodeKind) return 'mixed'
         }
