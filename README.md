@@ -80,6 +80,14 @@ The rules that keep it that way:
 - **Chrome that must not move cancels the transform it rides.** During the fullscreen slide the
   page translates by `pageShift`; the overview cancels it with the same value and the same
   transition, so it stays put on screen without a second reference frame.
+
+Known limitation: the canvas is fixed in the window, so moving the window (title bar, or dragging
+its left/top edge) takes the canvas with it. Making the canvas stay put on screen instead needs the
+window's real screen geometry, and the renderer only sees `screenX`/`screenY`, which the host does
+not report reliably while an edge is being dragged. Two attempts are recorded in git: a fixed
+window-space canvas with a `clip-path` (`window-canvas-attempt`) and a dual-corner compensation
+driven by `screenX`. Both were reverted; the feature waits for the host to expose trustworthy
+window bounds.
 - **The fullscreen sheet is measured against the viewport** when the panel is flush with the
   window's right and bottom edges (`width: 100%`, `height: calc(100vh - top)`), so dragging a
   window edge follows immediately instead of waiting for a new measurement.
