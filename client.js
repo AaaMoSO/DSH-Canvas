@@ -2601,6 +2601,10 @@ const thumbCache = new Map()
           const shiftX = shellOriginRef.current.x - rect.left
           const shiftY = shellOriginRef.current.y - rect.top
           shellOriginRef.current = { x: rect.left, y: rect.top }
+          // Temporary probe: what the layout actually does while a window edge is dragged.
+          showNotice('shell=' + Math.round(rect.left) + ',' + Math.round(rect.top)
+            + ' size=' + Math.round(rect.width) + 'x' + Math.round(rect.height)
+            + ' d=' + Math.round(shiftX) + ',' + Math.round(shiftY))
           // The canvas is a child of the shell, so the layout has already carried it along by the
           // shift, in both axes. React would only answer on a later render, which is the frame of
           // the drag; this observer runs after layout and before paint, so the counter is written
