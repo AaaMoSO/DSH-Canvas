@@ -391,6 +391,8 @@ const SOURCE_KEY = 'dsh.node-canvas.source.v1'
 // The menu column is resizable: its width, and how much of the height it keeps for itself.
 const LAYOUT_KEY = 'dsh.node-canvas.layout.v1'
 const LAYOUT_DEFAULT_SPLIT = 0.36
+// The column opens at a fixed width; dragging the edge overrides it until it is reset.
+const MENU_DEFAULT_WIDTH = 320
 const MENU_MIN_WIDTH = 180
 const MENU_MAX_SPLIT = 0.8
 const MENU_MIN_SPLIT = 0.15
@@ -2531,14 +2533,6 @@ const thumbCache = new Map()
           if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
           const box = entries[0]?.contentRect
           if (box !== undefined) setSize({ w: Math.round(box.width), h: Math.round(box.height) })
-          // The menu takes the top third of the panel, so a sidebar drag resizes it too.
-          const pageHeight = pageRef.current === null
-            ? 0
-            : pageRef.current.getBoundingClientRect().height
-          if (pageHeight > 0) {
-            setBarMenu((current) => (current === null ? current : { ...current, ...menuMetrics(current.top) }))
-          }
-
           const left = shell.getBoundingClientRect().left
           const shift = shellLeftRef.current - left
           shellLeftRef.current = left
@@ -2772,7 +2766,7 @@ const thumbCache = new Map()
 
       // A stored UI may have been captured mid-animation or mid-request; settle it on mount.
       React.useEffect(() => {
-        if (barMenu !== null && barMenu.open !== true) setBarMenu(null)
+        if (barMenu !== null && (barMenu.open !== true || typeof barMenu.split !== 'number')) setBarMenu(null)
         if (extensionDialog !== null && extensionDialog.busy === true) {
           setExtensionDialog((current) => (current === null ? current : { ...current, busy: false }))
         }
@@ -3030,15 +3024,8 @@ const thumbCache = new Map()
         loadPacks()
       }, [loadRemotePacks, loadPacks])
 
-      // The menu owns two bands of the panel; follow the window while it is open.
-      React.useEffect(() => {
-        if (barMenu === null) return undefined
-        const onResize = () => {
-          setBarMenu((current) => (current === null ? current : { ...current, ...menuMetrics(current.top) }))
-        }
-        window.addEventListener('resize', onResize)
-        return () => window.removeEventListener('resize', onResize)
-      }, [barMenu === null])
+      // The menu owns two bands of the panel. Its geometry is CSS on the page, so a window resize
+      // needs no listener here: the browser re-evaluates the calc itself.
 
       function select(next) {
         selectionRef.current = next
@@ -5457,20 +5444,42 @@ const thumbCache = new Map()
       }
 
       const barMenuBodyRef = React.useRef(null)
+      // The drawn menu and band. Their rects are the only menu geometry the panel reads back.
+      const menuElRef = React.useRef(null)
+      const bandElRef = React.useRef(null)
+      // True while the retract animation still owes us an unmount.
+      const settleRef = React.useRef(false)
       const resizeRef = React.useRef(null)
       const barMenuTimerRef = React.useRef(0)
       const bandTimerRef = React.useRef(0)
 
-      /**
-       * The menu covers the top third of the panel; the selected library fills the room left
-       * below it. Both follow the window, so only their measured top stays fixed.
-       */
-      function menuMetrics(top) {
-        const page = pageRef.current
-        const pageHeight = page === null ? window.innerHeight : page.getBoundingClientRect().height
-        const available = Math.max(240, pageHeight - top - 6)
-        const height = Math.max(120, Math.round(available * layout.split))
-        return { height, room: Math.max(100, available - height) }
+      /** The toolbar's bottom edge in client coordinates: the one line the menu hangs from. */
+      function menuTop() {
+        const bar = toolbarRef.current
+        if (bar !== null) return bar.getBoundingClientRect().bottom
+        const button = barMenuButtonRef.current
+        return button === null ? 0 : button.getBoundingClientRect().bottom
+      }
+
+      /** The room below the toolbar that the menu and the band under it divide up. */
+      function menuAvailable(pageHeight, top) {
+        // Mirrors the calc() the menu itself is drawn with, so a drag reads the same geometry the
+        // browser laid out.
+        return Math.max(1, Math.round(pageHeight - top - 6))
+      }
+
+      /** Drop the menu once its retract has played; opening never calls this. */
+      function settleBarMenu() {
+        if (settleRef.current !== true) return
+        settleRef.current = false
+        if (barMenuTimerRef.current !== 0) {
+          clearTimeout(barMenuTimerRef.current)
+          barMenuTimerRef.current = 0
+        }
+        setBarMenu(null)
+        // The focused menu item is gone; without this the document falls back to <body> and the
+        // canvas stops receiving shortcuts.
+        focusShell()
       }
 
       /** Store the column geometry the user dragged into place. */
@@ -5487,11 +5496,12 @@ const thumbCache = new Map()
       }
 
       /**
-       * The toolbar menu spans from the panel's left edge to the right edge of the hamburger,
-       * and grows down from under the toolbar. It is measured on open so the animation can run
-       * from zero to the real content height.
+       * Open or close the library menu. Opening records only the three facts the browser cannot
+       * derive — the line under the toolbar, the asked-for width, the height split — and the page
+       * carries them as CSS variables; the band and both handles are calc() of those.
        */
       function toggleBarMenu() {
+        settleRef.current = false
         if (barMenuTimerRef.current !== 0) {
           clearTimeout(barMenuTimerRef.current)
           barMenuTimerRef.current = 0
@@ -5501,27 +5511,15 @@ const thumbCache = new Map()
           return
         }
         const page = pageRef.current
-        const button = barMenuButtonRef.current
-        if (page === null || button === null) return
-        const pageRect = page.getBoundingClientRect()
-        const buttonRect = button.getBoundingClientRect()
-        const barBottom = toolbarRef.current === null
-          ? buttonRect.bottom
-          : toolbarRef.current.getBoundingClientRect().bottom
-        const top = Math.round(barBottom - pageRect.top)
-        const pageWidth = pageRect.width
-        const defaultWidth = Math.max(140, Math.round(buttonRect.right - pageRect.left))
-        const width = layout.width === null
-          ? defaultWidth
-          : Math.min(Math.max(MENU_MIN_WIDTH, layout.width), Math.max(MENU_MIN_WIDTH, pageWidth - 16))
+        if (page === null) return
+        // The width, the height split and the line the menu hangs from are published as CSS
+        // variables; everything else about the menu is a calc of those three.
         setBarMenu({
-          left: 0,
-          top,
-          width,
-          defaultWidth,
+          top: Math.round(menuTop() - page.getBoundingClientRect().top),
+          width: layout.width === null ? MENU_DEFAULT_WIDTH : layout.width,
+          split: layout.split,
           open: true,
           closing: false,
-          ...menuMetrics(top),
         })
         // The library the user was browsing comes back with the menu.
         const rememberedSection = barSection
@@ -5542,9 +5540,18 @@ const thumbCache = new Map()
         loadPacks()
       }
 
+      /** Publish a geometry variable on the page; dragging must not re-render the panel. */
+      function setMenuVar(name, value) {
+        const page = pageRef.current
+        if (page === null) return
+        page.style.setProperty(name, value)
+      }
+
       /** Drag the column's right edge (width) or its divider (height split). */
       function beginResize(event, mode) {
         if (event.button !== 0 || barMenu === null) return
+        const menu = menuElRef.current
+        if (menu === null) return
         event.stopPropagation()
         event.preventDefault()
         if (typeof event.currentTarget.setPointerCapture === 'function') {
@@ -5554,36 +5561,39 @@ const thumbCache = new Map()
             // Capture is an optimisation; the handlers below still see the moves.
           }
         }
+        // The drag starts from what is actually drawn, not from a number stored when the menu
+        // opened: whatever the window did in between is already in the rect.
+        const rect = menu.getBoundingClientRect()
         resizeRef.current = {
           mode,
           pointerId: event.pointerId,
           x: event.clientX,
           y: event.clientY,
-          top: barMenu.top,
-          width: barMenu.width,
-          height: barMenu.height,
-          room: barMenu.room,
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          split: undefined,
         }
       }
 
       function moveResize(event) {
         const drag = resizeRef.current
-        if (drag === null || drag.pointerId !== event.pointerId) return
+        if (drag === null || drag.pointerId !== event.pointerId || barMenu === null) return
         const page = pageRef.current
-        const pageRect = page === null ? { width: window.innerWidth, height: window.innerHeight } : page.getBoundingClientRect()
+        if (page === null) return
+        const pageRect = page.getBoundingClientRect()
         if (drag.mode === 'width') {
           const maxWidth = Math.max(MENU_MIN_WIDTH, Math.round(pageRect.width - 16))
           drag.width = Math.min(maxWidth, Math.max(MENU_MIN_WIDTH, Math.round(drag.width + event.clientX - drag.x)))
           drag.x = event.clientX
-          setBarMenu((current) => (current === null ? current : { ...current, width: drag.width }))
+          setMenuVar('--nc-menu-w', drag.width + 'px')
           return
         }
-        const available = Math.max(240, Math.round(pageRect.height - drag.top - 6))
+        const available = menuAvailable(pageRect.height, barMenu.top)
         const height = Math.min(available - 100, Math.max(120, Math.round(drag.height + event.clientY - drag.y)))
         drag.y = event.clientY
         drag.height = height
-        drag.room = Math.max(100, available - height)
-        setBarMenu((current) => (current === null ? current : { ...current, height: drag.height, room: drag.room }))
+        drag.split = height / Math.max(1, available)
+        setMenuVar('--nc-menu-split', String(drag.split))
       }
 
       function endResize(event) {
@@ -5597,47 +5607,43 @@ const thumbCache = new Map()
             // Already released.
           }
         }
-        if (drag.mode === 'width') saveLayout({ width: drag.width })
-        else saveLayout({ split: drag.height / Math.max(1, drag.height + drag.room) })
+        if (drag.mode === 'width') {
+          saveLayout({ width: drag.width })
+          setBarMenu((current) => (current === null ? current : { ...current, width: drag.width }))
+          return
+        }
+        const split = drag.split === undefined
+          ? (barMenu === null ? LAYOUT_DEFAULT_SPLIT : barMenu.split)
+          : drag.split
+        saveLayout({ split })
+        setBarMenu((current) => (current === null ? current : { ...current, split }))
       }
 
       /** Double click restores the default for that edge. */
       function resetResize(mode) {
         if (barMenu === null) return
         if (mode === 'width') {
-          const width = typeof barMenu.defaultWidth === 'number' ? barMenu.defaultWidth : barMenu.width
-          setBarMenu((current) => (current === null ? current : { ...current, width }))
           saveLayout({ width: null })
+          setBarMenu((current) => (current === null ? current : { ...current, width: MENU_DEFAULT_WIDTH }))
           return
         }
-        const page = pageRef.current
-        const pageRect = page === null ? { height: window.innerHeight } : page.getBoundingClientRect()
-        const available = Math.max(240, Math.round(pageRect.height - barMenu.top - 6))
-        const height = Math.max(120, Math.round(available * LAYOUT_DEFAULT_SPLIT))
-        setBarMenu((current) => (current === null ? current : { ...current, height, room: Math.max(100, available - height) }))
         saveLayout({ split: LAYOUT_DEFAULT_SPLIT })
+        setBarMenu((current) => (current === null ? current : { ...current, split: LAYOUT_DEFAULT_SPLIT }))
       }
 
       function closeBarMenu() {
         if (barMenu === null) return
-        if (barMenuTimerRef.current !== 0) {
-          clearTimeout(barMenuTimerRef.current)
-          barMenuTimerRef.current = 0
-        }
         if (bandTimerRef.current !== 0) {
           clearTimeout(bandTimerRef.current)
           bandTimerRef.current = 0
         }
         setBandClosing(false)
         setNodePreview(null)
+        settleRef.current = true
         setBarMenu((current) => (current === null ? current : { ...current, open: false, closing: true }))
-        barMenuTimerRef.current = setTimeout(() => {
-          barMenuTimerRef.current = 0
-          setBarMenu(null)
-          // The focused menu item is gone; without this the document falls back to <body> and
-          // the canvas stops receiving shortcuts.
-          focusShell()
-        }, BAR_MENU_MS + 40)
+        // The retract is a CSS animation and its own last frame unmounts the menu; this timer
+        // only covers a frame the browser never delivers (hidden tab, interrupted transition).
+        barMenuTimerRef.current = setTimeout(settleBarMenu, BAR_MENU_MS + 160)
       }
 
       /** Collapse the band with its retract animation, then drop it from the tree. */
@@ -6371,13 +6377,12 @@ const thumbCache = new Map()
 
         // Like the sidebar shoving the panel aside: when the library menu is open and the list
         // would land under it, slide the list to the menu's right edge instead of stacking.
-        if (barMenu !== null && barMenu.open === true) {
-          const menuRight = barMenu.left + barMenu.width
-          const menuBottom = barMenu.top + barMenu.height + (barSection === null ? 0 : barMenu.room)
-          const overlapsVertically = top < menuBottom && top + estimated > barMenu.top
-          if (overlapsVertically && left < menuRight + 8
-            && left + width > barMenu.left) {
-            left = menuRight + 8
+        const menuRect = menuBox()
+        if (menuRect !== null) {
+          const overlapsVertically = top < menuRect.bottom && top + estimated > menuRect.top
+          if (overlapsVertically && left < menuRect.right + 8
+            && left + width > menuRect.left) {
+            left = menuRect.right + 8
           }
         }
 
@@ -7302,7 +7307,24 @@ const thumbCache = new Map()
         onContextMenu: onShellContextMenu,
       }, [canvasContent, emptyEl, noticeEl, renderMenu(), renderProperties()])
 
-      const pageStyle = door === null
+      // Where the menu is, in the only frame the panel has: the page. Everything else about it —
+      // the band under it, both drag handles — is a calc() of these three variables, so a window
+      // resize is the browser's job rather than a state update here.
+      const menuGeometry = barMenu === null
+        ? null
+        : {
+            '--nc-menu-top': barMenu.top + 'px',
+            '--nc-menu-w': barMenu.width + 'px',
+            '--nc-menu-split': String(barMenu.split),
+            // The room below the toolbar, split between the menu and the band under it. Both are
+            // plain calc() of the page height, so a resize needs no code at all.
+            '--nc-menu-h': 'calc((100% - var(--nc-menu-top) - 6px) * var(--nc-menu-split))',
+            '--nc-menu-room': 'calc((100% - var(--nc-menu-top) - 6px) * (1 - var(--nc-menu-split)))',
+          }
+      // The width the drawn menu takes: the asked-for width, clipped to the page.
+      const menuDrawnWidth = 'min(calc(100% - 16px), var(--nc-menu-w))'
+
+      const pageBase = door === null
         ? S.page
         : {
             ...S.page,
@@ -7320,20 +7342,39 @@ const thumbCache = new Map()
             // only transform animates: the layout never moves, so nothing has to chase it
             transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
           }
+      const pageStyle = menuGeometry === null ? pageBase : { ...pageBase, ...menuGeometry }
+
+      /**
+       * The menu's footprint in page coordinates, read from the elements that are drawn. Nothing
+       * here is cached: a resize, a drag or the door changes the rect and the next call follows.
+       */
+      function menuBox() {
+        if (barMenu === null || barMenu.open !== true) return null
+        const page = pageRef.current
+        const menu = menuElRef.current
+        if (page === null || menu === null) return null
+        const pageRect = page.getBoundingClientRect()
+        const rect = menu.getBoundingClientRect()
+        const band = bandElRef.current
+        const bottom = band === null ? rect.bottom : band.getBoundingClientRect().bottom
+        return {
+          left: rect.left - pageRect.left,
+          right: rect.right - pageRect.left,
+          top: rect.top - pageRect.top,
+          bottom: bottom - pageRect.top,
+        }
+      }
 
       /** True while the pointer is over the menu or the band it opened. */
       function menuContains(clientX, clientY) {
         if (barMenu === null) return false
-        const page = pageRef.current
-        if (page === null) return false
-        const pageRect = page.getBoundingClientRect()
-        const left = pageRect.left + barMenu.left
-        const top = pageRect.top + barMenu.top
-        const right = left + barMenu.width
-        const menuBottom = top + barMenu.height
-        const bandBottom = menuBottom + (barSection === null ? 0 : barMenu.room)
-        return clientX >= left && clientX <= right
-          && clientY >= top && clientY <= Math.max(menuBottom, bandBottom)
+        const menu = menuElRef.current
+        if (menu === null) return false
+        const rect = menu.getBoundingClientRect()
+        const band = bandElRef.current
+        const bottom = band === null ? rect.bottom : band.getBoundingClientRect().bottom
+        return clientX >= rect.left && clientX <= rect.right
+          && clientY >= rect.top && clientY <= bottom
       }
 
       function clientToGraph(clientX, clientY) {
@@ -7741,12 +7782,15 @@ const thumbCache = new Map()
         ? null
         : h('div', {
             key: 'bar-menu-panel',
+            ref: menuElRef,
+            'data-nc-menu': 'bar',
             style: {
               position: 'absolute',
-              left: barMenu.left + 'px',
-              top: barMenu.top + 'px',
-              width: barMenu.width + 'px',
-              height: barMenu.height + 'px',
+              left: 0,
+              top: 'var(--nc-menu-top)',
+              width: menuDrawnWidth,
+              minWidth: MENU_MIN_WIDTH + 'px',
+              height: 'var(--nc-menu-h)',
               overflow: 'hidden',
               zIndex: 25,
               pointerEvents: barMenu.open === true ? 'auto' : 'none',
@@ -7771,6 +7815,11 @@ const thumbCache = new Map()
               borderTop: 'none',
               borderRadius: '0 0 12px 0',
             },
+            onAnimationEnd: (event) => {
+              // The retract animation, not a timer, decides when the menu is gone.
+              if (event.target !== event.currentTarget) return
+              if (barMenu.closing === true) settleBarMenu()
+            },
           }, sectionRows))
 
       const resizeWidthEl = barMenu === null || barMenu.open !== true
@@ -7782,10 +7831,13 @@ const thumbCache = new Map()
             'aria-hidden': true,
             style: {
               position: 'absolute',
-              left: (barMenu.left + barMenu.width) + 'px',
-              top: barMenu.top + 'px',
+              // Straddle the drawn edge, whichever of the two the page width allowed.
+              left: 'min(calc(100% - 19px), calc(var(--nc-menu-w) - 3px))',
+              top: 'var(--nc-menu-top)',
               width: '6px',
-              height: (barMenu.height + (barSection === null ? 0 : barMenu.room)) + 'px',
+              height: barSection === null
+                ? 'var(--nc-menu-h)'
+                : 'calc(var(--nc-menu-h) + var(--nc-menu-room))',
               cursor: 'col-resize',
               zIndex: 26,
               background: 'transparent',
@@ -7806,9 +7858,9 @@ const thumbCache = new Map()
             'aria-hidden': true,
             style: {
               position: 'absolute',
-              left: barMenu.left + 'px',
-              top: (barMenu.top + barMenu.height - 3) + 'px',
-              width: barMenu.width + 'px',
+              left: 0,
+              top: 'calc(var(--nc-menu-top) + var(--nc-menu-h) - 3px)',
+              width: menuDrawnWidth,
               height: '6px',
               cursor: 'row-resize',
               zIndex: 26,
@@ -7825,12 +7877,15 @@ const thumbCache = new Map()
         ? null
         : h('div', {
             key: 'bar-menu-submenu',
+            ref: bandElRef,
+            'data-nc-menu': 'band',
             style: {
               position: 'absolute',
-              left: barMenu.left + 'px',
-              top: (barMenu.top + barMenu.height) + 'px',
-              width: barMenu.width + 'px',
-              height: barMenu.room + 'px',
+              left: 0,
+              top: 'calc(var(--nc-menu-top) + var(--nc-menu-h))',
+              width: menuDrawnWidth,
+              minWidth: MENU_MIN_WIDTH + 'px',
+              height: 'var(--nc-menu-room)',
               overflow: 'hidden',
               zIndex: 25,
               pointerEvents: bandClosing === true ? 'none' : 'auto',
@@ -7867,7 +7922,7 @@ const thumbCache = new Map()
             key: 'workflow-run',
             style: {
               position: 'absolute',
-              left: (barMenu.left + barMenu.width) + 'px',
+              left: menuDrawnWidth,
               top: runHover.top + 'px',
               height: runHover.height + 'px',
               display: 'flex',
