@@ -7348,30 +7348,6 @@ const thumbCache = new Map()
             ...doorPinned(),
           },
         }, [
-          h('div', {
-            key: 'status',
-            style: {
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              height: '22px',
-              padding: '0 9px',
-              borderRadius: '11px',
-              fontSize: '11px',
-              background: canvasDirty
-                ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 14%, transparent)'
-                : 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent)',
-              color: canvasDirty
-                ? 'var(--dsw-alias-state-business-primary)'
-                : 'var(--dsw-alias-state-success-primary)',
-            },
-          }, [
-            h('span', {
-              key: 'dot',
-              style: { width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' },
-            }),
-            h('span', { key: 'text' }, canvasDirty ? tr('canvas.draft') : tr('canvas.saved')),
-          ]),
           avatarGlyph(30, true),
           h('button', {
             key: 'extensions',
@@ -8112,6 +8088,40 @@ const thumbCache = new Map()
             onDoubleClick: () => resetResize('height'),
           })
 
+      // The saved/draft capsule belongs to the workflow library, not to the toolbar: it sits on
+      // the right edge of the band, over whatever tail a long workflow name would have reached.
+      const workflowBadge = barSection !== 'workflows'
+        ? null
+        : h('div', {
+            key: 'workflow-badge',
+            style: {
+              position: 'absolute',
+              top: '10px',
+              right: '10px',
+              zIndex: 2,
+              pointerEvents: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              height: '18px',
+              padding: '0 8px',
+              borderRadius: '9px',
+              fontSize: '10px',
+              background: canvasDirty
+                ? 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 16%, var(--dsw-alias-bg-base))'
+                : 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 16%, var(--dsw-alias-bg-base))',
+              color: canvasDirty
+                ? 'var(--dsw-alias-state-business-primary)'
+                : 'var(--dsw-alias-state-success-primary)',
+            },
+          }, [
+            h('span', {
+              key: 'dot',
+              style: { width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' },
+            }),
+            h('span', { key: 'text' }, canvasDirty ? tr('canvas.draft') : tr('canvas.saved')),
+          ])
+
       const barSubmenuEl = barMenu === null || barMenu.open !== true || barSection === null
         ? null
         : h('div', {
@@ -8137,6 +8147,7 @@ const thumbCache = new Map()
             style: {
               boxSizing: 'border-box',
               height: '100%',
+              position: 'relative',
               overflowY: 'auto',
               padding: '10px',
               background: 'var(--dsw-alias-bg-base)',
@@ -8147,7 +8158,7 @@ const thumbCache = new Map()
                 + BAND_MS + 'ms cubic-bezier(0.22, 0.61, 0.36, 1)'
                 + (bandClosing === true ? ' forwards' : ''),
             },
-          }, submenuRows))
+          }, workflowBadge === null ? submenuRows : [workflowBadge].concat(submenuRows)))
 
       // The run control sits outside the panel, in line with the hovered row. Its wrapper starts
       // exactly at the panel edge, so travelling right from the row never crosses dead space.
