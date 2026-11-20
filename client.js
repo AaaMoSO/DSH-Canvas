@@ -5711,7 +5711,11 @@ const thumbCache = new Map()
         doorCellRef.current = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
         doorCorrectedRef.current = false
         doorPhaseRef.current = 'measuring'
-        setDoor({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })
+        // A panel flush with the window's right and bottom edges can be reopened as a sheet that
+        // is measured against the viewport itself: dragging a window edge then needs no code.
+        const flush = Math.abs(rect.left + rect.width - window.innerWidth) <= 1
+          && Math.abs(rect.top + rect.height - window.innerHeight) <= 1
+        setDoor({ left: rect.left, top: rect.top, width: rect.width, height: rect.height, flush })
         setSlide(null)
       }
 
@@ -5747,6 +5751,7 @@ const thumbCache = new Map()
             top: cell.top - origin.y,
             width: cell.left + cell.width,
             height: cell.height,
+            flush: door.flush === true,
           })
           setSlide({ page: cell.left, content: 0, animate: false })
           return undefined
@@ -7313,6 +7318,10 @@ const thumbCache = new Map()
       // The width the drawn menu takes: the asked-for width, clipped to the page.
       const menuDrawnWidth = 'min(calc(100% - 16px), var(--nc-menu-w))'
 
+      // A flush sheet is measured against the viewport, not against a snapshot of it: its width
+      // and its height below the toolbar are viewport units, so dragging a window edge while the
+      // door is open needs no listener and cannot be a frame late.
+      const doorAnchored = door !== null && door.flush === true && Math.abs(door.left) <= 1
       const pageBase = door === null
         ? S.page
         : {
@@ -7320,8 +7329,8 @@ const thumbCache = new Map()
             position: 'fixed',
             left: door.left + 'px',
             top: door.top + 'px',
-            width: door.width + 'px',
-            height: door.height + 'px',
+            width: doorAnchored ? '100%' : door.width + 'px',
+            height: doorAnchored ? 'calc(100vh - ' + door.top + 'px)' : door.height + 'px',
             zIndex: 100,
             transform: pageShift === 0 ? 'none' : 'translateX(' + pageShift + 'px)',
             // Promoted before the slide starts, not on the same frame: a layer created mid-flight
