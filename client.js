@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
 // The saved copy of the workflow this canvas came from, so the dirty state survives a reload.
 const BASELINE_KEY = 'dsh.node-canvas.baseline.v3'
 // Label the canvas run carries on the Host; only one temporary workflow exists at a time.
-const TEMP_RUN_LABEL = '__canvas__'
+// Every run now belongs to a library workflow, so there is no temporary run label any more.
 // How long a tile is held before it becomes a drag handle. Kept tiny: the movement itself is
 // what distinguishes a drag from a click, not the length of the press.
 const EXTENSION_ARM_MS = 30
@@ -4103,7 +4103,7 @@ const thumbCache = new Map()
       function latestCanvasRun() {
         let latest = null
         for (const run of runs) {
-          if (run.workflow !== TEMP_RUN_LABEL && run.workflow !== currentWorkflow) continue
+          if (run.workflow !== currentWorkflow) continue
           if (latest === null || run.startedAt > latest.startedAt) latest = run
         }
         return latest
@@ -4680,7 +4680,7 @@ const thumbCache = new Map()
       async function runCanvas() {
         const graph = graphRef.current
         if (graph.nodes.length === 0) return
-        const label = canvasDirty ? TEMP_RUN_LABEL : currentWorkflow
+        const label = currentWorkflow
         if (label === null) return
         const previous = latestRun(label)
         if (previous !== null && previous.status === 'running') {
@@ -7295,14 +7295,9 @@ const thumbCache = new Map()
         }
       }
 
-      // The canvas is "saved" only while it still equals the copy it was loaded from; any edit
-      // (or never having saved it) makes it the one temporary workflow.
       const canvasJson = graphSignature(graph)
-      const canvasDirty = currentWorkflow === null || baseline === null
-        || baseline.name !== currentWorkflow || baseline.json !== canvasJson
-      // A saved canvas runs as itself; a draft runs as the single temporary workflow.
-      const canvasRunLabel = canvasDirty ? TEMP_RUN_LABEL : currentWorkflow
-      const localRun = canvasRunLabel === null ? null : (latestRun(canvasRunLabel) ?? null)
+      // The canvas always *is* one library workflow, so the run it follows is that workflow's.
+      const localRun = currentWorkflow === null ? null : (latestRun(currentWorkflow) ?? null)
       const localRunning = localRun !== null && localRun.status === 'running'
       // The graph node the local executor is on. Only a local run reports this: a mapped
       // ComfyUI workflow runs somewhere else and has no per-node picture to offer.
