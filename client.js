@@ -5818,6 +5818,13 @@ const thumbCache = new Map()
        * bring the sidebar back and then shrink the sheet to the room it leaves.
        */
       function toggleWindowState() {
+        // Temporary readout: the numbers that decide the animation's length.
+        const page = pageRef.current
+        const pageRect = page === null ? null : page.getBoundingClientRect()
+        showNotice('page=' + (pageRect === null ? '-' : Math.round(pageRect.left) + '/' + Math.round(pageRect.width))
+          + ' slot=' + Math.round(slotLeft())
+          + ' full=' + String(windowFull)
+          + ' phase=' + doorPhaseRef.current)
         if (windowBusyRef.current === true) return
         if (windowFull === true) {
           windowBusyRef.current = true
@@ -5835,6 +5842,7 @@ const thumbCache = new Map()
             // The sidebar is back once the slot starts below the canvas again.
             if (left >= WINDOW_FULL_LEFT) sidebarHiddenByUsRef.current = false
             windowBusyRef.current = false
+            showNotice('close slot=' + Math.round(left))
             closeDoor()
           })
           return
