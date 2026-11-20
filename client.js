@@ -1436,6 +1436,16 @@ const thumbCache = new Map()
     }
 
     const S = {
+      // The frame fills the host's slot and stays in flow; the page can leave flow inside it.
+      hostFrame: {
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+      },
       page: {
         position: 'relative',
         height: '100%',
@@ -2514,6 +2524,8 @@ const thumbCache = new Map()
       const settleFrameRef = React.useRef(0)
       // The host's slot element, kept so an unmount can still measure it.
       const slotElRef = React.useRef(null)
+      // The frame around the page: the one element that stays in flow while the sheet is fixed.
+      const hostFrameRef = React.useRef(null)
       // True while the sidebar is hidden because this panel hid it.
       const sidebarHiddenByUsRef = React.useRef(false)
       const doorCorrectedRef = React.useRef(false)
@@ -2551,7 +2563,7 @@ const thumbCache = new Map()
       // renders from that width. One boolean follows the slot's left edge, so the toolbar can show
       // whether the canvas already owns the window; it never opens or closes the door by itself.
       React.useEffect(() => {
-        const slot = hostSlot()
+        const slot = hostFrameRef.current
         if (slot === null) return undefined
         slotElRef.current = slot
         const update = () => {
@@ -5764,11 +5776,9 @@ const thumbCache = new Map()
         else if (activeSource !== 'local') void loadBackendWorkflows(activeSource)
       }
 
-      /** The element the host gives the canvas: its left edge is what the sidebar leaves free. */
+      /** The element that sits where the canvas sits: its left edge is what the sidebar leaves. */
       function hostSlot() {
-        if (slotElRef.current !== null) return slotElRef.current
-        const page = pageRef.current
-        return page === null ? null : page.parentElement
+        return slotElRef.current === null ? hostFrameRef.current : slotElRef.current
       }
 
       /**
@@ -9164,7 +9174,8 @@ const thumbCache = new Map()
         ? h('div', { key: 'drop', style: S.dropOverlay }, tr('dragging'))
         : null
 
-      return h('div', {
+      const page = h('div', {
+        key: 'page',
         ref: pageRef,
         style: pageStyle,
         onDragOver,
@@ -9174,6 +9185,11 @@ const thumbCache = new Map()
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
       }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, settingsPickerEl, panelsEl, comboMenuEl, dropOverlay])
+
+      // The frame is what the host lays out. The page inside it becomes a fixed sheet while the
+      // door is open, so the frame is the only place the canvas can still be located: its left edge
+      // is exactly the room the sidebar leaves, open or put away.
+      return h('div', { key: 'host-frame', ref: hostFrameRef, style: S.hostFrame }, page)
     }
 
     function PanelIcon(props) {
