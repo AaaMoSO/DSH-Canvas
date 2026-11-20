@@ -83,6 +83,12 @@ The rules that keep it that way:
 - **The fullscreen sheet is measured against the viewport** when the panel is flush with the
   window's right and bottom edges (`width: 100%`, `height: calc(100vh - top)`), so dragging a
   window edge follows immediately instead of waiting for a new measurement.
+- **The brand button is a window-state switch.** Its lit state is the measured distance from the
+  canvas slot's left edge to the window (`< 32px` means the canvas owns the window), never the
+  sheet's own state. Pressing it runs two steps in order: grow the sheet to fullscreen and then put
+  the host sidebar away, or bring the sidebar back and only then shrink the sheet into the room it
+  actually leaves. The second step waits for the sidebar's animation to settle, so the distance the
+  sheet travels is always the one that exists at that moment.
 
 ## License
 

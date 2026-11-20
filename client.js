@@ -422,6 +422,11 @@ const thumbCache = new Map()
 
     // How long the panel takes to slide over the sidebar, in milliseconds.
     const DOOR_MS = 260
+    // The canvas starts this far from the window's left edge while the host sidebar is open.
+    // Closer than that the canvas already owns the whole window, which counts as fullscreen.
+    const WINDOW_FULL_LEFT = 32
+    // How long the door waits for the host's sidebar animation before it stops waiting.
+    const SIDEBAR_WAIT_MS = 500
     // How long the toolbar menu takes to grow open.
     const BAR_MENU_MS = 180
     // The library band below the menu grows more slowly: at 180ms the movement read as a jump.
@@ -1290,6 +1295,10 @@ const thumbCache = new Map()
     }
 
     const localeListeners = new Set()
+
+    // The host's layout service, kept from `apply` so the panel can ask the sidebar to move.
+    // There is no read side: the plugin only ever calls `toggleSidebar()`.
+    let hostLayout = null
 
     function useLocaleRefresh() {
       const [, force] = React.useReducer((value) => value + 1, 0)
@@ -2480,9 +2489,12 @@ const thumbCache = new Map()
       // True while the shell is too small for the overview. Only the crossing re-renders; the
       // canvas keeps no record of how large it is.
       const [compact, setCompact] = React.useState(false)
-      // While set, the panel is a fixed-position sheet sliding over the sidebar. The sidebar
-      // itself never changes: the sheet covers it, which is also what makes it inert.
+      // While set, the panel is a fixed-position sheet sliding over the sidebar. The sidebar is put
+      // away once the sheet covers it, so the layout underneath agrees with what is on screen.
       const [door, setDoor] = React.useState(null)
+      // Whether the canvas already owns the whole window. It drives the toolbar button's look and
+      // nothing else: the door moves when that button is pressed, never because this flipped.
+      const [windowFull, setWindowFull] = React.useState(false)
       // The sheet's left edge and the canvas content move by the same amount in opposite
       // directions, so the graph stands still while the chrome travels. Both are plain CSS
       // transitions started in one frame — no per-frame React state to fall behind.
@@ -2495,6 +2507,11 @@ const thumbCache = new Map()
       const doorCellRef = React.useRef(null)
       const doorOriginRef = React.useRef({ x: 0, y: 0 })
       const doorPhaseRef = React.useRef('idle')
+      // True while a button press is still running its two steps.
+      const windowBusyRef = React.useRef(false)
+      // Set by the press that opens the door: the sidebar goes away once the sheet covers it.
+      const collapseAfterOpenRef = React.useRef(false)
+      const settleFrameRef = React.useRef(0)
       const doorCorrectedRef = React.useRef(false)
       const shellLeftRef = React.useRef(0)
       const dragRef = React.useRef(null)
@@ -2525,6 +2542,26 @@ const thumbCache = new Map()
       viewRef.current = view
       selectionRef.current = selection
       historyRef.current = history
+
+      // The host's sidebar decides how much window the canvas slot gets, and the canvas never
+      // renders from that width. One boolean follows the slot's left edge, so the toolbar can show
+      // whether the canvas already owns the window; it never opens or closes the door by itself.
+      React.useEffect(() => {
+        const slot = hostSlot()
+        if (slot === null) return undefined
+        const update = () => {
+          const full = slot.getBoundingClientRect().left < WINDOW_FULL_LEFT
+          setWindowFull((current) => (current === full ? current : full))
+        }
+        update()
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+        if (observer !== null) observer.observe(slot)
+        window.addEventListener('resize', update)
+        return () => {
+          if (observer !== null) observer.disconnect()
+          window.removeEventListener('resize', update)
+        }
+      }, [])
 
       React.useEffect(() => {
         const shell = shellRef.current
@@ -2636,6 +2673,7 @@ const thumbCache = new Map()
           if (noticeTimerRef.current !== 0) clearTimeout(noticeTimerRef.current)
           if (barMenuTimerRef.current !== 0) clearTimeout(barMenuTimerRef.current)
           if (bandTimerRef.current !== 0) clearTimeout(bandTimerRef.current)
+          if (settleFrameRef.current !== 0) cancelAnimationFrame(settleFrameRef.current)
         }
       }, [])
 
@@ -5716,10 +5754,92 @@ const thumbCache = new Map()
         else if (activeSource !== 'local') void loadBackendWorkflows(activeSource)
       }
 
-      function toggleFullscreen() {
-        // The menu is positioned in panel coordinates, so it rides along with the sheet.
-        if (door === null) openDoor()
-        else closeDoor()
+      /** The element the host gives the canvas: its left edge is what the sidebar leaves free. */
+      function hostSlot() {
+        const page = pageRef.current
+        return page === null ? null : page.parentElement
+      }
+
+      /**
+       * Distance from the window's left edge to where the canvas starts: the sidebar's width while
+       * it owns a track, zero once it is out of the way. Continuous, and read, never cached.
+       */
+      function slotLeft() {
+        const slot = hostSlot()
+        return slot === null ? 0 : slot.getBoundingClientRect().left
+      }
+
+      function toggleHostSidebar() {
+        if (hostLayout === null) return
+        try {
+          hostLayout.toggleSidebar()
+        } catch {
+          // The host refused; the sheet still closes to wherever the canvas actually ended up.
+        }
+      }
+
+      /** Run `done` once the canvas has stopped moving, or when the wait runs out. */
+      function waitSlotSettled(done) {
+        if (settleFrameRef.current !== 0) cancelAnimationFrame(settleFrameRef.current)
+        const started = performance.now()
+        let last = slotLeft()
+        let stable = 0
+        const tick = () => {
+          const now = slotLeft()
+          if (Math.abs(now - last) < 0.5) stable += 1
+          else {
+            stable = 0
+            last = now
+          }
+          if (stable < 2 && performance.now() - started <= SIDEBAR_WAIT_MS) {
+            settleFrameRef.current = requestAnimationFrame(tick)
+            return
+          }
+          settleFrameRef.current = 0
+          done(slotLeft())
+        }
+        settleFrameRef.current = requestAnimationFrame(tick)
+      }
+
+      /**
+       * The brand button is a window-state switch, not a door indicator. A press runs the two steps
+       * its state implies, in order: grow the sheet to fullscreen and then put the sidebar away, or
+       * bring the sidebar back and then shrink the sheet to the room it leaves.
+       */
+      function toggleWindowState() {
+        if (windowBusyRef.current === true) return
+        if (windowFull === true) {
+          windowBusyRef.current = true
+          toggleHostSidebar()
+          if (doorPhaseRef.current !== 'open') {
+            // The canvas is already laid out across the window; only the sidebar has to come back.
+            windowBusyRef.current = false
+            return
+          }
+          // The sheet still covers the window, so the sidebar coming back is invisible. Wait for
+          // it to finish widening the slot, then travel back into the room it actually left.
+          waitSlotSettled((left) => {
+            const cell = doorCellRef.current
+            if (cell !== null) doorCellRef.current = { ...cell, left }
+            windowBusyRef.current = false
+            closeDoor()
+          })
+          return
+        }
+        if (doorPhaseRef.current === 'open') {
+          // The sheet is already open; what is left is putting the sidebar away.
+          toggleHostSidebar()
+          return
+        }
+        if (doorPhaseRef.current !== 'idle') return
+        windowBusyRef.current = true
+        collapseAfterOpenRef.current = true
+        openDoor()
+        // openDoor measures synchronously and leaves `idle` only if it could start.
+        if (doorPhaseRef.current === 'idle') {
+          collapseAfterOpenRef.current = false
+          windowBusyRef.current = false
+        }
       }
 
       /**
@@ -5817,6 +5937,12 @@ const thumbCache = new Map()
             setSlide(null)
             if (cell !== null) setView((current) => ({ ...current, x: current.x + cell.left }))
             syncShell()
+            if (collapseAfterOpenRef.current === true) {
+              collapseAfterOpenRef.current = false
+              // The sheet covers the sidebar now, so putting it away cannot be seen.
+              toggleHostSidebar()
+              windowBusyRef.current = false
+            }
             return
           }
           if (phase === 'closingNow') {
@@ -7075,11 +7201,11 @@ const thumbCache = new Map()
         h('button', {
           key: 'brand',
           type: 'button',
-          title: door !== null ? tr('fullscreen.exit') : tr('fullscreen.enter'),
-          'aria-label': door !== null ? tr('fullscreen.exit') : tr('fullscreen.enter'),
-          'aria-pressed': door !== null,
-          style: door !== null ? { ...S.brand, ...S.brandOn } : S.brand,
-          onClick: toggleFullscreen,
+          title: windowFull ? tr('fullscreen.exit') : tr('fullscreen.enter'),
+          'aria-label': windowFull ? tr('fullscreen.exit') : tr('fullscreen.enter'),
+          'aria-pressed': windowFull,
+          style: windowFull ? { ...S.brand, ...S.brandOn } : S.brand,
+          onClick: toggleWindowState,
         }, [
           h('span', { key: 'icon', style: S.iconSlot }, PanelGlyph(18)),
           h('span', { key: 'text', style: S.brandText }, tr('title')),
@@ -9047,6 +9173,8 @@ const thumbCache = new Map()
         const runs = getRunController()
         runs.start()
         ctx.effect(() => () => runs.stop())
+        const layout = ctx.get('layout')
+        hostLayout = layout === undefined || layout === null ? null : layout
         const locale = ctx.get('locale')
         if (locale !== undefined && locale !== null) {
           ctx.effect(() => {
