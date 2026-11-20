@@ -6184,32 +6184,48 @@ const thumbCache = new Map()
       }
 
       /**
-       * The type's one and only owner: a local pack if one declares it, otherwise the backend that
-       * declares it (the lowest backend id when several do, so the answer never depends on order),
-       * otherwise nothing at all.
+       * The backend a document is written back to, taken from the document's own identity. This is
+       * the context a node type is resolved in: inside a mapped workflow, the backend's own
+       * declaration of a type outranks the local one, which is what keeps an overlapping type from
+       * turning the whole document into "mixed".
        */
-      function ownerOf(type) {
+      function mappedContextOf(graph) {
+        const mapped = typeof graph?.extra?.comfyuiSource === 'string' && graph.extra.comfyuiSource !== ''
+        if (mapped !== true) return null
+        const writer = backends.find((backend) => typeof backend.writeWorkflow === 'function')
+        return writer === undefined ? null : writer.id
+      }
+
+      /**
+       * The type's owner, resolved in a canvas context: the context backend's own declaration first,
+       * then a local pack, then any backend that declares it. Nothing depends on list order.
+       */
+      function ownerOf(type, context) {
         const slot = declarations.get(type)
         if (slot === undefined) return { kind: 'unknown', backend: null }
+        if (context !== null && context !== undefined && slot.remotes.has(context)) {
+          return { kind: 'remote', backend: context }
+        }
         if (slot.local !== null) return { kind: 'local', backend: null }
         if (slot.remotes.size === 0) return { kind: 'unknown', backend: null }
         return { kind: 'remote', backend: [...slot.remotes.keys()].sort()[0] }
       }
 
-      /** The declaration that describes this type: the owner's, and nobody else's. */
-      function defOf(type) {
+      /** The declaration that describes this type in this context: the owner's, and nobody else's. */
+      function defOf(type, context) {
+        const owner = ownerOf(type, context)
+        if (owner.kind === 'unknown') return undefined
         const slot = declarations.get(type)
         if (slot === undefined) return undefined
-        if (slot.local !== null) return slot.local
-        const owner = ownerOf(type)
-        return owner.backend === null ? undefined : slot.remotes.get(owner.backend)
+        return owner.kind === 'local' ? slot.local : slot.remotes.get(owner.backend)
       }
 
-      // The same answer as a table, for the helpers that were written against one. It holds the
-      // owner's declaration per type, so nothing downstream can read another pack's schema.
+      // The context this canvas resolves in, and the same answers as a table for the helpers that
+      // were written against one. It holds the owner's declaration per type, never another pack's.
+      const canvasContext = mappedContextOf(graph)
       const defsByType = new Map()
       for (const type of declarations.keys()) {
-        const entry = defOf(type)
+        const entry = defOf(type, canvasContext)
         if (entry !== undefined) defsByType.set(type, entry)
       }
 
@@ -6277,7 +6293,7 @@ const thumbCache = new Map()
        * backend that declares it, otherwise unknown — never a guess.
        */
       function nodeKindOf(type) {
-        return ownerOf(type).kind
+        return ownerOf(type, mappedContextOf(graphRef.current)).kind
       }
 
       /**
@@ -6288,13 +6304,14 @@ const thumbCache = new Map()
       function canvasKind(graph) {
         const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
         if (nodes.length === 0) return null
+        const context = mappedContextOf(graph)
         let kind = null
         for (const node of nodes) {
-          const nodeKind = nodeKindOf(node.type)
+          const owner = ownerOf(node.type, context)
           // Undecidable while a type cannot be resolved; callers treat that as "no kind yet".
-          if (nodeKind === 'unknown') return null
-          if (kind === null) kind = nodeKind
-          else if (kind !== nodeKind) return 'mixed'
+          if (owner.kind === 'unknown') return null
+          if (kind === null) kind = owner.kind
+          else if (kind !== owner.kind) return 'mixed'
         }
         return kind
       }
