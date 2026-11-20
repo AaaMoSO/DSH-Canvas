@@ -2529,7 +2529,10 @@ const thumbCache = new Map()
       // True while the sidebar is hidden because this panel hid it.
       const sidebarHiddenByUsRef = React.useRef(false)
       const doorCorrectedRef = React.useRef(false)
-      const shellLeftRef = React.useRef(0)
+      // The shell's top-left corner as the layout last put it, and the counter the canvas still
+      // owes for moves the view has not committed yet. Both axes, both written by the observer.
+      const shellOriginRef = React.useRef({ x: 0, y: 0 })
+      const pendingRef = React.useRef({ x: 0, y: 0 })
       const dragRef = React.useRef(null)
       const miniDragRef = React.useRef(false)
       const miniGeomRef = React.useRef(null)
@@ -2583,7 +2586,8 @@ const thumbCache = new Map()
       React.useEffect(() => {
         const shell = shellRef.current
         if (shell === null || typeof ResizeObserver === 'undefined') return undefined
-        shellLeftRef.current = shell.getBoundingClientRect().left
+        const start = shell.getBoundingClientRect()
+        shellOriginRef.current = { x: start.left, y: start.top }
         const observer = new ResizeObserver((entries) => {
           // The door resizes the sheet frame by frame; one sync at the end is enough.
           if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
@@ -2593,35 +2597,48 @@ const thumbCache = new Map()
             const small = box.width < 460 || box.height < 300
             setCompact((current) => (current === small ? current : small))
           }
-          const left = shell.getBoundingClientRect().left
-          const shift = shellLeftRef.current - left
-          shellLeftRef.current = left
-          // The door moves the sheet with a transform and the graph with its counter, so the
-          // left edge travels without the layout changing; correcting here would double up.
-          if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
-          const moved = Math.abs(shift) > 0.5
-          if (moved) {
-            // The canvas is a child of the shell, so the layout has already carried it along by
-            // `shift`. React would only answer on a later render, which is the frame of ghosting;
-            // this observer runs after layout and before paint, so writing the counter here keeps
-            // the canvas dead still in the very frame the sidebar moved. The layout effect below
-            // clears it again as soon as the compensated view is painted.
+          const rect = shell.getBoundingClientRect()
+          const shiftX = shellOriginRef.current.x - rect.left
+          const shiftY = shellOriginRef.current.y - rect.top
+          shellOriginRef.current = { x: rect.left, y: rect.top }
+          // The canvas is a child of the shell, so the layout has already carried it along by the
+          // shift, in both axes. React would only answer on a later render, which is the frame of
+          // the drag; this observer runs after layout and before paint, so the counter is written
+          // here and the canvas is still in the very frame its room moved.
+          const movedX = Math.abs(shiftX) > 0.5
+          const movedY = Math.abs(shiftY) > 0.5
+          if (movedX || movedY) {
+            // React may take more than one frame, and the layout keeps moving meanwhile: the counter
+            // accumulates for as long as it is owed, or the canvas would trail by a frame each time.
+            pendingRef.current = {
+              x: pendingRef.current.x + shiftX,
+              y: pendingRef.current.y + shiftY,
+            }
             const layer = graphLayerRef.current
-            if (layer !== null) layer.style.transform = 'translate(' + shift + 'px, 0px)'
+            if (layer !== null) {
+              layer.style.transform = 'translate(' + pendingRef.current.x + 'px, '
+                + pendingRef.current.y + 'px)'
+            }
           }
           // The overview's box answers the size change of this frame whether or not the shell also
-          // moved sideways: it is drawn here, before paint, instead of waiting for a render.
-          paintMinimapBox(viewRef.current.x + (moved ? shift : 0), viewRef.current.y, viewRef.current.k)
-          if (moved) setView((current) => ({ ...current, x: current.x + shift }))
+          // moved: it is drawn here, before paint, instead of waiting for a render.
+          paintMinimapBox(
+            viewRef.current.x + (movedX ? shiftX : 0),
+            viewRef.current.y + (movedY ? shiftY : 0),
+            viewRef.current.k,
+          )
+          if (movedX || movedY) {
+            setView((current) => ({ ...current, x: current.x + shiftX, y: current.y + shiftY }))
+          }
         })
         observer.observe(shell)
         return () => observer.disconnect()
       }, [])
 
-      // The resize observer counters the sidebar's move with a transform for one frame; once the
-      // compensated view is committed this takes it back in the same frame, so the canvas is never
-      // shifted twice and never lags behind.
+      // Once the compensated view is committed, the counter has done its job: it is dropped in the
+      // same frame, so the canvas is never shifted twice and never lags behind.
       React.useLayoutEffect(() => {
+        pendingRef.current = { x: 0, y: 0 }
         const layer = graphLayerRef.current
         if (layer !== null && layer.style.transform !== '') layer.style.transform = ''
       }, [view])
@@ -2629,7 +2646,8 @@ const thumbCache = new Map()
       function syncShell() {
         const shell = shellRef.current
         if (shell === null) return
-        shellLeftRef.current = shell.getBoundingClientRect().left
+        const rect = shell.getBoundingClientRect()
+        shellOriginRef.current = { x: rect.left, y: rect.top }
       }
 
       /**
