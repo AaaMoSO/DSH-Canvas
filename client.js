@@ -1042,8 +1042,11 @@ const thumbCache = new Map()
       'canvas.run': 'Run the canvas (temporary workflow)',
       'canvas.runSaved': 'Run “{name}”',
       'canvas.stop': 'Stop the canvas run',
-      'canvas.saved': 'Saved',
-      'canvas.draft': 'Draft',
+      'canvas.kind.empty': 'Empty',
+      'canvas.kind.local': 'Local',
+      'canvas.kind.remote': 'Remote',
+      'canvas.kind.mixed': 'Mixed',
+      'canvas.kind.resolving': 'Unresolved',
       grid: 'Show or hide the grid',
       minimap: 'Overview',
       'empty.title': 'An empty canvas',
@@ -1211,8 +1214,11 @@ const thumbCache = new Map()
       'canvas.run': '运行画布（临时工作流）',
       'canvas.runSaved': '运行「{name}」',
       'canvas.stop': '停止画布运行',
-      'canvas.saved': '已保存',
-      'canvas.draft': '临时',
+      'canvas.kind.empty': '空画布',
+      'canvas.kind.local': '本地',
+      'canvas.kind.remote': '远程',
+      'canvas.kind.mixed': '混合',
+      'canvas.kind.resolving': '未定',
       grid: '显示或隐藏网格',
       minimap: '缩略图',
       'empty.title': '画布是空的',
@@ -7341,6 +7347,11 @@ const thumbCache = new Map()
       }
 
       const canvasJson = graphSignature(graph)
+      // What the canvas is made of, for the corner capsule: empty, local, remote, mixed, or
+      // undecided while some node's pack is not loaded yet.
+      const canvasSourceState = graph.nodes.length === 0
+        ? 'empty'
+        : (canvasKind(graph) ?? 'resolving')
       // The canvas always *is* one library workflow, so the run it follows is that workflow's.
       const localRun = currentWorkflow === null ? null : (latestRun(currentWorkflow) ?? null)
       const localRunning = localRun !== null && localRun.status === 'running'
@@ -7411,6 +7422,43 @@ const thumbCache = new Map()
             ...doorPinned(),
           },
         }, [
+          // What this canvas is made of: empty, local, remote, mixed, or not yet decided.
+          h('div', {
+            key: 'canvas-kind',
+            title: tr('canvas.kind.' + canvasSourceState),
+            'aria-label': tr('canvas.kind.' + canvasSourceState),
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              height: '22px',
+              padding: '0 9px',
+              borderRadius: '11px',
+              fontSize: '11px',
+              whiteSpace: 'nowrap',
+              background: 'color-mix(in srgb, '
+                + (canvasSourceState === 'local'
+                  ? 'var(--dsw-alias-state-success-primary)'
+                  : canvasSourceState === 'remote'
+                    ? 'var(--dsw-alias-brand-primary)'
+                    : canvasSourceState === 'mixed'
+                      ? 'var(--dsw-alias-state-warn-primary)'
+                      : 'var(--dsw-alias-label-secondary)') + ' 14%, transparent)',
+              color: canvasSourceState === 'local'
+                ? 'var(--dsw-alias-state-success-primary)'
+                : canvasSourceState === 'remote'
+                  ? 'var(--dsw-alias-brand-primary)'
+                  : canvasSourceState === 'mixed'
+                    ? 'var(--dsw-alias-state-warn-primary)'
+                    : 'var(--dsw-alias-label-secondary)',
+            },
+          }, [
+            h('span', {
+              key: 'dot',
+              style: { width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor' },
+            }),
+            h('span', { key: 'text' }, tr('canvas.kind.' + canvasSourceState)),
+          ]),
           avatarGlyph(30, true),
           h('button', {
             key: 'extensions',

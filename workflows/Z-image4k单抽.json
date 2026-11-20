@@ -16,7 +16,13 @@
         "widgets": {
           "vae_name": "vae/ae.safetensors"
         },
-        "inputs": [],
+        "inputs": [
+          {
+            "id": "i:vae_name",
+            "name": "vae_name",
+            "type": "COMBO"
+          }
+        ],
         "outputs": [
           {
             "id": "o:vae",
@@ -44,6 +50,36 @@
         },
         "inputs": [
           {
+            "id": "i:recipe",
+            "name": "recipe",
+            "type": "STRING"
+          },
+          {
+            "id": "i:diffusion_model",
+            "name": "diffusion_model",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:text_encoder",
+            "name": "text_encoder",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:vae_name",
+            "name": "vae_name",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:placement",
+            "name": "placement",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:vision_encoder",
+            "name": "vision_encoder",
+            "type": "COMBO"
+          },
+          {
             "id": "i:vae",
             "name": "vae",
             "type": "SDCPP_VAE"
@@ -69,7 +105,13 @@
         "widgets": {
           "text": "Full body character illustration for a game, a Victorian gothic retro maid girl, pure white background, centered vertical composition, the entire figure fully in frame. She has very long curly brown hair, fluffy and slightly messy, a delicate hairband, brown eyes, cool pale skin, a delicate face with a gentle expression carrying a hint of mischief. She wears a retro Victorian long dress: a black ruffled apron over the skirt, a wide lace ruffled collar, a brown-grey dark plaid full skirt, brown gloves, retro high-heeled leather shoes. A crow perches quietly on her shoulder, its black and grey feathers clearly layered. Both hands hold a retro hard-shell suitcase made of dark brown hard shell and worn leather, covered with postage stamps, tucked-away papers and small blue flowers, with fine metal edging, clasps and small charms. She wears pocket-watch earrings, a necklace pendant and a retro metal waist ornament. Sharp clean line art, clear outlines, a mix of thick painterly and flat cel shading, low-saturation grey palette, retro dark muted tones, aged texture, steampunk retro mood, detailed fabric folds, lace, plaid, leather, metal and paper materials clearly distinguished, fine brushwork, highly finished anime character illustration."
         },
-        "inputs": [],
+        "inputs": [
+          {
+            "id": "i:text",
+            "name": "text",
+            "type": "STRING"
+          }
+        ],
         "outputs": [
           {
             "id": "o:conditioning",
@@ -90,7 +132,13 @@
         "widgets": {
           "text": ""
         },
-        "inputs": [],
+        "inputs": [
+          {
+            "id": "i:text",
+            "name": "text",
+            "type": "STRING"
+          }
+        ],
         "outputs": [
           {
             "id": "o:conditioning",
@@ -112,7 +160,18 @@
           "width": 720,
           "height": 1080
         },
-        "inputs": [],
+        "inputs": [
+          {
+            "id": "i:width",
+            "name": "width",
+            "type": "INT"
+          },
+          {
+            "id": "i:height",
+            "name": "height",
+            "type": "INT"
+          }
+        ],
         "outputs": [
           {
             "id": "o:latent",
@@ -135,7 +194,23 @@
           "seed_value": 2024,
           "batch_count": 2
         },
-        "inputs": [],
+        "inputs": [
+          {
+            "id": "i:mode",
+            "name": "mode",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:seed_value",
+            "name": "seed_value",
+            "type": "INT"
+          },
+          {
+            "id": "i:batch_count",
+            "name": "batch_count",
+            "type": "INT"
+          }
+        ],
         "outputs": [
           {
             "id": "o:seed_source",
@@ -195,6 +270,56 @@
             "id": "i:seed_source",
             "name": "seed_source",
             "type": "SDCPP_SEED"
+          },
+          {
+            "id": "i:steps",
+            "name": "steps",
+            "type": "INT"
+          },
+          {
+            "id": "i:cfg",
+            "name": "cfg",
+            "type": "FLOAT"
+          },
+          {
+            "id": "i:sampler_name",
+            "name": "sampler_name",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:scheduler",
+            "name": "scheduler",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:denoise",
+            "name": "denoise",
+            "type": "FLOAT"
+          },
+          {
+            "id": "i:cache_mode",
+            "name": "cache_mode",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:cache_threshold",
+            "name": "cache_threshold",
+            "type": "FLOAT"
+          },
+          {
+            "id": "i:lora",
+            "name": "lora",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:lora_strength",
+            "name": "lora_strength",
+            "type": "FLOAT"
+          },
+          {
+            "id": "i:lora_path",
+            "name": "lora_path",
+            "type": "STRING"
           }
         ],
         "outputs": [
@@ -247,6 +372,11 @@
             "id": "i:images",
             "name": "images",
             "type": "IMAGE"
+          },
+          {
+            "id": "i:filename_prefix",
+            "name": "filename_prefix",
+            "type": "STRING"
           }
         ],
         "outputs": [
@@ -262,7 +392,7 @@
         "x": 824,
         "y": 351,
         "w": 210,
-        "h": 52,
+        "h": 112,
         "title": "sd.cpp Upscale (ESRGAN)",
         "type": "SDCppUpscale",
         "mode": 0,
@@ -276,6 +406,21 @@
             "id": "i:image",
             "name": "image",
             "type": "IMAGE"
+          },
+          {
+            "id": "i:upscaler",
+            "name": "upscaler",
+            "type": "COMBO"
+          },
+          {
+            "id": "i:repeats",
+            "name": "repeats",
+            "type": "INT"
+          },
+          {
+            "id": "i:tile_size",
+            "name": "tile_size",
+            "type": "INT"
           }
         ],
         "outputs": [
