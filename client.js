@@ -7437,19 +7437,19 @@ const thumbCache = new Map()
               fontSize: '11px',
               whiteSpace: 'nowrap',
               background: 'color-mix(in srgb, '
-                + (canvasSourceState === 'local'
+                + (canvasSourceState === 'local' || canvasSourceState === 'remote'
                   ? 'var(--dsw-alias-state-success-primary)'
-                  : canvasSourceState === 'remote'
-                    ? 'var(--dsw-alias-brand-primary)'
-                    : canvasSourceState === 'mixed'
-                      ? 'var(--dsw-alias-state-warn-primary)'
-                      : 'var(--dsw-alias-label-secondary)') + ' 14%, transparent)',
-              color: canvasSourceState === 'local'
-                ? 'var(--dsw-alias-state-success-primary)'
-                : canvasSourceState === 'remote'
-                  ? 'var(--dsw-alias-brand-primary)'
                   : canvasSourceState === 'mixed'
                     ? 'var(--dsw-alias-state-warn-primary)'
+                    : canvasSourceState === 'resolving'
+                      ? 'var(--dsw-alias-state-error-primary)'
+                      : 'var(--dsw-alias-label-secondary)') + ' 14%, transparent)',
+              color: canvasSourceState === 'local' || canvasSourceState === 'remote'
+                ? 'var(--dsw-alias-state-success-primary)'
+                : canvasSourceState === 'mixed'
+                  ? 'var(--dsw-alias-state-warn-primary)'
+                  : canvasSourceState === 'resolving'
+                    ? 'var(--dsw-alias-state-error-primary)'
                     : 'var(--dsw-alias-label-secondary)',
             },
           }, [
