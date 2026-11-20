@@ -402,6 +402,8 @@ const THUMB_WIDTH = 640
 const THUMB_CACHE_LIMIT = 24
 const thumbCache = new Map()
     const VIEW_KEY = 'dsh.node-canvas.view.v1'
+    // Set once the stored camera has been moved from the shell's corner to the window's.
+    const VIEW_ORIGIN_KEY = 'dsh.node-canvas.viewOrigin.v1'
 
     const NODE_W = 190
     const NODE_MIN_W = 132
@@ -1436,6 +1438,15 @@ const thumbCache = new Map()
     }
 
     const S = {
+      // The canvas is pinned to the window, not to the layout: only the clip ties it to the shell.
+      canvasLayer: {
+        position: 'fixed',
+        left: 0,
+        top: 0,
+        width: '100vw',
+        height: '100vh',
+        pointerEvents: 'none',
+      },
       // The frame fills the host's slot and stays in flow; the page can leave flow inside it.
       hostFrame: {
         position: 'relative',
@@ -2529,7 +2540,8 @@ const thumbCache = new Map()
       // True while the sidebar is hidden because this panel hid it.
       const sidebarHiddenByUsRef = React.useRef(false)
       const doorCorrectedRef = React.useRef(false)
-      const shellLeftRef = React.useRef(0)
+      // The fixed layer the canvas is drawn in: its origin is the window, always.
+      const canvasLayerRef = React.useRef(null)
       const dragRef = React.useRef(null)
       const miniDragRef = React.useRef(false)
       const miniGeomRef = React.useRef(null)
@@ -2580,12 +2592,32 @@ const thumbCache = new Map()
         }
       }, [])
 
+      // The saved camera used to be measured from the shell's corner. The canvas now lives in the
+      // window, so an existing view is moved over once instead of jumping on every load.
+      React.useEffect(() => {
+        let migrated = false
+        try {
+          migrated = localStorage.getItem(VIEW_ORIGIN_KEY) === '1'
+        } catch {
+          migrated = false
+        }
+        if (migrated === true) return
+        const box = shellBox()
+        try {
+          localStorage.setItem(VIEW_ORIGIN_KEY, '1')
+        } catch {
+          // Without storage the shift simply happens once per load.
+        }
+        if (box.left !== 0 || box.top !== 0) {
+          setView((current) => ({ ...current, x: current.x + box.left, y: current.y + box.top }))
+        }
+      }, [])
+
       React.useEffect(() => {
         const shell = shellRef.current
         if (shell === null || typeof ResizeObserver === 'undefined') return undefined
-        shellLeftRef.current = shell.getBoundingClientRect().left
         const observer = new ResizeObserver((entries) => {
-          // The door resizes the sheet frame by frame; one sync at the end is enough.
+          // The door moves the sheet frame by frame; its own loop keeps the hole in sync meanwhile.
           if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
           setShellReady((current) => (current === true ? current : true))
           const box = entries[0]?.contentRect
@@ -2593,43 +2625,54 @@ const thumbCache = new Map()
             const small = box.width < 460 || box.height < 300
             setCompact((current) => (current === small ? current : small))
           }
-          const left = shell.getBoundingClientRect().left
-          const shift = shellLeftRef.current - left
-          shellLeftRef.current = left
-          // The door moves the sheet with a transform and the graph with its counter, so the
-          // left edge travels without the layout changing; correcting here would double up.
-          if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
-          const moved = Math.abs(shift) > 0.5
-          if (moved) {
-            // The canvas is a child of the shell, so the layout has already carried it along by
-            // `shift`. React would only answer on a later render, which is the frame of ghosting;
-            // this observer runs after layout and before paint, so writing the counter here keeps
-            // the canvas dead still in the very frame the sidebar moved. The layout effect below
-            // clears it again as soon as the compensated view is painted.
-            const layer = graphLayerRef.current
-            if (layer !== null) layer.style.transform = 'translate(' + shift + 'px, 0px)'
-          }
-          // The overview's box answers the size change of this frame whether or not the shell also
-          // moved sideways: it is drawn here, before paint, instead of waiting for a render.
-          paintMinimapBox(viewRef.current.x + (moved ? shift : 0), viewRef.current.y, viewRef.current.k)
-          if (moved) setView((current) => ({ ...current, x: current.x + shift }))
+          // The canvas does not live in this layout any more: it only has to be cut down to the
+          // room the shell gives it, and its overview redrawn for the new window size. Both are
+          // written here, after layout and before paint, so neither can trail the window.
+          syncCanvasClip()
+          paintMinimapBox(viewRef.current.x, viewRef.current.y, viewRef.current.k)
         })
         observer.observe(shell)
         return () => observer.disconnect()
       }, [])
 
-      // The resize observer counters the sidebar's move with a transform for one frame; once the
-      // compensated view is committed this takes it back in the same frame, so the canvas is never
-      // shifted twice and never lags behind.
+      // The canvas layer must never be painted outside the shell, and the observer's first report
+      // arrives a frame later, so the first cut is made here, before the first paint.
       React.useLayoutEffect(() => {
-        const layer = graphLayerRef.current
-        if (layer !== null && layer.style.transform !== '') layer.style.transform = ''
-      }, [view])
+        syncCanvasClip()
+      }, [])
 
+      /** Re-cut the canvas after the door moved the shell. */
       function syncShell() {
+        syncCanvasClip()
+      }
+
+
+      /**
+       * Cut the fixed canvas layer down to the shell's rectangle. Both rectangles are read here and
+       * the difference is written as a clip, so a layout change can move or resize the hole without
+       * ever touching where the canvas is.
+       */
+      function syncCanvasClip() {
+        const layer = canvasLayerRef.current
         const shell = shellRef.current
-        if (shell === null) return
-        shellLeftRef.current = shell.getBoundingClientRect().left
+        if (layer === null || shell === null) return
+        const s = shell.getBoundingClientRect()
+        const l = layer.getBoundingClientRect()
+        const top = Math.max(0, Math.round(s.top - l.top))
+        const left = Math.max(0, Math.round(s.left - l.left))
+        const right = Math.max(0, Math.round(l.right - s.right))
+        const bottom = Math.max(0, Math.round(l.bottom - s.bottom))
+        layer.style.clipPath = 'inset(' + top + 'px ' + right + 'px ' + bottom + 'px ' + left + 'px)'
+      }
+
+      /** The room the shell gives the canvas, in the canvas layer's own coordinates. */
+      function shellBox() {
+        const shell = shellRef.current
+        const layer = canvasLayerRef.current
+        if (shell === null) return { left: 0, top: 0, w: 800, h: 600 }
+        const s = shell.getBoundingClientRect()
+        const l = layer === null ? { left: 0, top: 0 } : layer.getBoundingClientRect()
+        return { left: s.left - l.left, top: s.top - l.top, w: s.width, h: s.height }
       }
 
       /**
@@ -2652,7 +2695,9 @@ const thumbCache = new Map()
         let frame = 0
         const onWheel = (event) => {
           event.preventDefault()
-          const rect = shell.getBoundingClientRect()
+          const rect = canvasLayerRef.current === null
+            ? { left: 0, top: 0 }
+            : canvasLayerRef.current.getBoundingClientRect()
           const delta = Math.exp(-event.deltaY * 0.0016)
           const x = event.clientX - rect.left
           const y = event.clientY - rect.top
@@ -3467,11 +3512,11 @@ const thumbCache = new Map()
         const current = graphRef.current
         const currentView = viewRef.current
         const stagger = (current.nodes.length % 6) * 24
-        const area = shellSize()
+        const box = shellBox()
         const point = at === undefined
           ? {
-              x: (area.w / 2 - currentView.x) / currentView.k + stagger,
-              y: (area.h / 2 - currentView.y) / currentView.k + stagger,
+              x: (box.left + box.w / 2 - currentView.x) / currentView.k + stagger,
+              y: (box.top + box.h / 2 - currentView.y) / currentView.k + stagger,
             }
           : at
         const node = nodeForType(entry, point)
@@ -3746,9 +3791,11 @@ const thumbCache = new Map()
 
       function fitView() {
         const nodes = graphRef.current.nodes
-        const { w: width, h: height } = shellSize()
+        const box = shellBox()
+        const width = box.w
+        const height = box.h
         if (nodes.length === 0) {
-          setView({ ...viewRef.current, x: 48, y: 48, k: 1 })
+          setView({ ...viewRef.current, x: box.left + 48, y: box.top + 48, k: 1 })
           return
         }
         const bounds = boundsOf(nodes)
@@ -3759,8 +3806,8 @@ const thumbCache = new Map()
         setView({
           ...viewRef.current,
           k,
-          x: (width - graphWidth * k) / 2 - bounds.minX * k,
-          y: (height - graphHeight * k) / 2 - bounds.minY * k,
+          x: box.left + (width - graphWidth * k) / 2 - bounds.minX * k,
+          y: box.top + (height - graphHeight * k) / 2 - bounds.minY * k,
         })
       }
 
@@ -4961,13 +5008,15 @@ const thumbCache = new Map()
         reader.readAsText(file)
       }
 
-      function toShellPoint(event) {
-        const rect = shellRef.current.getBoundingClientRect()
+      /** A pointer position in the canvas layer: the same frame the view is measured in. */
+      function toWindowPoint(event) {
+        const layer = canvasLayerRef.current
+        const rect = layer === null ? { left: 0, top: 0 } : layer.getBoundingClientRect()
         return { x: event.clientX - rect.left, y: event.clientY - rect.top }
       }
 
       function toGraphPoint(event) {
-        const point = toShellPoint(event)
+        const point = toWindowPoint(event)
         const current = viewRef.current
         return { x: (point.x - current.x) / current.k, y: (point.y - current.y) / current.k }
       }
@@ -5041,12 +5090,12 @@ const thumbCache = new Map()
         const rect = viewportRectRef.current
         const geometry = miniGeomRef.current
         if (rect === null || geometry === null) return
-        const { w: width, h: height } = shellSize()
+        const box = shellBox()
         const scale = geometry.scale
-        rect.setAttribute('x', String(geometry.ox + (-x / k) * scale))
-        rect.setAttribute('y', String(geometry.oy + (-y / k) * scale))
-        rect.setAttribute('width', String(Math.max(4, (width / k) * scale)))
-        rect.setAttribute('height', String(Math.max(4, (height / k) * scale)))
+        rect.setAttribute('x', String(geometry.ox + ((box.left - x) / k) * scale))
+        rect.setAttribute('y', String(geometry.oy + ((box.top - y) / k) * scale))
+        rect.setAttribute('width', String(Math.max(4, (box.w / k) * scale)))
+        rect.setAttribute('height', String(Math.max(4, (box.h / k) * scale)))
       }
 
       /**
@@ -5422,8 +5471,12 @@ const thumbCache = new Map()
         const x = (event.clientX - rect.left - geometry.ox) / geometry.scale
         const y = (event.clientY - rect.top - geometry.oy) / geometry.scale
         const current = viewRef.current
-        const { w: width, h: height } = shellSize()
-        setView({ ...current, x: width / 2 - x * current.k, y: height / 2 - y * current.k })
+        const box = shellBox()
+        setView({
+          ...current,
+          x: box.left + box.w / 2 - x * current.k,
+          y: box.top + box.h / 2 - y * current.k,
+        })
       }
 
       function onMinimapPointerDown(event) {
@@ -5909,7 +5962,7 @@ const thumbCache = new Map()
         const cell = doorCellRef.current
         if (cell === null || doorPhaseRef.current !== 'open') return
         doorPhaseRef.current = 'closing'
-        setSlide({ page: 0, content: 0, animate: false })
+        setSlide({ page: 0, animate: false })
       }
 
       React.useLayoutEffect(() => {
@@ -5939,7 +5992,7 @@ const thumbCache = new Map()
             height: cell.height,
             flush: door.flush === true,
           })
-          setSlide({ page: cell.left, content: 0, animate: false })
+          setSlide({ page: cell.left, animate: false })
           return undefined
         }
 
@@ -5949,7 +6002,7 @@ const thumbCache = new Map()
           // its final viewport before the slide starts, instead of changing mid-way.
           syncShell()
           const frame = requestAnimationFrame(() => {
-            setSlide({ page: 0, content: cell.left, animate: true })
+            setSlide({ page: 0, animate: true })
           })
           return () => cancelAnimationFrame(frame)
         }
@@ -5957,7 +6010,7 @@ const thumbCache = new Map()
         if (phase === 'closing') {
           doorPhaseRef.current = 'closingNow'
           const frame = requestAnimationFrame(() => {
-            setSlide({ page: cell.left, content: -cell.left, animate: true })
+            setSlide({ page: cell.left, animate: true })
           })
           return () => cancelAnimationFrame(frame)
         }
@@ -5974,9 +6027,9 @@ const thumbCache = new Map()
           const cell = doorCellRef.current
           if (phase === 'opening') {
             doorPhaseRef.current = 'open'
-            // the graph never moved, so hand the offset to the view and drop the transform
+            // The canvas never moved: it is drawn in the window, so the sheet can slide over the
+            // sidebar without anything in the graph needing a correction.
             setSlide(null)
-            if (cell !== null) setView((current) => ({ ...current, x: current.x + cell.left }))
             syncShell()
             if (collapseAfterOpenRef.current === true) {
               collapseAfterOpenRef.current = false
@@ -5991,43 +6044,22 @@ const thumbCache = new Map()
             doorPhaseRef.current = 'idle'
             setSlide(null)
             setDoor(null)
-            if (cell !== null) setView((current) => ({ ...current, x: current.x - cell.left }))
             syncShell()
           }
         }, DOOR_MS + 60)
         return () => clearTimeout(timer)
       }, [slide])
 
-      // While the door travels the on-screen window changes shape, but React only holds the final
-      // view and size. Track the real geometry frame by frame so the overview box grows with it
-      // instead of jumping to its final shape and correcting later.
+      // While the door travels, the shell moves but its size does not change, so the resize
+      // observer stays quiet. Follow it frame by frame instead: the hole the canvas shows through
+      // and the overview's box both track the real geometry, not the final one.
       React.useLayoutEffect(() => {
         if (slide === null || slide.animate !== true) return undefined
-        const shell = shellRef.current
-        const rectEl = viewportRectRef.current
-        const geometry = miniGeomRef.current
-        if (shell === null || rectEl === null || geometry === null) return undefined
-
-        const view = viewRef.current
-        const start = shell.getBoundingClientRect()
-        // The graph is pinned for the whole slide, so its screen origin never moves.
-        const originX = start.left + view.x
-        const shellWidth = start.width
-        const windowRight = window.innerWidth
-        const height = start.height
-
         const paint = () => {
-          const box = shell.getBoundingClientRect()
-          const visibleLeft = Math.max(box.left, 0)
-          const visibleRight = Math.min(box.left + shellWidth, windowRight)
-          const pixelWidth = Math.max(1, visibleRight - visibleLeft)
-          const worldLeft = (visibleLeft - originX) / view.k
-          rectEl.setAttribute('x', String(geometry.ox + worldLeft * geometry.scale))
-          rectEl.setAttribute('y', String(geometry.oy + (-view.y / view.k) * geometry.scale))
-          rectEl.setAttribute('width', String(Math.max(4, (pixelWidth / view.k) * geometry.scale)))
-          rectEl.setAttribute('height', String(Math.max(4, (height / view.k) * geometry.scale)))
+          const current = viewRef.current
+          syncCanvasClip()
+          paintMinimapBox(current.x, current.y, current.k)
         }
-
         paint()
         let frame = requestAnimationFrame(function tick() {
           paint()
@@ -7125,8 +7157,8 @@ const thumbCache = new Map()
         if (graph.nodes.length === 0 || shellReady !== true || compact) return null
         // The box and the gate both come from the shell's own rect, read here; the resize observer
         // only reports the one crossing that has to change the tree.
-        const shellRect = shellRef.current === null ? null : shellRef.current.getBoundingClientRect()
-        if (shellRect === null) return null
+        if (shellRef.current === null) return null
+        const box = shellBox()
         const width = 168
         const height = 108
         const pad = 10
@@ -7137,14 +7169,12 @@ const thumbCache = new Map()
         const ox = (width - graphWidth * scale) / 2 - bounds.minX * scale
         const oy = (height - graphHeight * scale) / 2 - bounds.minY * scale
         miniGeomRef.current = { ox, oy, scale }
-        // The viewport box follows the shell's live rectangle, read in the same render.
-        const boxView = view
-        const boxSize = { w: shellRect.width, h: shellRect.height }
+        // The viewport box is the shell's rectangle in canvas coordinates, read in this render.
         const viewport = {
-          x: -boxView.x / boxView.k,
-          y: -boxView.y / boxView.k,
-          w: (boxSize.w > 0 ? boxSize.w : width) / boxView.k,
-          h: (boxSize.h > 0 ? boxSize.h : height) / boxView.k,
+          x: (box.left - view.x) / view.k,
+          y: (box.top - view.y) / view.k,
+          w: (box.w > 0 ? box.w : width) / view.k,
+          h: (box.h > 0 ? box.h : height) / view.k,
         }
         const children = graph.nodes.map((node) => h('rect', {
           key: node.id,
@@ -7198,8 +7228,14 @@ const thumbCache = new Map()
       // Derived from the door's slide state; everything below the toolbar reads these, so they
       // are computed first.
       const animating = slide !== null && slide.animate === true
-      const canvasShift = slide === null ? 0 : slide.content
       const pageShift = slide === null ? 0 : slide.page
+      // A transformed ancestor becomes the containing block of a fixed child, and the sheet is
+      // transformed for the whole door. The canvas is the one thing that must not travel with it,
+      // so it cancels exactly that transform — same value, same clock — and stays at the window
+      // origin in both states. Nothing else about a layout change ever reaches it.
+      const canvasCancel = door === null || pageShift === 0
+        ? 'none'
+        : 'translate(' + (-(door.left + pageShift)) + 'px, ' + (-door.top) + 'px)'
 
       /**
        * A window centred in the sheet: widening it by cell.left would move the centre by half of
@@ -7467,20 +7503,16 @@ const thumbCache = new Map()
         },
       }, [gridLayer, linksSvg, nodesLayer, overlaySvg, marqueeEl])
 
-      const canvasContent = h('div', {
-        key: 'content',
+      const canvasLayer = h('div', {
+        key: 'canvas-layer',
+        ref: canvasLayerRef,
         style: {
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          width: '100%',
-          height: '100%',
-          pointerEvents: 'none',
-          transform: canvasShift === 0 ? 'none' : 'translateX(' + canvasShift + 'px)',
+          ...S.canvasLayer,
+          transform: canvasCancel,
           willChange: animating ? 'transform' : 'auto',
           transition: animating ? 'transform ' + DOOR_MS + 'ms ease' : 'none',
         },
-      }, [graphLayer])
+      }, graphLayer)
       const shell = h('div', {
         key: 'shell',
         ref: shellRef,
@@ -7493,7 +7525,7 @@ const thumbCache = new Map()
         onPointerUp: onShellPointerUp,
         onPointerCancel: onShellPointerCancel,
         onContextMenu: onShellContextMenu,
-      }, [canvasContent, renderMinimap(), emptyEl, noticeEl, renderMenu(), renderProperties()])
+      }, [canvasLayer, renderMinimap(), emptyEl, noticeEl, renderMenu(), renderProperties()])
 
       // Where the menu is, in the only frame the panel has: the page. Everything else about it —
       // the band under it, both drag handles — is a calc() of these three variables, so a window
@@ -7570,9 +7602,9 @@ const thumbCache = new Map()
       }
 
       function clientToGraph(clientX, clientY) {
-        const shell = shellRef.current
-        if (shell === null) return null
-        const rect = shell.getBoundingClientRect()
+        const layer = canvasLayerRef.current
+        if (layer === null) return null
+        const rect = layer.getBoundingClientRect()
         const current = viewRef.current
         return {
           x: (clientX - rect.left - current.x) / current.k,
