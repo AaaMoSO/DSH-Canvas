@@ -2474,7 +2474,12 @@ const thumbCache = new Map()
       // A canvas draft from the previous session, applied only after the packs can validate it.
       const pendingDraftRef = React.useRef(readDraft())
       const runHideTimerRef = React.useRef(0)
-      const [size, setSize] = React.useState({ w: 0, h: 0 })
+      // Flipped once the shell has been measured: the canvas size itself is never kept in state,
+      // only the fact that a first paint has something to read.
+      const [shellReady, setShellReady] = React.useState(false)
+      // True while the shell is too small for the overview. Only the crossing re-renders; the
+      // canvas keeps no record of how large it is.
+      const [compact, setCompact] = React.useState(false)
       // While set, the panel is a fixed-position sheet sliding over the sidebar. The sidebar
       // itself never changes: the sheet covers it, which is also what makes it inert.
       const [door, setDoor] = React.useState(null)
@@ -2528,8 +2533,14 @@ const thumbCache = new Map()
         const observer = new ResizeObserver((entries) => {
           // The door resizes the sheet frame by frame; one sync at the end is enough.
           if (doorPhaseRef.current !== 'idle' && doorPhaseRef.current !== 'open') return
+          setShellReady((current) => (current === true ? current : true))
           const box = entries[0]?.contentRect
-          if (box !== undefined) setSize({ w: Math.round(box.width), h: Math.round(box.height) })
+          if (box !== undefined) {
+            const small = box.width < 460 || box.height < 300
+            setCompact((current) => (current === small ? current : small))
+          }
+          // The overview's box follows the shell without waiting for a render.
+          paintMinimapBox(viewRef.current.x, viewRef.current.y, viewRef.current.k)
           const left = shell.getBoundingClientRect().left
           const shift = shellLeftRef.current - left
           shellLeftRef.current = left
@@ -2547,9 +2558,18 @@ const thumbCache = new Map()
       function syncShell() {
         const shell = shellRef.current
         if (shell === null) return
+        shellLeftRef.current = shell.getBoundingClientRect().left
+      }
+
+      /**
+       * The canvas area as it is right now. Nothing caches it: every caller that needs a size asks
+       * for one and gets the rectangle the shell currently has, so no observer can fall behind.
+       */
+      function shellSize() {
+        const shell = shellRef.current
+        if (shell === null) return { w: 800, h: 600 }
         const rect = shell.getBoundingClientRect()
-        shellLeftRef.current = rect.left
-        setSize({ w: Math.round(rect.width), h: Math.round(rect.height) })
+        return { w: rect.width, h: rect.height }
       }
 
       React.useEffect(() => {
@@ -3370,10 +3390,11 @@ const thumbCache = new Map()
         const current = graphRef.current
         const currentView = viewRef.current
         const stagger = (current.nodes.length % 6) * 24
+        const area = shellSize()
         const point = at === undefined
           ? {
-              x: ((size.w > 0 ? size.w : 800) / 2 - currentView.x) / currentView.k + stagger,
-              y: ((size.h > 0 ? size.h : 600) / 2 - currentView.y) / currentView.k + stagger,
+              x: (area.w / 2 - currentView.x) / currentView.k + stagger,
+              y: (area.h / 2 - currentView.y) / currentView.k + stagger,
             }
           : at
         const node = nodeForType(entry, point)
@@ -3648,8 +3669,7 @@ const thumbCache = new Map()
 
       function fitView() {
         const nodes = graphRef.current.nodes
-        const width = size.w > 0 ? size.w : 800
-        const height = size.h > 0 ? size.h : 600
+        const { w: width, h: height } = shellSize()
         if (nodes.length === 0) {
           setView({ ...viewRef.current, x: 48, y: 48, k: 1 })
           return
@@ -4937,6 +4957,22 @@ const thumbCache = new Map()
       }
 
       /**
+       * Redraw the overview's viewport box for a view that is not committed yet. Called by the pan
+       * and by the resize observer, both of which move the canvas without a React render.
+       */
+      function paintMinimapBox(x, y, k) {
+        const rect = viewportRectRef.current
+        const geometry = miniGeomRef.current
+        if (rect === null || geometry === null) return
+        const { w: width, h: height } = shellSize()
+        const scale = geometry.scale
+        rect.setAttribute('x', String(geometry.ox + (-x / k) * scale))
+        rect.setAttribute('y', String(geometry.oy + (-y / k) * scale))
+        rect.setAttribute('width', String(Math.max(4, (width / k) * scale)))
+        rect.setAttribute('height', String(Math.max(4, (height / k) * scale)))
+      }
+
+      /**
        * Move the graph under the pointer without a React render. A pan touches one transform on
        * the graph layer (grid included) and the overview's viewport box — rebuilding the whole
        * graph on every pointermove is what made the drag trail the cursor.
@@ -4947,17 +4983,7 @@ const thumbCache = new Map()
         if (layer !== null) {
           layer.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)'
         }
-        const rect = viewportRectRef.current
-        const geometry = miniGeomRef.current
-        if (rect !== null && geometry !== null) {
-          const scale = geometry.scale
-          const width = size.w > 0 ? size.w : 0
-          const height = size.h > 0 ? size.h : 0
-          rect.setAttribute('x', String(geometry.ox + (-(current.x + dx) / current.k) * scale))
-          rect.setAttribute('y', String(geometry.oy + (-(current.y + dy) / current.k) * scale))
-          rect.setAttribute('width', String(Math.max(4, (width / current.k) * scale)))
-          rect.setAttribute('height', String(Math.max(4, (height / current.k) * scale)))
-        }
+        paintMinimapBox(current.x + dx, current.y + dy, current.k)
         // The grid sheet travels with the layer, so only the overview box needs updating here.
       }
 
@@ -5319,8 +5345,7 @@ const thumbCache = new Map()
         const x = (event.clientX - rect.left - geometry.ox) / geometry.scale
         const y = (event.clientY - rect.top - geometry.oy) / geometry.scale
         const current = viewRef.current
-        const width = size.w > 0 ? size.w : 800
-        const height = size.h > 0 ? size.h : 600
+        const { w: width, h: height } = shellSize()
         setView({ ...current, x: width / 2 - x * current.k, y: height / 2 - y * current.k })
       }
 
@@ -5821,7 +5846,7 @@ const thumbCache = new Map()
         const originX = start.left + view.x
         const shellWidth = start.width
         const windowRight = window.innerWidth
-        const height = size.h > 0 ? size.h : 0
+        const height = start.height
 
         const paint = () => {
           const box = shell.getBoundingClientRect()
@@ -6721,8 +6746,7 @@ const thumbCache = new Map()
         if (menu === null) return null
         const width = 192
         const height = menu.items.reduce((total, item) => total + (item.separator === true ? 9 : 26), 0) + 8
-        const areaW = size.w > 0 ? size.w : 800
-        const areaH = size.h > 0 ? size.h : 600
+        const { w: areaW, h: areaH } = shellSize()
         return h('div', {
           key: 'menu',
           role: 'menu',
@@ -6930,7 +6954,11 @@ const thumbCache = new Map()
       }
 
       function renderMinimap() {
-        if (graph.nodes.length === 0 || size.w < 460 || size.h < 300) return null
+        if (graph.nodes.length === 0 || shellReady !== true || compact) return null
+        // The box and the gate both come from the shell's own rect, read here; the resize observer
+        // only reports the one crossing that has to change the tree.
+        const shellRect = shellRef.current === null ? null : shellRef.current.getBoundingClientRect()
+        if (shellRect === null) return null
         const width = 168
         const height = 108
         const pad = 10
@@ -6941,11 +6969,9 @@ const thumbCache = new Map()
         const ox = (width - graphWidth * scale) / 2 - bounds.minX * scale
         const oy = (height - graphHeight * scale) / 2 - bounds.minY * scale
         miniGeomRef.current = { ox, oy, scale }
-        // The viewport box follows the shell's live rectangle, read in the same render: no measured
-        // snapshot sits between the layout and the overview any more.
-        const shellRect = shellRef.current === null ? null : shellRef.current.getBoundingClientRect()
+        // The viewport box follows the shell's live rectangle, read in the same render.
         const boxView = view
-        const boxSize = shellRect === null ? size : { w: shellRect.width, h: shellRect.height }
+        const boxSize = { w: shellRect.width, h: shellRect.height }
         const viewport = {
           x: -boxView.x / boxView.k,
           y: -boxView.y / boxView.k,
@@ -8305,7 +8331,7 @@ const thumbCache = new Map()
               flexDirection: 'column',
               alignItems: 'center',
               gap: '6px',
-              maxHeight: Math.max(80, (size.h > 0 ? size.h : 600) - 45 - 128) + 'px',
+              maxHeight: Math.max(80, shellSize().h - 173) + 'px',
               overflowY: 'auto',
               background: 'var(--dsw-alias-bg-layer-1)',
               border: '1px solid var(--dsw-alias-border-l2)',
