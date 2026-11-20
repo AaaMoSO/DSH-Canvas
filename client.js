@@ -7286,9 +7286,6 @@ const thumbCache = new Map()
       const runningNodeId = localRunning && localRun.current !== null && localRun.current !== undefined
         ? localRun.current.node
         : null
-      // A run handed to a backend still counts as this canvas running, so the button stops it.
-      const remoteRunning = remoteRun !== null && remoteRun.status === 'running'
-      const canvasRunning = localRunning === true || remoteRunning === true
 
       const toolbar = h('div', { key: 'toolbar', ref: toolbarRef, className: 'nc-toolbar-scroll', style: S.toolbar }, [
         h('button', {
@@ -7351,24 +7348,6 @@ const thumbCache = new Map()
             ...doorPinned(),
           },
         }, [
-          h('button', {
-            key: 'run',
-            type: 'button',
-            title: canvasRunning === true
-              ? (canvasDirty ? tr('canvas.stop') : tr('workflow.stop'))
-              : canvasDirty
-                ? tr('canvas.run')
-                : tr('canvas.runSaved', { name: currentWorkflow }),
-            'aria-label': canvasRunning === true
-              ? (canvasDirty ? tr('canvas.stop') : tr('workflow.stop'))
-              : canvasDirty
-                ? tr('canvas.run')
-                : tr('canvas.runSaved', { name: currentWorkflow }),
-            style: S.iconBtn,
-            onClick: () => {
-              void runCanvas()
-            },
-          }, Glyph(canvasRunning === true ? 'pause' : 'play', 13)),
           h('div', {
             key: 'status',
             style: {
