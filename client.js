@@ -35,6 +35,8 @@ function createRunController() {
   let backends = []
   let serviceTimer = 0
   let runsTimer = 0
+  // While a workflow runs, the poll speeds up so the highlighted node follows the executor.
+  let fastTimer = 0
   let runsSignature = ''
   let followToken = 0
   let started = false
@@ -178,12 +180,21 @@ function createRunController() {
       if (response.ok !== true) return
       const payload = await response.json()
       if (Array.isArray(payload.runs) !== true) return
-      // Polling must not repaint the panel when nothing moved.
-      const signature = payload.runs.map((run) => run.id + ':' + run.status + ':' + (run.finishedAt ?? 0)).join('|')
-      if (signature === runsSignature) return
-      runsSignature = signature
-      runs = payload.runs
-      emit()
+      // A running workflow also reports the node it is on, and only that may change between polls.
+      const signature = payload.runs.map((run) => run.id + ':' + run.status + ':' + (run.finishedAt ?? 0)
+        + ':' + (run.current === null || run.current === undefined ? '' : run.current.node)).join('|')
+      const running = payload.runs.some((run) => run.status === 'running')
+      if (signature !== runsSignature) {
+        runsSignature = signature
+        runs = payload.runs
+        emit()
+      }
+      if (running === true && fastTimer === 0) {
+        fastTimer = setTimeout(() => {
+          fastTimer = 0
+          void refreshRuns()
+        }, 250)
+      }
     } catch {
       // A Host that is not answering leaves the dots at their last state.
     }
@@ -205,6 +216,10 @@ function createRunController() {
     if (runsTimer !== 0) {
       clearInterval(runsTimer)
       runsTimer = 0
+    }
+    if (fastTimer !== 0) {
+      clearTimeout(fastTimer)
+      fastTimer = 0
     }
     followToken += 1
     if (serviceTimer !== 0) {
@@ -4121,6 +4136,8 @@ const thumbCache = new Map()
           const exclusive = entry !== undefined && entry.def.concurrency === 'exclusive'
           prompt[ids.get(node.id)] = {
             class_type: node.type.trim(),
+            // The canvas id travels with the prompt, so a live run can say which node it is on.
+            canvasId: node.id,
             inputs,
             // Concurrency is declared once, in the pack; the workflow does not copy it.
             ...(exclusive
@@ -6796,6 +6813,10 @@ const thumbCache = new Map()
             ...(muted ? { opacity: 0.45 } : null),
             ...(phantom === true ? { pointerEvents: 'none' } : null),
             ...(selected ? S.nodeSelected : null),
+            // The node the local executor is on right now: a live edge, not a stored state.
+            ...(phantom !== true && runningNodeId !== null && node.id === runningNodeId
+              ? { outline: '2px solid var(--dsw-alias-brand-primary)', outlineOffset: '1px' }
+              : null),
           },
           onPointerDown: (event) => onNodePointerDown(event, node),
           onDoubleClick: (event) => event.stopPropagation(),
@@ -7254,9 +7275,13 @@ const thumbCache = new Map()
         || baseline.name !== currentWorkflow || baseline.json !== canvasJson
       // A saved canvas runs as itself; a draft runs as the single temporary workflow.
       const canvasRunLabel = canvasDirty ? TEMP_RUN_LABEL : currentWorkflow
-      const localRunning = canvasRunLabel === null
-        ? false
-        : latestRun(canvasRunLabel)?.status === 'running'
+      const localRun = canvasRunLabel === null ? null : (latestRun(canvasRunLabel) ?? null)
+      const localRunning = localRun !== null && localRun.status === 'running'
+      // The graph node the local executor is on. Only a local run reports this: a mapped
+      // ComfyUI workflow runs somewhere else and has no per-node picture to offer.
+      const runningNodeId = localRunning && localRun.current !== null && localRun.current !== undefined
+        ? localRun.current.node
+        : null
       // A run handed to a backend still counts as this canvas running, so the button stops it.
       const remoteRunning = remoteRun !== null && remoteRun.status === 'running'
       const canvasRunning = localRunning === true || remoteRunning === true

@@ -276,6 +276,7 @@ export class Executor {
         error: run.error,
         startedAt: run.startedAt,
         finishedAt: run.finishedAt,
+        current: run.current ?? null,
       }))
   }
 
@@ -289,6 +290,7 @@ export class Executor {
       error: run.error,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
+      current: run.current ?? null,
       log: run.log,
     }
   }
@@ -349,6 +351,13 @@ export class Executor {
           inputs[name] = source[value[1]]
         }
         this.note(run, { type: 'node-start', node: id, classType: spec.class_type, at: Date.now() })
+        // What the canvas highlights: the node graph id when the caller supplied one, otherwise
+        // the prompt key it already knows.
+        run.current = {
+          node: typeof spec.canvasId === 'string' && spec.canvasId !== '' ? spec.canvasId : id,
+          classType: spec.class_type,
+          startedAt: Date.now(),
+        }
         // A node that cannot run twice at once claims its resource for the whole run, so a
         // second workflow queues instead of interleaving with it.
         if (spec.concurrency === 'exclusive') {
@@ -378,6 +387,7 @@ export class Executor {
         const returned = await program.run(inputs, context)
         const outputs = Array.isArray(returned) === true ? returned : [returned]
         values.set(id, outputs)
+        run.current = null
         this.note(run, { type: 'node-done', node: id, outputs: summarize(outputs), at: Date.now() })
       }
       run.status = 'done'
