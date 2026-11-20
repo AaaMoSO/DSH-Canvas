@@ -64,6 +64,26 @@ workflows/     saved workflows (v2: types + values, no definitions)
 locale/        plugin name/description shown by the harness
 ```
 
+## Reference frame
+
+The panel has exactly one coordinate system: the page rect. The canvas is an infinite plane
+(`view.x`, `view.y`, `zoom`) of which the shell shows one region; nothing else stores a position.
+
+The rules that keep it that way:
+
+- **No measured size in state.** Anything that needs the canvas area calls `shellSize()` and uses
+  the rectangle the shell has at that moment. The resize observer reports only a boolean crossing
+  (too small for the overview) and keeps the overview's box in sync imperatively.
+- **Derived geometry lives in CSS.** The library menu publishes `--nc-menu-top`, `-w` and `-split`
+  on the page; the band under it and both drag handles are `calc()` of those, so a window resize
+  never reaches JavaScript. A drag writes the variable directly and re-renders only on release.
+- **Chrome that must not move cancels the transform it rides.** During the fullscreen slide the
+  page translates by `pageShift`; the overview cancels it with the same value and the same
+  transition, so it stays put on screen without a second reference frame.
+- **The fullscreen sheet is measured against the viewport** when the panel is flush with the
+  window's right and bottom edges (`width: 100%`, `height: calc(100vh - top)`), so dragging a
+  window edge follows immediately instead of waiting for a new measurement.
+
 ## License
 
 No license file yet — add one before publishing if you intend others to reuse it.
