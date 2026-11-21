@@ -4650,6 +4650,7 @@ const thumbCache = new Map()
       React.useEffect(() => {
         if (activeSource === 'local') return
         if (extensionFeatures.backends.some((backend) => backend.id === activeSource)) return
+        if (extensionFeatures.sources.some((source) => source.id === activeSource)) return
         setActiveSource('local')
         try {
           localStorage.setItem(SOURCE_KEY, 'local')
