@@ -8737,13 +8737,19 @@ const thumbCache = new Map()
 
       /** One row of the menu's own column: a directory below, or the library unfolded in place. */
       const sectionRow = (section) => {
-        const unfolded = section.inline === true
-          ? (borrowed !== null ? nodesOpen === true : barSection === 'nodes')
+        // The chevron follows what is unfolded; the tint follows what owns the menu. A borrowing
+        // source can leave its libraries unfolded while another listing is examined, and then only
+        // that listing is lit — one row at the first level, never two.
+        const open = section.inline === true && borrowed !== null
+          ? nodesOpen === true
           : barSection === section.id
+        const lit = section.inline === true && borrowed !== null
+          ? nodesOpen === true && (barSection === 'nodes' || barSection === null)
+          : open
         return h('button', {
           key: 'section:' + section.id,
           type: 'button',
-          style: unfolded ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
+          style: lit ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
           onClick: () => {
             if (section.inline === true) {
               // A borrowing source unfolds its libraries here; one with packs of its own opens the
@@ -8780,7 +8786,7 @@ const thumbCache = new Map()
           h('span', {
             key: 'chevron',
             style: section.id === 'source' ? { ...S.typeChevron, marginLeft: '2px' } : S.typeChevron,
-          }, unfolded ? '▾' : '▸'),
+          }, open ? '▾' : '▸'),
         ])
       }
       const sectionRows = [
@@ -8872,7 +8878,10 @@ const thumbCache = new Map()
         for (const id of borrowed) {
           const library = sources.find((item) => item.id === id) ?? { id, name: id }
           const ready = libraryReady(id)
-          const shown = barSection === 'nodes' && librarySourceOpen === id
+          // The picked library keeps its tint even while another listing is on screen; only the
+          // chevron says whether its packs are the ones showing.
+          const picked = librarySourceOpen === id
+          const shown = barSection === 'nodes' && picked
           const list = packs.filter((pack) => sourceOfPack(pack) === id && packVisible(pack))
           const nodeCount = list.reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
           treeRows.push(h('button', {
@@ -8882,7 +8891,7 @@ const thumbCache = new Map()
             style: {
               ...S.typeRow,
               opacity: ready ? 1 : 0.55,
-              ...(shown ? S.typeRowActive : null),
+              ...(picked ? S.typeRowActive : null),
             },
             onClick: () => libraryClicked(id),
           }, [
