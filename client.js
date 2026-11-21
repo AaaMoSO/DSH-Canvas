@@ -1534,9 +1534,10 @@ const thumbCache = new Map()
 
     const localeListeners = new Set()
 
-    // The host's layout service, kept from `apply` so the panel can ask the sidebar to move.
-    // There is no read side: the plugin only ever calls `toggleSidebar()`.
-    let hostLayout = null
+    // The host's layout service, looked up through `apply`'s context whenever the sidebar has to
+    // move: an optional service can be registered after the plugin is applied, and asking for it
+    // once at apply time would leave every press doing nothing. There is no read side.
+    let hostLayoutOf = () => null
 
     function useLocaleRefresh() {
       const [, force] = React.useReducer((value) => value + 1, 0)
@@ -2868,6 +2869,8 @@ const thumbCache = new Map()
       const windowBusyRef = React.useRef(false)
       // Set by the press that opens the door: the sidebar goes away once the sheet covers it.
       const collapseAfterOpenRef = React.useRef(false)
+      // One warning is enough if the host offers no sidebar to move.
+      const sidebarWarnedRef = React.useRef(false)
       const settleFrameRef = React.useRef(0)
       // The host's slot element, kept so an unmount can still measure it.
       const slotElRef = React.useRef(null)
@@ -6827,12 +6830,16 @@ const thumbCache = new Map()
         return slot === null ? 0 : slot.getBoundingClientRect().left
       }
 
+      /** Ask the host to move its sidebar. False means there was nobody to ask. */
       function toggleHostSidebar() {
-        if (hostLayout === null) return
+        const layout = hostLayoutOf()
+        if (layout === null || typeof layout.toggleSidebar !== 'function') return false
         try {
-          hostLayout.toggleSidebar()
+          layout.toggleSidebar()
+          return true
         } catch {
           // The host refused; the sheet still closes to wherever the canvas actually ended up.
+          return false
         }
       }
 
@@ -6864,18 +6871,28 @@ const thumbCache = new Map()
        * its state implies, in order: grow the sheet to fullscreen and then put the sidebar away, or
        * bring the sidebar back and then shrink the sheet to the room it leaves.
        */
+      /**
+       * What a press means right now. The door's own phase decides before the window does: once the
+       * sheet is open, closing must not depend on the sidebar having moved, or one refused toggle
+       * would leave the sheet open forever with no way back.
+       */
+      function windowStep(phase, isFull, busy) {
+        if (busy === true) return 'busy'
+        if (phase === 'open') return 'close'
+        // A press while the sheet travels is ignored: the phase owns the animation, not the button.
+        if (phase !== 'idle') return 'busy'
+        if (isFull === true) return 'restore'
+        return 'open'
+      }
+
       function toggleWindowState() {
-        if (windowBusyRef.current === true) return
-        if (windowFull === true) {
+        const step = windowStep(doorPhaseRef.current, windowFull, windowBusyRef.current)
+        if (step === 'busy') return
+        if (step === 'close') {
+          // The sheet still covers the window, so the sidebar coming back is invisible. Wait for it
+          // to finish widening the slot, then travel back into the room it actually left.
           windowBusyRef.current = true
-          toggleHostSidebar()
-          if (doorPhaseRef.current !== 'open') {
-            // The canvas is already laid out across the window; only the sidebar has to come back.
-            windowBusyRef.current = false
-            return
-          }
-          // The sheet still covers the window, so the sidebar coming back is invisible. Wait for
-          // it to finish widening the slot, then travel back into the room it actually left.
+          if (toggleHostSidebar() === true) sidebarHiddenByUsRef.current = false
           waitSlotSettled((left) => {
             const cell = doorCellRef.current
             if (cell !== null) doorCellRef.current = { ...cell, left }
@@ -6886,13 +6903,12 @@ const thumbCache = new Map()
           })
           return
         }
-        if (doorPhaseRef.current === 'open') {
-          // The sheet is already open; what is left is putting the sidebar away.
-          sidebarHiddenByUsRef.current = true
+        if (step === 'restore') {
+          // The sidebar is away and no sheet covers the window: only the sidebar has to come back.
+          sidebarHiddenByUsRef.current = false
           toggleHostSidebar()
           return
         }
-        if (doorPhaseRef.current !== 'idle') return
         windowBusyRef.current = true
         collapseAfterOpenRef.current = true
         openDoor()
@@ -7000,9 +7016,14 @@ const thumbCache = new Map()
             syncShell()
             if (collapseAfterOpenRef.current === true) {
               collapseAfterOpenRef.current = false
-              // The sheet covers the sidebar now, so putting it away cannot be seen.
-              sidebarHiddenByUsRef.current = true
-              toggleHostSidebar()
+              // The sheet covers the sidebar now, so putting it away cannot be seen. A host that
+              // will not move it is not a reason to stay stuck; the door still opens and closes.
+              if (toggleHostSidebar() === true) {
+                sidebarHiddenByUsRef.current = true
+              } else if (sidebarWarnedRef.current !== true) {
+                sidebarWarnedRef.current = true
+                console.warn('[node-canvas] the host sidebar cannot be toggled; the sheet stays over it')
+              }
               windowBusyRef.current = false
             }
             return
@@ -10689,8 +10710,14 @@ const thumbCache = new Map()
         const runs = getRunController()
         runs.start()
         ctx.effect(() => () => runs.stop())
-        const layout = ctx.get('layout')
-        hostLayout = layout === undefined || layout === null ? null : layout
+        hostLayoutOf = () => {
+          try {
+            const layout = ctx.get('layout')
+            return layout === undefined || layout === null ? null : layout
+          } catch {
+            return null
+          }
+        }
         const locale = ctx.get('locale')
         if (locale !== undefined && locale !== null) {
           ctx.effect(() => {
