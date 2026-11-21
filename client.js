@@ -1244,7 +1244,7 @@ const thumbCache = new Map()
       'menu.resizeHeight': 'Drag to change the height split; double click restores it',
       'account.anonymous': 'Not signed in',
       'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
-      'library.sourceAll': 'All',
+      'library.sourceNodes': '{n} nodes',
       'source.local': 'Local',
       'source.counts': '{nodes} nodes · {workflows} workflows',
       'library.workflows.sourceEmpty': 'This source has no workflows yet.',
@@ -1446,7 +1446,7 @@ const thumbCache = new Map()
       'menu.resizeHeight': '拖动调整高度占比，双击恢复',
       'account.anonymous': '未登录',
       'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
-      'library.sourceAll': '全部',
+      'library.sourceNodes': '{n} 个节点',
       'source.local': '本地',
       'source.counts': '{nodes} 节点 · {workflows} 工作流',
       'library.workflows.sourceEmpty': '该源还没有工作流。',
@@ -1713,31 +1713,11 @@ const thumbCache = new Map()
         lineHeight: '1.5',
         color: 'var(--dsw-alias-label-secondary)',
       },
-      libraryPick: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '4px',
-        padding: '2px 2px 6px',
-      },
-      libraryChip: {
-        padding: '1px 8px',
-        font: 'inherit',
-        fontSize: '11px',
-        lineHeight: '16px',
-        background: 'transparent',
-        border: '1px solid color-mix(in srgb, var(--dsw-alias-label-secondary) 26%, transparent)',
-        borderRadius: '9px',
-        color: 'var(--dsw-alias-label-secondary)',
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-      },
-      libraryChipActive: {
-        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent)',
-        borderColor: 'transparent',
-        color: 'var(--dsw-alias-brand-primary)',
-      },
-      libraryChipOffline: {
-        opacity: 0.5,
+      // The guide line that makes the unfolded library read as a tree under the menu's rows.
+      libraryTree: {
+        padding: '0 0 2px 8px',
+        marginLeft: '4px',
+        borderLeft: '1px solid var(--dsw-alias-border-l1)',
       },
       packHeader: {
         padding: '8px 4px 4px',
@@ -2721,8 +2701,10 @@ const thumbCache = new Map()
       // Which library column 1 points at, and which pack is unfolded in column 2.
       const [barSection, setBarSection] = useStored('barSection', null)
       const [openPack, setOpenPack] = useStored('openPack', null)
-      // Which library a borrowing source's node library shows; 'all' means every one it borrows from.
-      const [librarySource, setLibrarySource] = useStored('librarySource', 'all')
+      // The node library unfolds in the menu's own column instead of a band under it; inside the
+      // tree, `librarySourceOpen` is the borrowed library that is unfolded.
+      const [nodesOpen, setNodesOpen] = useStored('nodesOpen', false)
+      const [librarySourceOpen, setLibrarySourceOpen] = useStored('librarySourceOpen', null)
       // While the band retracts it stays mounted, so the reverse animation has something to play.
       const [bandClosing, setBandClosing] = React.useState(false)
       // The node a library row is pointing at; shown as a miniature beside the band.
@@ -6757,6 +6739,14 @@ const thumbCache = new Map()
         }, BAND_MS + 40)
       }
 
+      /** Unfold the node library into the menu's own column, closing the band if it was open. */
+      function openLibrary() {
+        if (barSection !== null) closeBand()
+        setNodePreview(null)
+        setOpenPack(null)
+        setNodesOpen(true)
+      }
+
       function selectSource(id) {
         if (id === activeSource) return
         setActiveSource(id)
@@ -6766,6 +6756,7 @@ const thumbCache = new Map()
           // The choice only has to survive a reload; a full storage simply forgets it.
         }
         setOpenPack(null)
+        setLibrarySourceOpen(null)
         setNodePreview(null)
         if (id !== 'local') {
           void loadBackendWorkflows(id)
@@ -8680,50 +8671,61 @@ const thumbCache = new Map()
           order: typeof source.order === 'number' ? source.order : 50,
         })),
       ]
+      /** One row of the menu's own column: a directory below, or the library unfolded in place. */
+      const sectionRow = (section) => {
+        const unfolded = section.inline === true ? nodesOpen === true : barSection === section.id
+        return h('button', {
+          key: 'section:' + section.id,
+          type: 'button',
+          style: unfolded ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
+          onClick: () => {
+            if (section.inline === true) {
+              if (nodesOpen === true) setNodesOpen(false)
+              else openLibrary()
+              return
+            }
+            if (nodesOpen === true) setNodesOpen(false)
+            if (barSection === section.id && bandClosing !== true) {
+              closeBand()
+              return
+            }
+            // Switching libraries keeps the band open and only swaps its content.
+            openBand(section.id)
+          },
+        }, [
+          h('span', { key: 'label', style: S.typeName }, section.label),
+          // Which source is in use: its own icon, or the account avatar for Local.
+          section.id === 'source'
+            ? h('span', { key: 'current', style: S.sourceCurrent }, [
+                activeSource === 'local'
+                  ? avatarGlyph(15, false)
+                  : (() => {
+                      const extension = extensions.find((item) => item.id === activeSource)
+                      return extension !== undefined && typeof extension.icon === 'string' && extension.icon !== ''
+                        ? h('img', {
+                            key: 'icon',
+                            src: extensionIconUrl(extension),
+                            alt: '',
+                            draggable: false,
+                            style: S.sourceCurrentIcon,
+                          })
+                        : h('span', { key: 'dot', style: { ...S.sourceCurrentIcon, background: 'currentColor', opacity: 0.5 } })
+                    })(),
+                h('span', { key: 'name', style: S.sourceCurrentName },
+                  (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name),
+              ])
+            : null,
+          h('span', {
+            key: 'chevron',
+            style: section.id === 'source' ? { ...S.typeChevron, marginLeft: '2px' } : S.typeChevron,
+          }, unfolded ? '▾' : '▸'),
+        ])
+      }
       const sectionRows = [
-        { id: 'source', label: tr('library.section.source') },
-        { id: 'nodes', label: tr('library.section.nodes') },
-        { id: 'workflows', label: tr('library.section.workflows') },
-      ].map((section) => h('button', {
-        key: 'section:' + section.id,
-        type: 'button',
-        style: barSection === section.id ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
-        onClick: () => {
-          if (barSection === section.id && bandClosing !== true) {
-            closeBand()
-            return
-          }
-          // Switching libraries keeps the band open and only swaps its content.
-          openBand(section.id)
-        },
-      }, [
-        h('span', { key: 'label', style: S.typeName }, section.label),
-        // Which source is in use: its own icon, or the account avatar for Local.
-        section.id === 'source'
-          ? h('span', { key: 'current', style: S.sourceCurrent }, [
-              activeSource === 'local'
-                ? avatarGlyph(15, false)
-                : (() => {
-                    const extension = extensions.find((item) => item.id === activeSource)
-                    return extension !== undefined && typeof extension.icon === 'string' && extension.icon !== ''
-                      ? h('img', {
-                          key: 'icon',
-                          src: extensionIconUrl(extension),
-                          alt: '',
-                          draggable: false,
-                          style: S.sourceCurrentIcon,
-                        })
-                      : h('span', { key: 'dot', style: { ...S.sourceCurrentIcon, background: 'currentColor', opacity: 0.5 } })
-                  })(),
-              h('span', { key: 'name', style: S.sourceCurrentName },
-                (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name),
-            ])
-          : null,
-        h('span', {
-          key: 'chevron',
-          style: section.id === 'source' ? { ...S.typeChevron, marginLeft: '2px' } : S.typeChevron,
-        }, barSection === section.id ? '▾' : '▸'),
-      ]))
+        sectionRow({ id: 'source', label: tr('library.section.source') }),
+        sectionRow({ id: 'nodes', label: tr('library.section.nodes'), inline: true }),
+        sectionRow({ id: 'workflows', label: tr('library.section.workflows') }),
+      ]
 
       /**
        * Which libraries a source's node library draws from. `null` means only its own; an array is
@@ -8753,94 +8755,119 @@ const thumbCache = new Map()
         return id === 'local' || isServiceReady(id) === true
       }
 
-      const packRows = []
-      const activeRegistered = sourceOfHome(activeSource)
-      // A source may keep no nodes of its own and borrow them instead; `nodes` says from which
-      // libraries, and the chips narrow that down to one at a time.
-      const borrowed = borrowedNodesOf(activeRegistered, sources)
-      const borrowPick = borrowed !== null && borrowed.includes(librarySource) ? librarySource : 'all'
-      if (borrowed !== null && borrowed.length === 0) {
-        packRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
-      }
-      if (borrowed !== null && borrowed.length > 1) {
-        packRows.push(h('div', { key: 'pack-pick', style: S.libraryPick },
-          ['all', ...borrowed].map((id) => {
-            const on = borrowPick === id
-            const offline = id !== 'all' && libraryReady(id) !== true
-            const label = id === 'all'
-              ? tr('library.sourceAll')
-              : (sources.find((item) => item.id === id)?.name ?? id)
-            return h('button', {
-              key: 'pick:' + id,
-              type: 'button',
-              title: offline ? tr('library.sourceOffline') : label,
-              style: {
-                ...S.libraryChip,
-                ...(on ? S.libraryChipActive : null),
-                ...(offline ? S.libraryChipOffline : null),
-              },
-              onClick: () => setLibrarySource(id),
-            }, offline ? '○ ' + label : label)
-          })))
-      }
-      const packSourceWanted = (owner) => (borrowed === null
-        ? owner === activeSource
-        : (borrowed.includes(owner) === true && (borrowPick === 'all' || owner === borrowPick)))
-      let packCount = 0
-      for (const pack of packs.filter((item) => packSourceWanted(sourceOfPack(item)) && packVisible(item))) {
-        packCount += 1
-        const expanded = openPack === pack.id
-        packRows.push(h('button', {
-          key: 'pack:' + pack.id,
-          type: 'button',
-          style: S.typeRow,
-          onClick: () => setOpenPack(expanded ? null : pack.id),
-        }, [
-          h('span', { key: 'name', style: S.typeName }, pack.name),
-          h('span', { key: 'chevron', style: S.typeChevron }, expanded ? '▾' : '▸'),
-        ]))
-        if (expanded !== true) continue
-        if (typeof pack.error === 'string' && pack.error !== '') {
-          packRows.push(h('div', { key: 'pack-error:' + pack.id, style: S.libraryHint }, pack.error))
-        }
-        for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
-          const entry = { def, pack }
-          packRows.push(h('button', {
-            key: 'node:' + pack.id + ':' + def.type,
+      /**
+       * One pack with its nodes, unfolded in place. `depth` is how many folds down it sits, so the
+       * tree reads as a tree instead of everything at once.
+       */
+      function libraryPackRows(list, depth) {
+        const rows = []
+        const indent = (level) => (level === 0 ? null : { paddingLeft: 6 + level * 12 + 'px' })
+        for (const pack of list) {
+          const expanded = openPack === pack.id
+          rows.push(h('button', {
+            key: 'pack:' + pack.id,
             type: 'button',
-            title: def.type,
-            style: S.nodeRow,
-            onPointerDown: (event) => startNodeDrag(event, entry),
-            onPointerMove: moveNodeDrag,
-            onPointerUp: (event) => endNodeDrag(event, false),
-            onPointerCancel: (event) => endNodeDrag(event, true),
-            onPointerEnter: (event) => {
-              if (nodeDragRef.current === null) showNodePreview(event, def)
-            },
-            onPointerLeave: () => {
-              if (nodeDragRef.current === null) setNodePreview(null)
-            },
+            title: pack.name,
+            style: { ...S.typeRow, ...indent(depth) },
+            onClick: () => setOpenPack(expanded ? null : pack.id),
           }, [
-            h('span', { key: 'name', style: S.nodeName }, [
-              h('span', { key: 'dot', style: S.nodeDot }),
-              h('span', { key: 'text' }, def.display_name || def.type),
-            ]),
+            h('span', { key: 'name', style: S.typeName }, pack.name),
+            h('span', { key: 'chevron', style: S.typeChevron }, expanded ? '▾' : '▸'),
           ]))
+          if (expanded !== true) continue
+          if (typeof pack.error === 'string' && pack.error !== '') {
+            rows.push(h('div', {
+              key: 'pack-error:' + pack.id,
+              style: { ...S.libraryHint, ...indent(depth + 1) },
+            }, pack.error))
+          }
+          for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
+            const entry = { def, pack }
+            rows.push(h('button', {
+              key: 'node:' + pack.id + ':' + def.type,
+              type: 'button',
+              title: def.type,
+              style: { ...S.nodeRow, ...indent(depth + 1) },
+              onPointerDown: (event) => startNodeDrag(event, entry),
+              onPointerMove: moveNodeDrag,
+              onPointerUp: (event) => endNodeDrag(event, false),
+              onPointerCancel: (event) => endNodeDrag(event, true),
+              onPointerEnter: (event) => {
+                if (nodeDragRef.current === null) showNodePreview(event, def)
+              },
+              onPointerLeave: () => {
+                if (nodeDragRef.current === null) setNodePreview(null)
+              },
+            }, [
+              h('span', { key: 'name', style: S.nodeName }, [
+                h('span', { key: 'dot', style: S.nodeDot }),
+                h('span', { key: 'text' }, def.display_name || def.type),
+              ]),
+            ]))
+          }
+        }
+        return rows
+      }
+
+      const treeRows = []
+      const activeRegistered = sourceOfHome(activeSource)
+      // A source may keep no nodes of its own and borrow them instead: its tree starts with the
+      // libraries it borrows, one fold each. A source with packs of its own just lists them.
+      const borrowed = borrowedNodesOf(activeRegistered, sources)
+      if (packsReady !== true) {
+        treeRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
+      } else if (borrowed !== null && borrowed.length === 0) {
+        treeRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
+      } else if (borrowed !== null) {
+        for (const id of borrowed) {
+          const library = sources.find((item) => item.id === id) ?? { id, name: id }
+          const ready = libraryReady(id)
+          const list = packs.filter((pack) => sourceOfPack(pack) === id && packVisible(pack))
+          const expanded = librarySourceOpen === id
+          const nodeCount = list.reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
+          treeRows.push(h('button', {
+            key: 'library:' + id,
+            type: 'button',
+            title: ready ? library.name : tr('library.sourceOffline'),
+            style: { ...S.typeRow, opacity: ready ? 1 : 0.55 },
+            onClick: () => setLibrarySourceOpen(expanded ? null : id),
+          }, [
+            h('span', { key: 'name', style: S.typeName }, (ready ? '' : '○ ') + library.name),
+            h('span', {
+              key: 'count',
+              style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
+            }, tr('library.sourceNodes', { n: nodeCount })),
+            h('span', { key: 'chevron', style: S.typeChevron }, expanded ? '▾' : '▸'),
+          ]))
+          if (expanded !== true) continue
+          if (list.length === 0) {
+            treeRows.push(h('div', {
+              key: 'pack-empty:' + id,
+              style: { ...S.libraryHint, paddingLeft: '18px' },
+            }, ready ? tr('library.sourceEmpty') : tr('library.sourceOffline')))
+            continue
+          }
+          treeRows.push(...libraryPackRows(list, 1))
+        }
+      } else {
+        const list = packs.filter((pack) => sourceOfPack(pack) === activeSource && packVisible(pack))
+        if (list.length === 0) {
+          treeRows.push(h('div', {
+            key: 'pack-empty',
+            style: S.libraryHint,
+          }, activeSource === 'local'
+            ? tr('library.empty')
+            : (libraryReady(activeSource) === true ? tr('library.sourceEmpty') : tr('library.sourceOffline'))))
+        } else {
+          treeRows.push(...libraryPackRows(list, 0))
         }
       }
-      if (packsReady !== true) {
-        packRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
-      } else if (packCount === 0 && (borrowed === null || borrowed.length > 0)) {
-        const offline = borrowPick !== 'all' && libraryReady(borrowPick) !== true
-        packRows.push(h('div', {
-          key: 'pack-empty',
-          style: S.libraryHint,
-        }, offline
-          ? tr('library.sourceOffline')
-          : borrowed !== null && borrowPick !== 'all'
-            ? tr('library.sourceEmpty')
-            : activeSource === 'local' ? tr('library.empty') : tr('library.sourceEmpty')))
-      }
+
+      // Unfolded into the menu's own column, beside the rows that lead to the listings below.
+      const libraryEl = nodesOpen !== true ? null : h('div', {
+        key: 'node-library',
+        style: S.libraryTree,
+      }, treeRows)
 
       /** The one-word state a library row reports for a document it holds. */
       function readingCapsule(item) {
@@ -9206,16 +9233,9 @@ const thumbCache = new Map()
         + 'box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 2px 10px rgba(0,0,0,0.14)!important}'
         + '.nc-resize-x:active,.nc-resize-y:active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent)}')
 
-      // The selected library fills the room under the menu, spanning the same width.
-      const packEmptyRow = h('div', { key: 'pack-empty', style: S.libraryHint },
-        activeSource === 'local'
-          ? tr('library.empty')
-          : (isServiceReady(activeSource) === true
-            ? tr('library.sourceEmpty')
-            : tr('library.sourceOffline')))
-      const submenuRows = barSection === 'nodes'
-        ? (packRows.length === 0 ? [packEmptyRow] : packRows)
-        : (barSection === 'workflows' ? workflowRows : sourceRows)
+      // The band below the menu carries the directory listings; the node library unfolds in the
+      // menu itself, so it needs no third band.
+      const submenuRows = barSection === 'workflows' ? workflowRows : sourceRows
 
       /** The miniature itself: ports on both sides, widget bars underneath. */
       function previewRows(def) {
@@ -9249,6 +9269,14 @@ const thumbCache = new Map()
         }
         return rows
       }
+
+      // The menu's column: its rows, with the node library unfolding under the row that leads to it.
+      const menuRows = [
+        sectionRows[0],
+        sectionRows[1],
+        libraryEl,
+        sectionRows[2],
+      ]
 
       const barMenuEl = barMenu === null
         ? null
@@ -9292,7 +9320,7 @@ const thumbCache = new Map()
               if (event.target !== event.currentTarget) return
               if (barMenu.closing === true) settleBarMenu()
             },
-          }, sectionRows))
+          }, menuRows))
 
       const resizeWidthEl = barMenu === null || barMenu.open !== true
         ? null
