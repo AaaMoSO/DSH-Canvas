@@ -145,7 +145,8 @@ api.registerSource({
   没声明导入的源，工作流库底部不会出现导入虚线框；本地由画布内置的读取器负责（同样只读画布自己的文档格式）；
 - **菜单归声明它的那个源画**：声明了 `menu.items` 的源（注册源或同名的后端都行），主菜单对应那一行下面是它
   `rows()` 生成的行，子菜单是它 `panel()` 生成的行；没声明的源保持画布默认的行，一行都不会多；
-  `ctx.workflowRows()` 给出画布原本那份工作流列表，想在它基础上加东西的源直接拿来拼即可；
+  工作流那一行可以用 `ctx.workflowList() / workflowHints() / workflowSlots()` 把画布原本的列表拆开重拼，
+  用 `ctx.isCurrent(name)` 判断哪个是画布正在打开的文档；
 - `ctx` 给选行的料和拼行的件：`sources / packsOf(id) / readyOf(id) / sourceIcon(id, size) / tr /
   picked / pick(id)`，行用 `pickRow(id, { label, ready, note }) / packRow(pack) / packOpen(pack) /
   nodeRow(pack, def) / hint(text) / header(text)` 拼。节点行自带拖拽、悬停预览和展开状态，

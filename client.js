@@ -8894,8 +8894,13 @@ const thumbCache = new Map()
         readyOf: (id) => libraryReady(id) === true,
         sourceIcon,
         picked: librarySourceOpen,
-        /** The canvas' own workflow list for the active source, for an item that extends it. */
+        /** The canvas' own workflow list for the active source, whole or in its three parts. */
         workflowRows: () => workflowRows,
+        workflowList: () => workflowRows.slice(0, workflowHintAt),
+        workflowHints: () => workflowRows.slice(workflowHintAt, workflowSlotAt),
+        workflowSlots: () => workflowRows.slice(workflowSlotAt),
+        /** Whether this name is the document the canvas currently has open. */
+        isCurrent: (name) => currentWorkflow === name,
         pick: (id) => libraryClicked(id),
         ...libraryRows,
       }
@@ -9329,6 +9334,8 @@ const thumbCache = new Map()
             : null,
         ]))
       }
+      // Where the lines that are not list rows begin: a source composing its own panel needs them.
+      const workflowHintAt = workflowRows.length
       if (activeSource === 'local' && workflowsReady !== true) {
         workflowRows.push(h('div', { key: 'workflow-loading', style: S.libraryHint }, tr('library.loading')))
       } else if (workflowRows.length === 0) {
@@ -9337,6 +9344,7 @@ const thumbCache = new Map()
           : (isServiceReady(activeSource) === true ? tr('library.workflows.sourceEmpty') : tr('library.sourceOffline'))
         workflowRows.push(h('div', { key: 'workflow-empty', style: S.libraryHint }, hint))
       }
+      const workflowSlotAt = workflowRows.length
       // The bottom of the list: a dashed slot that starts a new workflow. Its plus becomes a
       // confirm/cancel pair, so a stray click never leaves an empty workflow behind.
       if (canStartWorkflow(activeSource) === true) {

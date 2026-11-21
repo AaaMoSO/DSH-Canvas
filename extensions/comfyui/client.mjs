@@ -315,7 +315,13 @@ const backend = {
     items: [{
       id: 'workflows',
       panel(context) {
-        return context.workflowRows()
+        // The rows this source has, then the lines that explain an empty list, then the two dashed
+        // slots. Composed here, so what this row shows is this extension's to change.
+        return [
+          ...context.workflowList(),
+          ...context.workflowHints(),
+          ...context.workflowSlots(),
+        ]
       },
     }],
   },
