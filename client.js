@@ -1245,6 +1245,7 @@ const thumbCache = new Map()
       'account.anonymous': 'Not signed in',
       'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
       'library.sourceNodes': '{n} nodes',
+      'library.pickSource': 'Pick a library above to list its packs.',
       'source.local': 'Local',
       'source.counts': '{nodes} nodes · {workflows} workflows',
       'library.workflows.sourceEmpty': 'This source has no workflows yet.',
@@ -1447,6 +1448,7 @@ const thumbCache = new Map()
       'account.anonymous': '未登录',
       'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
       'library.sourceNodes': '{n} 个节点',
+      'library.pickSource': '先在上面选一个源，这里列它的节点包。',
       'source.local': '本地',
       'source.counts': '{nodes} 节点 · {workflows} 工作流',
       'library.workflows.sourceEmpty': '该源还没有工作流。',
@@ -6739,12 +6741,13 @@ const thumbCache = new Map()
         }, BAND_MS + 40)
       }
 
-      /** Unfold the node library into the menu's own column, closing the band if it was open. */
-      function openLibrary() {
-        if (barSection !== null) closeBand()
+      /** Pick a library in the menu and show its packs in the band below it. */
+      function openLibrary(id) {
         setNodePreview(null)
         setOpenPack(null)
         setNodesOpen(true)
+        setLibrarySourceOpen(id)
+        openBand('nodes')
       }
 
       function selectSource(id) {
@@ -8672,16 +8675,38 @@ const thumbCache = new Map()
         })),
       ]
       /** One row of the menu's own column: a directory below, or the library unfolded in place. */
+      const activeRegistered = sourceOfHome(activeSource)
+      // A source may keep no nodes of its own and borrow them instead. The menu then unfolds only
+      // as far as the libraries it borrows; a click picks one and its packs wait in the band below.
+      const borrowed = borrowedNodesOf(activeRegistered, sources)
+
       const sectionRow = (section) => {
-        const unfolded = section.inline === true ? nodesOpen === true : barSection === section.id
+        const unfolded = section.inline === true
+          ? (borrowed !== null ? nodesOpen === true : barSection === 'nodes')
+          : barSection === section.id
         return h('button', {
           key: 'section:' + section.id,
           type: 'button',
           style: unfolded ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
           onClick: () => {
             if (section.inline === true) {
-              if (nodesOpen === true) setNodesOpen(false)
-              else openLibrary()
+              // A borrowing source unfolds its libraries here; one with packs of its own opens the
+              // band below straight away, because there is nothing to choose first.
+              if (borrowed !== null) {
+                if (nodesOpen === true) {
+                  setNodesOpen(false)
+                  if (barSection === 'nodes') closeBand()
+                } else {
+                  setNodesOpen(true)
+                  if (librarySourceOpen !== null) openLibrary(librarySourceOpen)
+                }
+                return
+              }
+              if (barSection === 'nodes' && bandClosing !== true) {
+                closeBand()
+                return
+              }
+              openBand('nodes')
               return
             }
             if (nodesOpen === true) setNodesOpen(false)
@@ -8756,19 +8781,18 @@ const thumbCache = new Map()
       }
 
       /**
-       * One pack with its nodes, unfolded in place. `depth` is how many folds down it sits, so the
-       * tree reads as a tree instead of everything at once.
+       * One pack with its nodes, unfolded in place. The band under the menu holds these, so they are
+       * a flat list: the row above already says which library they belong to.
        */
-      function libraryPackRows(list, depth) {
+      function libraryPackRows(list) {
         const rows = []
-        const indent = (level) => (level === 0 ? null : { paddingLeft: 6 + level * 12 + 'px' })
         for (const pack of list) {
           const expanded = openPack === pack.id
           rows.push(h('button', {
             key: 'pack:' + pack.id,
             type: 'button',
             title: pack.name,
-            style: { ...S.typeRow, ...indent(depth) },
+            style: S.typeRow,
             onClick: () => setOpenPack(expanded ? null : pack.id),
           }, [
             h('span', { key: 'name', style: S.typeName }, pack.name),
@@ -8776,10 +8800,7 @@ const thumbCache = new Map()
           ]))
           if (expanded !== true) continue
           if (typeof pack.error === 'string' && pack.error !== '') {
-            rows.push(h('div', {
-              key: 'pack-error:' + pack.id,
-              style: { ...S.libraryHint, ...indent(depth + 1) },
-            }, pack.error))
+            rows.push(h('div', { key: 'pack-error:' + pack.id, style: S.libraryHint }, pack.error))
           }
           for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
             const entry = { def, pack }
@@ -8787,7 +8808,7 @@ const thumbCache = new Map()
               key: 'node:' + pack.id + ':' + def.type,
               type: 'button',
               title: def.type,
-              style: { ...S.nodeRow, ...indent(depth + 1) },
+              style: S.nodeRow,
               onPointerDown: (event) => startNodeDrag(event, entry),
               onPointerMove: moveNodeDrag,
               onPointerUp: (event) => endNodeDrag(event, false),
@@ -8810,64 +8831,66 @@ const thumbCache = new Map()
       }
 
       const treeRows = []
-      const activeRegistered = sourceOfHome(activeSource)
-      // A source may keep no nodes of its own and borrow them instead: its tree starts with the
-      // libraries it borrows, one fold each. A source with packs of its own just lists them.
-      const borrowed = borrowedNodesOf(activeRegistered, sources)
-      if (packsReady !== true) {
-        treeRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
-      } else if (borrowed !== null && borrowed.length === 0) {
-        treeRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
-      } else if (borrowed !== null) {
+      if (borrowed !== null) {
         for (const id of borrowed) {
           const library = sources.find((item) => item.id === id) ?? { id, name: id }
           const ready = libraryReady(id)
+          const shown = barSection === 'nodes' && librarySourceOpen === id
           const list = packs.filter((pack) => sourceOfPack(pack) === id && packVisible(pack))
-          const expanded = librarySourceOpen === id
           const nodeCount = list.reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
           treeRows.push(h('button', {
             key: 'library:' + id,
             type: 'button',
             title: ready ? library.name : tr('library.sourceOffline'),
-            style: { ...S.typeRow, opacity: ready ? 1 : 0.55 },
-            onClick: () => setLibrarySourceOpen(expanded ? null : id),
+            style: {
+              ...S.typeRow,
+              opacity: ready ? 1 : 0.55,
+              ...(shown ? S.typeRowActive : null),
+            },
+            onClick: () => openLibrary(id),
           }, [
             h('span', { key: 'name', style: S.typeName }, (ready ? '' : '○ ') + library.name),
             h('span', {
               key: 'count',
               style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
             }, tr('library.sourceNodes', { n: nodeCount })),
-            h('span', { key: 'chevron', style: S.typeChevron }, expanded ? '▾' : '▸'),
+            h('span', { key: 'chevron', style: S.typeChevron }, shown ? '▾' : '▸'),
           ]))
-          if (expanded !== true) continue
-          if (list.length === 0) {
-            treeRows.push(h('div', {
-              key: 'pack-empty:' + id,
-              style: { ...S.libraryHint, paddingLeft: '18px' },
-            }, ready ? tr('library.sourceEmpty') : tr('library.sourceOffline')))
-            continue
-          }
-          treeRows.push(...libraryPackRows(list, 1))
         }
-      } else {
-        const list = packs.filter((pack) => sourceOfPack(pack) === activeSource && packVisible(pack))
-        if (list.length === 0) {
-          treeRows.push(h('div', {
-            key: 'pack-empty',
-            style: S.libraryHint,
-          }, activeSource === 'local'
-            ? tr('library.empty')
-            : (libraryReady(activeSource) === true ? tr('library.sourceEmpty') : tr('library.sourceOffline'))))
-        } else {
-          treeRows.push(...libraryPackRows(list, 0))
+        if (borrowed.length === 0) {
+          treeRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
         }
       }
-
-      // Unfolded into the menu's own column, beside the rows that lead to the listings below.
-      const libraryEl = nodesOpen !== true ? null : h('div', {
+      // Only the libraries unfold in the menu itself.
+      const libraryEl = nodesOpen !== true || borrowed === null ? null : h('div', {
         key: 'node-library',
         style: S.libraryTree,
       }, treeRows)
+
+      // The band below lists the packs of the library that was picked in the menu.
+      const libraryShown = borrowed === null ? activeSource : librarySourceOpen
+      const packRows = []
+      if (packsReady !== true) {
+        packRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
+      } else if (borrowed !== null && libraryShown === null) {
+        packRows.push(h('div', { key: 'pack-pick', style: S.libraryHint }, tr('library.pickSource')))
+      } else if (libraryShown !== null) {
+        if (borrowed !== null) {
+          const library = sources.find((item) => item.id === libraryShown) ?? { id: libraryShown, name: libraryShown }
+          packRows.push(h('div', { key: 'pack-library', style: S.packHeader }, library.name))
+        }
+        const list = packs.filter((pack) => sourceOfPack(pack) === libraryShown && packVisible(pack))
+        if (list.length === 0) {
+          packRows.push(h('div', {
+            key: 'pack-empty',
+            style: S.libraryHint,
+          }, libraryShown === 'local'
+            ? tr('library.empty')
+            : (libraryReady(libraryShown) === true ? tr('library.sourceEmpty') : tr('library.sourceOffline'))))
+        } else {
+          packRows.push(...libraryPackRows(list))
+        }
+      }
 
       /** The one-word state a library row reports for a document it holds. */
       function readingCapsule(item) {
@@ -9233,9 +9256,11 @@ const thumbCache = new Map()
         + 'box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 2px 10px rgba(0,0,0,0.14)!important}'
         + '.nc-resize-x:active,.nc-resize-y:active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent)}')
 
-      // The band below the menu carries the directory listings; the node library unfolds in the
-      // menu itself, so it needs no third band.
-      const submenuRows = barSection === 'workflows' ? workflowRows : sourceRows
+      // The band below the menu carries the directory listings, and the packs of the library the
+      // menu picked.
+      const submenuRows = barSection === 'nodes'
+        ? packRows
+        : (barSection === 'workflows' ? workflowRows : sourceRows)
 
       /** The miniature itself: ports on both sides, widget bars underneath. */
       function previewRows(def) {
