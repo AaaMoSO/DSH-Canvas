@@ -26,8 +26,11 @@ export function setup(api) {
     id: 'mixed',
     name: 'Mixed',
     order: 45,
-    /** No node library: the nodes come from the libraries of the sources they belong to. */
-    nodes: 'none',
+    /**
+     * The nodes come from the libraries of the sources they belong to, so the library here borrows
+     * from all of them and can be narrowed to one at a time.
+     */
+    nodes: 'all',
     /** Documents that belong here may hold nodes from any source. */
     allowsMixed: true,
     /** A document here becomes runnable only once its nodes are all local. */

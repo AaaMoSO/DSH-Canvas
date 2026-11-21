@@ -102,6 +102,8 @@ export function setup(api) {
 
 每个后端同时是一个**源**，源决定节点库和工作流库显示谁的内容：
 
+- 后端给的节点形状**只在服务运行期间有效**：服务一停就卸载，画布上引用这些节点的文档随之显示为「未定义」，
+  下次启动再同步；
 - `packs/` 里的包属于 `local`；
 - 后端提供的包属于该后端（包上带 `source`，缺省取 `remote`）；
 - 一个后端可以返回**多个包**——例如 ComfyUI 兼容层按 `python_module` 把上千个节点拆回它们原本的包，
@@ -115,7 +117,7 @@ export function setup(api) {
 ```js
 api.registerSource({
   id, name,                    // 源的 id 同时是文档里的 home
-  nodes: 'none' | 'own',       // 是否提供节点库；'none' 时节点从别的源的库里拖进来
+  nodes: 'none' | 'all' | [源 id], // 节点库从谁那里借：'all' 借其它所有源，数组点名几个源，'none' 不提供
   allowsMixed: true,           // 该源的文档允许混合各源节点（本地的限制对它不生效）
   runRequires: 'local',        // 逻辑归属为 local 才允许运行
   order,                       // 在源列表里的位置
@@ -129,6 +131,7 @@ api.registerSource({
 约定：
 
 - 注册源是**常驻**的，没有服务可启动；它的库在装好拓展后就可用；
+- 借来的节点库按包所属的源分组，库里顶部有一条源选择：点某个源只看它，未启动的后端源标一个 ○ 并提示去启动；
 - 文档的 `home`（事实归属）决定它存在哪里，逻辑归属（local / remote / mixed）由节点
   `origin` 现算，两者互不替代；
 - 存储由拓展自己负责，卸载拓展即随它一起消失——内置的 `mixed` 就把文档写在

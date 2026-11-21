@@ -1244,6 +1244,7 @@ const thumbCache = new Map()
       'menu.resizeHeight': 'Drag to change the height split; double click restores it',
       'account.anonymous': 'Not signed in',
       'library.sourceEmpty': 'This source has no node packs yet. Start its service from the extensions menu.',
+      'library.sourceAll': 'All',
       'source.local': 'Local',
       'source.counts': '{nodes} nodes · {workflows} workflows',
       'library.workflows.sourceEmpty': 'This source has no workflows yet.',
@@ -1445,6 +1446,7 @@ const thumbCache = new Map()
       'menu.resizeHeight': '拖动调整高度占比，双击恢复',
       'account.anonymous': '未登录',
       'library.sourceEmpty': '该源还没有节点包。可在拓展菜单里启动它的服务。',
+      'library.sourceAll': '全部',
       'source.local': '本地',
       'source.counts': '{nodes} 节点 · {workflows} 工作流',
       'library.workflows.sourceEmpty': '该源还没有工作流。',
@@ -1710,6 +1712,32 @@ const thumbCache = new Map()
         fontSize: '12px',
         lineHeight: '1.5',
         color: 'var(--dsw-alias-label-secondary)',
+      },
+      libraryPick: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '4px',
+        padding: '2px 2px 6px',
+      },
+      libraryChip: {
+        padding: '1px 8px',
+        font: 'inherit',
+        fontSize: '11px',
+        lineHeight: '16px',
+        background: 'transparent',
+        border: '1px solid color-mix(in srgb, var(--dsw-alias-label-secondary) 26%, transparent)',
+        borderRadius: '9px',
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      libraryChipActive: {
+        background: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent)',
+        borderColor: 'transparent',
+        color: 'var(--dsw-alias-brand-primary)',
+      },
+      libraryChipOffline: {
+        opacity: 0.5,
       },
       packHeader: {
         padding: '8px 4px 4px',
@@ -2693,6 +2721,8 @@ const thumbCache = new Map()
       // Which library column 1 points at, and which pack is unfolded in column 2.
       const [barSection, setBarSection] = useStored('barSection', null)
       const [openPack, setOpenPack] = useStored('openPack', null)
+      // Which library a borrowing source's node library shows; 'all' means every one it borrows from.
+      const [librarySource, setLibrarySource] = useStored('librarySource', 'all')
       // While the band retracts it stays mounted, so the reverse animation has something to play.
       const [bandClosing, setBandClosing] = React.useState(false)
       // The node a library row is pointing at; shown as a miniature beside the band.
@@ -4613,6 +4643,26 @@ const thumbCache = new Map()
         }
       }
 
+      /**
+       * A backend's shapes live exactly as long as its service: stop it and the cache goes with it,
+       * so a node whose pack was unloaded reads as undefined instead of as something usable.
+       */
+      function dropBackendPacks(backendId) {
+        const mine = (pack) => pack !== null && typeof pack === 'object' && pack.remote === backendId
+        packsCache = packsCache.filter((pack) => mine(pack) !== true)
+        setPacks((current) => current.filter((pack) => mine(pack) !== true))
+        try {
+          const raw = localStorage.getItem(REMOTE_PACK_KEY)
+          if (raw === null) return
+          const parsed = JSON.parse(raw)
+          const kept = (Array.isArray(parsed) ? parsed : []).filter((pack) => mine(pack) !== true)
+          if (kept.length === 0) localStorage.removeItem(REMOTE_PACK_KEY)
+          else localStorage.setItem(REMOTE_PACK_KEY, JSON.stringify(kept))
+        } catch {
+          // A cache we cannot read is a cache we cannot keep; the next start rebuilds it.
+        }
+      }
+
       /** Ask the active backend for its node shapes and merge them into the library. */
       async function prepareBackend(backend, options) {
         if (backend === undefined || typeof backend.prepare !== 'function') return false
@@ -4968,8 +5018,9 @@ const thumbCache = new Map()
               return
             }
             setServiceStates((current) => ({ ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
-            // The shapes stay: a document that already holds these nodes must still draw them, and
-            // the cache is refreshed when the service comes back rather than thrown away with it.
+            // The shapes go with the service: they are rebuilt when it starts again, and until then
+            // a node whose pack was unloaded reads as undefined rather than as usable.
+            dropBackendPacks(backend.id)
             setBackendLists((current) => ({ ...current, [backend.id]: [] }))
             showNotice(tr('notice.backendStopped', { name: backend.name ?? backend.id }))
           } catch (error) {
@@ -8675,9 +8726,21 @@ const thumbCache = new Map()
       ]))
 
       /**
-       * Shapes a backend produced stay in memory even while it is down: a saved graph still has to
-       * draw its nodes. The library, though, may only offer them while that backend is running —
-       * otherwise the last session's nodes sit there as if they could be used.
+       * Which libraries a source's node library draws from. `null` means only its own; an array is
+       * the set it borrows from, which `nodes: 'all'` fills with every other library.
+       */
+      function borrowedNodesOf(source, list) {
+        if (source === null || source === undefined) return null
+        // A registered source keeps no packs of its own, so it is never one of its own libraries.
+        const others = list.filter((item) => item.id !== source.id).map((item) => item.id)
+        if (source.nodes === 'all') return others
+        if (Array.isArray(source.nodes)) return source.nodes.filter((id) => others.includes(id))
+        return []
+      }
+
+      /**
+       * The library only offers a backend's packs while that backend is running: its shapes are
+       * unloaded when it stops, so the last session's nodes cannot sit there as if they were usable.
        */
       function packVisible(pack) {
         const source = sourceOfPack(pack)
@@ -8685,14 +8748,47 @@ const thumbCache = new Map()
         return isServiceReady(source) === true
       }
 
+      /** Whether a borrowed library can offer nodes right now: the local one always can. */
+      function libraryReady(id) {
+        return id === 'local' || isServiceReady(id) === true
+      }
+
       const packRows = []
       const activeRegistered = sourceOfHome(activeSource)
-      // A source may keep no nodes of its own: its documents borrow nodes from every other library,
-      // which is why the library of such a source only explains that.
-      if (activeRegistered !== null && activeRegistered.nodes === 'none') {
+      // A source may keep no nodes of its own and borrow them instead; `nodes` says from which
+      // libraries, and the chips narrow that down to one at a time.
+      const borrowed = borrowedNodesOf(activeRegistered, sources)
+      const borrowPick = borrowed !== null && borrowed.includes(librarySource) ? librarySource : 'all'
+      if (borrowed !== null && borrowed.length === 0) {
         packRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
       }
-      for (const pack of packs.filter((item) => sourceOfPack(item) === activeSource && packVisible(item))) {
+      if (borrowed !== null && borrowed.length > 1) {
+        packRows.push(h('div', { key: 'pack-pick', style: S.libraryPick },
+          ['all', ...borrowed].map((id) => {
+            const on = borrowPick === id
+            const offline = id !== 'all' && libraryReady(id) !== true
+            const label = id === 'all'
+              ? tr('library.sourceAll')
+              : (sources.find((item) => item.id === id)?.name ?? id)
+            return h('button', {
+              key: 'pick:' + id,
+              type: 'button',
+              title: offline ? tr('library.sourceOffline') : label,
+              style: {
+                ...S.libraryChip,
+                ...(on ? S.libraryChipActive : null),
+                ...(offline ? S.libraryChipOffline : null),
+              },
+              onClick: () => setLibrarySource(id),
+            }, offline ? '○ ' + label : label)
+          })))
+      }
+      const packSourceWanted = (owner) => (borrowed === null
+        ? owner === activeSource
+        : (borrowed.includes(owner) === true && (borrowPick === 'all' || owner === borrowPick)))
+      let packCount = 0
+      for (const pack of packs.filter((item) => packSourceWanted(sourceOfPack(item)) && packVisible(item))) {
+        packCount += 1
         const expanded = openPack === pack.id
         packRows.push(h('button', {
           key: 'pack:' + pack.id,
@@ -8734,11 +8830,16 @@ const thumbCache = new Map()
       }
       if (packsReady !== true) {
         packRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
-      } else if (packRows.length === 0) {
+      } else if (packCount === 0 && (borrowed === null || borrowed.length > 0)) {
+        const offline = borrowPick !== 'all' && libraryReady(borrowPick) !== true
         packRows.push(h('div', {
           key: 'pack-empty',
           style: S.libraryHint,
-        }, activeSource === 'local' ? tr('library.empty') : tr('library.sourceEmpty')))
+        }, offline
+          ? tr('library.sourceOffline')
+          : borrowed !== null && borrowPick !== 'all'
+            ? tr('library.sourceEmpty')
+            : activeSource === 'local' ? tr('library.empty') : tr('library.sourceEmpty')))
       }
 
       /** The one-word state a library row reports for a document it holds. */
@@ -9057,8 +9158,11 @@ const thumbCache = new Map()
       const sourceRows = []
       for (const source of sources) {
         const active = source.id === activeSource
+        const owners = borrowedNodesOf(sourceOfHome(source.id), sources)
         const nodes = packs
-          .filter((pack) => sourceOfPack(pack) === source.id && packVisible(pack))
+          .filter((pack) => packVisible(pack) && (owners === null
+            ? sourceOfPack(pack) === source.id
+            : owners.includes(sourceOfPack(pack))))
           .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
         const workflowsHere = source.id === 'local'
           ? workflows.length
