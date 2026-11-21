@@ -9279,11 +9279,9 @@ const thumbCache = new Map()
           style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
           onClick: () => selectSource(source.id),
         }, [
-          // Only a source an extension registered brings an icon of its own here; the built-in
-          // listing looks exactly as it always has.
-          sourceOfHome(source.id) !== null
-            ? h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14))
-            : null,
+          // Every source wears its own picture: the account avatar for Local, the owning
+          // extension's icon otherwise.
+          h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14)),
           h('span', { key: 'name', style: S.typeName }, source.name),
           h('span', {
             key: 'count',
