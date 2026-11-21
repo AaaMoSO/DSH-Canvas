@@ -5649,11 +5649,17 @@ const thumbCache = new Map()
        * document an adapter recognised is bound to the file that produced it: a native file keeps
        * the accounts its own nodes carry.
        */
-      function graphFromText(text, sourceName) {
+      /**
+       * Read a workflow file. When `onlyAdapterId` is given, only that source's own format is
+       * tried: a format an extension brought is not allowed to swallow another library's file.
+       * The canvas' own document format stays readable everywhere, since it belongs to no source.
+       */
+      function graphFromText(text, sourceName, onlyAdapterId) {
         const parsed = JSON.parse(text)
         let imported = null
         for (const adapter of adapters) {
           if (typeof adapter.parse !== 'function') continue
+          if (onlyAdapterId !== undefined && adapter.id !== onlyAdapterId) continue
           try {
             imported = adapter.parse(parsed, adapterContext())
           } catch {
@@ -5661,7 +5667,11 @@ const thumbCache = new Map()
           }
           if (imported !== null && imported !== undefined) break
         }
+        const isOwnDocument = parsed !== null && typeof parsed === 'object'
+          && (parsed.format === 'node-canvas-workflow'
+            || (parsed.graph !== null && typeof parsed.graph === 'object'))
         const native = parsed !== null && typeof parsed === 'object'
+          && (onlyAdapterId === undefined || isOwnDocument)
           ? (parsed.graph !== null && typeof parsed.graph === 'object' ? parsed.graph : parsed)
           : null
         const graph = imported ?? native ?? {}
@@ -5790,7 +5800,15 @@ const thumbCache = new Map()
       async function runImport(importer, sourceId, file) {
         let result
         try {
-          result = await importer(file, { parse: (text, sourceName) => graphFromText(text, sourceName) })
+          result = await importer(file, {
+            source: sourceId,
+            // Scoped to this source: its own adapter, or the canvas' own document format.
+            parse: (text, sourceName) => graphFromText(
+              text,
+              sourceName === undefined ? sourceId : sourceName,
+              sourceId,
+            ),
+          })
         } catch {
           showNotice(tr('notice.badFile'))
           return
