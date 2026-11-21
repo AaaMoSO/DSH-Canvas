@@ -2954,11 +2954,13 @@ const thumbCache = new Map()
         // Before the packs are in, the graph still lacks its widget schemas: writing that back
         // would store a hollow workflow that no longer runs.
         if (packsReady !== true) return undefined
-        const json = graphSignature(graph)
-        if (baseline !== null && baseline.name === currentWorkflow && baseline.json === json) {
-          return undefined
-        }
+        // Comparing the canvas with its saved copy means serialising the whole graph, so it waits
+        // for the pause instead of running on every frame of a drag.
         const timer = setTimeout(() => {
+          const json = graphSignature(graphRef.current)
+          if (baseline !== null && baseline.name === currentWorkflow && baseline.json === json) {
+            return
+          }
           void autosaveWorkflow(currentWorkflow)
         }, 800)
         return () => clearTimeout(timer)
@@ -5568,6 +5570,106 @@ const thumbCache = new Map()
         })
       }
 
+      /**
+       * Move the selected nodes on the DOM: a transform per node, a new path per link. React is told
+       * once, on release, so a drag never re-renders the canvas or lays the graph out again.
+       */
+      function dragSelectionTo(drag, dx, dy) {
+        if (drag.parts === undefined) {
+          const layer = graphLayerRef.current
+          const nodes = new Map()
+          const paths = new Map()
+          if (layer !== null) {
+            for (const item of layer.querySelectorAll('[data-node-id]')) {
+              nodes.set(item.getAttribute('data-node-id'), item)
+            }
+            for (const item of layer.querySelectorAll('[data-link-id]')) {
+              const id = item.getAttribute('data-link-id')
+              const list = paths.get(id)
+              if (list === undefined) paths.set(id, [item])
+              else list.push(item)
+            }
+          }
+          const moving = new Set(drag.ids)
+          const byId = new Map(graphRef.current.nodes.map((node) => [node.id, node]))
+          const links = []
+          for (const link of graphRef.current.links) {
+            const fromMoves = moving.has(link.from[0])
+            const toMoves = moving.has(link.to[0])
+            if (fromMoves !== true && toMoves !== true) continue
+            const els = paths.get(link.id)
+            if (els === undefined) continue
+            const fromNode = byId.get(link.from[0])
+            const toNode = byId.get(link.to[0])
+            if (fromNode === undefined || toNode === undefined) continue
+            const from = portAnchor(fromNode, 'out', link.from[1])
+            const to = portAnchor(toNode, 'in', link.to[1])
+            if (from === null || to === null) continue
+            links.push({ els, from, to, fromMoves, toMoves })
+          }
+          for (const id of drag.ids) {
+            const item = nodes.get(id)
+            if (item !== undefined) item.style.willChange = 'transform'
+          }
+          drag.parts = { nodes, links }
+        }
+        for (const id of drag.ids) {
+          const item = drag.parts.nodes.get(id)
+          if (item !== undefined) item.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)'
+        }
+        for (const link of drag.parts.links) {
+          const from = {
+            x: link.from.x + (link.fromMoves === true ? dx : 0),
+            y: link.from.y + (link.fromMoves === true ? dy : 0),
+          }
+          const to = {
+            x: link.to.x + (link.toMoves === true ? dx : 0),
+            y: link.to.y + (link.toMoves === true ? dy : 0),
+          }
+          const d = linkPath(from, to)
+          for (const el of link.els) el.setAttribute('d', d)
+        }
+      }
+
+      /** Put the DOM back the way React last rendered it. */
+      function restoreNodeDrag(drag) {
+        if (drag.parts === undefined) return
+        for (const id of drag.ids) {
+          const item = drag.parts.nodes.get(id)
+          if (item === undefined) continue
+          item.style.transform = ''
+          item.style.willChange = ''
+        }
+        for (const link of drag.parts.links) {
+          const d = linkPath(link.from, link.to)
+          for (const el of link.els) el.setAttribute('d', d)
+        }
+      }
+
+      /**
+       * Let go: the offsets are dropped and the positions are committed in the same tick, so the
+       * frame the browser paints is already the final one.
+       */
+      function finishNodeDrag(drag) {
+        if (drag.frame !== undefined) {
+          cancelAnimationFrame(drag.frame)
+          drag.frame = undefined
+        }
+        restoreNodeDrag(drag)
+        if (drag.pushed !== true) return
+        const dx = drag.dx === undefined ? 0 : drag.dx
+        const dy = drag.dy === undefined ? 0 : drag.dy
+        const current = graphRef.current
+        updateGraph({
+          nodes: current.nodes.map((node) => {
+            const start = drag.starts.get(node.id)
+            if (start === undefined) return node
+            return { ...node, x: Math.round(start.x + dx), y: Math.round(start.y + dy) }
+          }),
+          links: current.links,
+        })
+      }
+
       function onShellPointerMove(event) {
         const drag = dragRef.current
         if (drag === null) return
@@ -5592,15 +5694,16 @@ const thumbCache = new Map()
             pushHistory()
             drag.pushed = true
           }
-          const current = graphRef.current
-          updateGraph({
-            nodes: current.nodes.map((node) => {
-              const start = drag.starts.get(node.id)
-              if (start === undefined) return node
-              return { ...node, x: Math.round(start.x + dx), y: Math.round(start.y + dy) }
-            }),
-            links: current.links,
-          })
+          drag.dx = dx
+          drag.dy = dy
+          if (drag.frame === undefined) {
+            drag.frame = requestAnimationFrame(() => {
+              drag.frame = undefined
+              const x = drag.dx === undefined ? 0 : drag.dx
+              const y = drag.dy === undefined ? 0 : drag.dy
+              dragSelectionTo(drag, x, y)
+            })
+          }
           return
         }
         if (drag.kind === 'resize') {
@@ -5701,6 +5804,10 @@ const thumbCache = new Map()
           finishPan(drag)
           return
         }
+        if (drag.kind === 'node') {
+          finishNodeDrag(drag)
+          return
+        }
         if (drag.kind === 'marquee') setMarquee(null)
         if (drag.kind === 'link') {
           setTemp(null)
@@ -5721,6 +5828,11 @@ const thumbCache = new Map()
           if (drag.frame !== undefined) cancelAnimationFrame(drag.frame)
           const layer = graphLayerRef.current
           if (layer !== null) layer.style.transform = ''
+        }
+        // A cancelled drag puts the nodes back where they were; nothing is committed.
+        if (drag !== null && drag.kind === 'node') {
+          if (drag.frame !== undefined) cancelAnimationFrame(drag.frame)
+          restoreNodeDrag(drag)
         }
         setMarquee(null)
         setTemp(null)
@@ -7230,6 +7342,8 @@ const thumbCache = new Map()
         const bypassed = num(node.mode, 0) === 4
         return h('div', {
           key: node.id,
+          // The drag moves this element directly, without waking React.
+          'data-node-id': node.id,
           style: {
             ...S.node,
             left: node.x,
@@ -7350,6 +7464,7 @@ const thumbCache = new Map()
         return h('g', { key: link.id }, [
           h('path', {
             key: 'hit',
+            'data-link-id': link.id,
             d,
             fill: 'none',
             stroke: 'transparent',
@@ -7380,6 +7495,7 @@ const thumbCache = new Map()
           }),
           h('path', {
             key: 'line',
+            'data-link-id': link.id,
             d,
             fill: 'none',
             stroke: selected ? 'var(--dsw-alias-brand-primary)' : lineColor,
@@ -7705,7 +7821,6 @@ const thumbCache = new Map()
         }
       }
 
-      const canvasJson = graphSignature(graph)
       // What the canvas is made of, for the corner capsule: empty, local, remote, mixed, or
       // undecided while some node's pack is not loaded yet.
       const canvasSourceState = graph.nodes.length === 0
