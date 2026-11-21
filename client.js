@@ -1214,6 +1214,16 @@ const thumbCache = new Map()
       'workflow.reading.foreign': 'Not localized',
       'workflow.reading.missing': 'Definitions missing',
       'workflow.reading.unknown': 'Unresolved',
+      'workflow.transferOut': 'Move into the Local library',
+      'workflow.transferIn': 'Copy into the sandbox',
+      'dialog.transferOutTitle': 'Move this workflow out?',
+      'dialog.transferOutMessage': 'This workflow becomes a Local workflow. The copy in the sandbox is deleted, and the Local library does not allow nodes from other sources.',
+      'dialog.transferInTitle': 'Copy this workflow into the sandbox?',
+      'dialog.transferInMessage': 'This is a copy: the workflow it came from stays where it is. The copy can be mixed.',
+      'dialog.transferOut': 'Move it',
+      'dialog.transferIn': 'Copy it',
+      'notice.sourceOfflineNodes': '{name} is not running; nodes that came from it are drawn from the cache.',
+      'notice.transferred': 'Saved as “{to}”.',
       'dialog.cannotRunTitle': 'Not runnable yet',
       'dialog.cannotRunMessage': 'This workflow still holds nodes that are not local, so the local executor cannot run it.',
       'dialog.ok': 'Got it',
@@ -1405,6 +1415,16 @@ const thumbCache = new Map()
       'workflow.reading.foreign': '未本地化',
       'workflow.reading.missing': '定义缺失',
       'workflow.reading.unknown': '未定',
+      'workflow.transferOut': '转出到本地源',
+      'workflow.transferIn': '转入混合源',
+      'dialog.transferOutTitle': '转出这份工作流？',
+      'dialog.transferOutMessage': '确认后它会成为本地源里的工作流，混合源里的这一份将被删除；本地源里不允许再随意加入其他源的节点。',
+      'dialog.transferInTitle': '把它复制进混合源？',
+      'dialog.transferInMessage': '这只是一个副本：原来那份不会动。副本里可以混合各个源的节点。',
+      'dialog.transferOut': '转出',
+      'dialog.transferIn': '复制进来',
+      'notice.sourceOfflineNodes': '{name} 未启动，来自它的节点显示的是缓存定义。',
+      'notice.transferred': '已保存为「{to}」。',
       'dialog.cannotRunTitle': '还不能运行',
       'dialog.cannotRunMessage': '这个工作流里还有未本地化的节点，本地执行器无法运行它。',
       'dialog.ok': '知道了',
@@ -5274,6 +5294,28 @@ const thumbCache = new Map()
         }, 180)
       }
 
+      /** A name that is free in a library: the same one, or the first numbered copy of it. */
+      function freeName(name, taken) {
+        if (taken(name) !== true) return name
+        for (let index = 2; index < 100; index += 1) {
+          const candidate = name + ' (' + index + ')'
+          if (taken(candidate) !== true) return candidate
+        }
+        return name + ' (' + Date.now() + ')'
+      }
+
+      /** The first backend a document's nodes come from that is not running, if any. */
+      function offlineBackendOf(graph) {
+        for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+          if (originKind(node.origin) !== 'remote') continue
+          const pack = packs.find((item) => item.id === packIdOfOrigin(node.origin))
+          if (pack === undefined) continue
+          const owner = backends.find((item) => item.id === pack.remote)
+          if (owner !== undefined && isServiceReady(owner.id) !== true) return owner
+        }
+        return null
+      }
+
       /** A home as stored: anything unreadable is a local document, which is what v3 files are. */
       function homeOf(value) {
         return typeof value === 'string' && value !== '' ? value : 'local'
@@ -5412,6 +5454,61 @@ const thumbCache = new Map()
         showNotice(tr('notice.newWorkflow'))
       }
 
+      /**
+       * Move a sandbox document into the local library. Nothing is reassigned: a new document is
+       * written there and the sandbox copy is deleted, which is what "moving" means for a fact.
+       */
+      async function transferOutOfMixed(name) {
+        const source = sourceOfHome('mixed')
+        if (source === null) return
+        try {
+          const document = await source.readWorkflow(name)
+          if (document === null) throw new Error('HTTP 404')
+          const graph = normalizeGraph(document.graph === undefined ? {} : document.graph)
+          const target = freeName(name, (candidate) => workflows.some((item) => item.name === candidate))
+          const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(target), {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ graph: serializeGraph(graph), home: 'local' }),
+          })
+          if (response.ok !== true) throw new Error('HTTP ' + response.status)
+          await source.deleteWorkflow(name)
+          if (currentWorkflow === name && currentHome === 'mixed') {
+            setCurrentWorkflow(target)
+            setCurrentHome('local')
+            const saved = { name: target, json: graphSignature(graphRef.current) }
+            setBaseline(saved)
+            storeBaseline(saved)
+          }
+          loadWorkflows()
+          void loadSourceWorkflows('mixed')
+          showNotice(tr('notice.transferred', { to: target }))
+        } catch (error) {
+          showNotice(tr('notice.saveFailed', { message: error.message }))
+        }
+      }
+
+      /** Copy a document into the sandbox; the library it came from keeps its own copy. */
+      async function transferToMixed(name, from) {
+        const source = sourceOfHome('mixed')
+        if (source === null) return
+        try {
+          const document = await readDocument(from, name)
+          const graph = normalizeGraph(document.graph === undefined ? {} : document.graph)
+          const existing = (sourceLists.mixed === undefined ? [] : sourceLists.mixed).map((item) => item.name)
+          const target = freeName(name, (candidate) => existing.includes(candidate))
+          await source.writeWorkflow(target, documentOf(target, graph, 'mixed'))
+          if (currentWorkflow === name && currentHome === from) {
+            setCurrentWorkflow(target)
+            setCurrentHome('mixed')
+          }
+          void loadSourceWorkflows('mixed')
+          showNotice(tr('notice.transferred', { to: target }))
+        } catch (error) {
+          showNotice(tr('notice.saveFailed', { message: error.message }))
+        }
+      }
+
       /** Show the unnamed workflow again; its content only exists in memory. */
       function openPendingWorkflow() {
         rememberCurrent()
@@ -5498,6 +5595,8 @@ const thumbCache = new Map()
           updateGraph(next)
           // A workflow opens in the middle of the window, at its own scale.
           focusGraph(next)
+          const offline = offlineBackendOf(next)
+          if (offline !== null) showNotice(tr('notice.sourceOfflineNodes', { name: offline.name ?? offline.id }))
           select(new Set())
           setCurrentWorkflow(name)
           const saved = { name, json: graphSignature(next) }
@@ -9191,11 +9290,12 @@ const thumbCache = new Map()
               display: 'flex',
               alignItems: 'center',
               paddingLeft: '4px',
+              gap: '4px',
               zIndex: 27,
             },
             onPointerEnter: cancelRunHide,
             onPointerLeave: scheduleRunHide,
-          }, h('button', {
+          }, [h('button', {
             key: 'control',
             type: 'button',
             title: workflowRunState(runHover.name) === 'running' ? tr('workflow.stop') : tr('workflow.run'),
@@ -9212,7 +9312,35 @@ const thumbCache = new Map()
               const home = runHover.home === undefined ? 'local' : runHover.home
               void (runHoverRemote ? runBackendWorkflow(runHover.name) : runWorkflow(runHover.name, home))
             },
-          }, Glyph(workflowRunState(runHover.name) === 'running' ? 'pause' : 'play', 12)))
+          }, Glyph(workflowRunState(runHover.name) === 'running' ? 'pause' : 'play', 12)),
+          runHover.home === 'mixed' && runHover.reading === 'local'
+            ? h('button', {
+                key: 'transfer-out',
+                type: 'button',
+                title: tr('workflow.transferOut'),
+                'aria-label': tr('workflow.transferOut'),
+                style: S.runButton,
+                onPointerDown: (event) => event.stopPropagation(),
+                onClick: (event) => {
+                  event.stopPropagation()
+                  setDialog({ mode: 'transferOut', value: runHover.name, error: null })
+                },
+              }, Glyph('exportWorkflow', 12))
+            : runHover.pending === true || runHover.home === undefined || runHover.home === 'mixed'
+              ? null
+              : h('button', {
+                  key: 'transfer-in',
+                  type: 'button',
+                  title: tr('workflow.transferIn'),
+                  'aria-label': tr('workflow.transferIn'),
+                  style: S.runButton,
+                  onPointerDown: (event) => event.stopPropagation(),
+                  onClick: (event) => {
+                    event.stopPropagation()
+                    setDialog({ mode: 'transferIn', source: runHover.home, value: runHover.name, error: null })
+                  },
+                }, Glyph('file', 12)),
+          ])
 
       const nodePreviewEl = nodePreview === null || barMenu === null || barMenu.open !== true || barSection === null
         ? null
@@ -9903,16 +10031,25 @@ const thumbCache = new Map()
                 ? tr('dialog.saveAsTitle')
                 : dialog.mode === 'rename'
                   ? tr('dialog.renameTitle')
+                  : dialog.mode === 'transferOut'
+                    ? tr('dialog.transferOutTitle')
+                    : dialog.mode === 'transferIn'
+                      ? tr('dialog.transferInTitle')
                   : dialog.mode === 'cannotRun'
                     ? tr('dialog.cannotRunTitle')
                     : dialog.mode === 'remove-extension'
                       ? tr('extensions.removeTitle')
                       : tr('dialog.deleteTitle')),
             dialog.mode === 'delete' || dialog.mode === 'remove-extension' || dialog.mode === 'cannotRun'
+              || dialog.mode === 'transferOut' || dialog.mode === 'transferIn'
               ? h('div', {
                   key: 'message',
                   style: { fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' },
-                }, dialog.mode === 'cannotRun'
+                }, dialog.mode === 'transferOut'
+                  ? tr('dialog.transferOutMessage')
+                  : dialog.mode === 'transferIn'
+                    ? tr('dialog.transferInMessage')
+                : dialog.mode === 'cannotRun'
                   ? tr('dialog.cannotRunMessage')
                   : dialog.mode === 'remove-extension'
                     ? tr('extensions.removeMessage', { name: dialog.name ?? dialog.value })
@@ -9986,6 +10123,16 @@ const thumbCache = new Map()
                     setDialog(null)
                     return
                   }
+                  if (dialog.mode === 'transferOut') {
+                    setDialog(null)
+                    void transferOutOfMixed(dialog.value)
+                    return
+                  }
+                  if (dialog.mode === 'transferIn') {
+                    setDialog(null)
+                    void transferToMixed(dialog.value, dialog.source)
+                    return
+                  }
                   if (dialog.mode === 'remove-extension') {
                     setDialog(null)
                     void removeExtension(dialog.value)
@@ -9994,7 +10141,11 @@ const thumbCache = new Map()
                   const field = nameInputRef.current
                   void submitWorkflowName(field === null ? dialog.value : field.value)
                 },
-              }, dialog.mode === 'cannotRun'
+              }, dialog.mode === 'transferOut'
+                ? tr('dialog.transferOut')
+                : dialog.mode === 'transferIn'
+                  ? tr('dialog.transferIn')
+              : dialog.mode === 'cannotRun'
                 ? tr('dialog.ok')
                 : dialog.mode === 'delete' || dialog.mode === 'remove-extension'
                   ? tr('dialog.delete')
