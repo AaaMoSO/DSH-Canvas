@@ -8878,10 +8878,9 @@ const thumbCache = new Map()
         for (const id of borrowed) {
           const library = sources.find((item) => item.id === id) ?? { id, name: id }
           const ready = libraryReady(id)
-          // The picked library keeps its tint even while another listing is on screen; only the
-          // chevron says whether its packs are the ones showing.
-          const picked = librarySourceOpen === id
-          const shown = barSection === 'nodes' && picked
+          // The tint marks the listing that is on screen and nothing else: with another one open the
+          // tree is still unfolded, but no row in it claims to be showing.
+          const shown = barSection === 'nodes' && librarySourceOpen === id
           const list = packs.filter((pack) => sourceOfPack(pack) === id && packVisible(pack))
           const nodeCount = list.reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
           treeRows.push(h('button', {
@@ -8891,7 +8890,7 @@ const thumbCache = new Map()
             style: {
               ...S.typeRow,
               opacity: ready ? 1 : 0.55,
-              ...(picked ? S.typeRowActive : null),
+              ...(shown ? S.typeRowActive : null),
             },
             onClick: () => libraryClicked(id),
           }, [
