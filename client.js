@@ -2649,6 +2649,7 @@ const thumbCache = new Map()
       const [notice, setNotice] = useStored('notice', null)
       const [temp, setTemp] = React.useState(null)
       const [marquee, setMarquee] = React.useState(null)
+      const marqueeRef = React.useRef(null)
       const [hoverPort, setHoverPort] = React.useState(null)
       const [dragging, setDragging] = React.useState(false)
       const [packs, setPacks] = useStored('packs', [])
@@ -5677,6 +5678,64 @@ const thumbCache = new Map()
         })
       }
 
+      /**
+       * Move the selection rectangle on the DOM: the box follows the pointer and the nodes under it
+       * are marked on their own elements. Nothing re-renders until the pointer is released.
+       */
+      function dragMarqueeTo(drag, rect) {
+        if (drag.parts === undefined) {
+          const layer = graphLayerRef.current
+          const nodes = new Map()
+          if (layer !== null) {
+            for (const item of layer.querySelectorAll('[data-node-id]')) {
+              nodes.set(item.getAttribute('data-node-id'), item)
+            }
+          }
+          drag.parts = { nodes }
+          drag.hit = new Set()
+        }
+        const el = marqueeRef.current
+        const current = viewRef.current
+        if (el !== null) {
+          el.style.left = current.x + rect.x * current.k + 'px'
+          el.style.top = current.y + rect.y * current.k + 'px'
+          el.style.width = rect.w * current.k + 'px'
+          el.style.height = rect.h * current.k + 'px'
+        }
+        const hit = new Set()
+        for (const node of graphRef.current.nodes) {
+          const height = nodeHeight(node)
+          const inside = node.x < rect.x + rect.w && node.x + node.w > rect.x
+            && node.y < rect.y + rect.h && node.y + height > rect.y
+          if (inside) hit.add(node.id)
+        }
+        for (const [id, item] of drag.parts.nodes) {
+          const was = drag.hit.has(id)
+          const now = hit.has(id)
+          if (was === now) continue
+          item.classList.toggle('nc-marquee-hit', now)
+        }
+        drag.hit = hit
+        drag.rect = rect
+      }
+
+      /** Let go: the marks come off the elements and the selection becomes real, once. */
+      function finishMarquee(drag) {
+        if (drag.frame !== undefined) {
+          cancelAnimationFrame(drag.frame)
+          drag.frame = undefined
+        }
+        if (drag.parts !== undefined) {
+          for (const item of drag.parts.nodes.values()) item.classList.remove('nc-marquee-hit')
+        }
+        setMarquee(null)
+        const next = new Set(drag.base)
+        if (drag.hit !== undefined) {
+          for (const id of drag.hit) next.add('n:' + id)
+        }
+        select(next)
+      }
+
       function onShellPointerMove(event) {
         const drag = dragRef.current
         if (drag === null) return
@@ -5763,21 +5822,18 @@ const thumbCache = new Map()
         }
         if (drag.kind === 'marquee') {
           const point = toGraphPoint(event)
-          const rect = {
+          drag.rect = {
             x: Math.min(drag.origin.x, point.x),
             y: Math.min(drag.origin.y, point.y),
             w: Math.abs(point.x - drag.origin.x),
             h: Math.abs(point.y - drag.origin.y),
           }
-          setMarquee(rect)
-          const next = new Set(drag.base)
-          for (const node of graphRef.current.nodes) {
-            const height = nodeHeight(node)
-            const hit = node.x < rect.x + rect.w && node.x + node.w > rect.x
-              && node.y < rect.y + rect.h && node.y + height > rect.y
-            if (hit) next.add('n:' + node.id)
+          if (drag.frame === undefined) {
+            drag.frame = requestAnimationFrame(() => {
+              drag.frame = undefined
+              if (drag.rect !== undefined) dragMarqueeTo(drag, drag.rect)
+            })
           }
-          select(next)
           return
         }
         if (drag.kind === 'link') {
@@ -5815,7 +5871,10 @@ const thumbCache = new Map()
           finishNodeDrag(drag)
           return
         }
-        if (drag.kind === 'marquee') setMarquee(null)
+        if (drag.kind === 'marquee') {
+          finishMarquee(drag)
+          return
+        }
         if (drag.kind === 'link') {
           setTemp(null)
           // the pointer was captured during the drag, so no leave event told the port it is no
@@ -5843,6 +5902,13 @@ const thumbCache = new Map()
         if (drag !== null && drag.kind === 'node') {
           if (drag.frame !== undefined) cancelAnimationFrame(drag.frame)
           restoreNodeDrag(drag)
+        }
+        // A cancelled selection puts the elements back; the selection itself was never touched.
+        if (drag !== null && drag.kind === 'marquee') {
+          if (drag.frame !== undefined) cancelAnimationFrame(drag.frame)
+          if (drag.parts !== undefined) {
+            for (const item of drag.parts.nodes.values()) item.classList.remove('nc-marquee-hit')
+          }
         }
         setMarquee(null)
         setTemp(null)
@@ -7999,6 +8065,7 @@ const thumbCache = new Map()
 
       const marqueeEl = marquee === null ? null : h('div', {
         key: 'marquee',
+        ref: marqueeRef,
         style: {
           position: 'absolute',
           left: view.x + marquee.x * view.k,
@@ -8662,6 +8729,10 @@ const thumbCache = new Map()
         + '.nc-menu-scroll{scrollbar-width:none;-ms-overflow-style:none}'
         + '.nc-menu-scroll::-webkit-scrollbar{width:0;height:0;display:none}'
         + '.nc-resize-x:hover,.nc-resize-y:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent)}'
+        // Dragged over by the selection rectangle, before the selection is committed: the same
+        // look a selected node has, so the commit at the end changes nothing on screen.
+        + '.nc-marquee-hit{border-color:var(--dsw-alias-brand-primary)!important;'
+        + 'box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 2px 10px rgba(0,0,0,0.14)!important}'
         + '.nc-resize-x:active,.nc-resize-y:active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent)}')
 
       // The selected library fills the room under the menu, spanning the same width.
