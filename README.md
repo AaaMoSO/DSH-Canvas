@@ -16,11 +16,12 @@ remote execution backend when you need its node pack.
   nodes' origins and a node's definition comes from its own pack, so a type that two packs both
   declare is never a guess: a node whose pack is missing shows no shape instead of another pack's.
 - **Workflows**: save / save as / export / rename / delete, plus a status pill that tells whether
-  the canvas still equals its saved copy. Every document records the library it belongs to
-  (`home`), so a save can never move it from one library to another by accident. A workflow opened
-  from a backend's list lives on that backend: saving writes the backend's own file and keeps no
-  local copy, so the two libraries never drift apart. Save as creates the new file on the backend
-  and the canvas follows its name.
+  the canvas still equals its saved copy. Two things are kept apart: a document's **home** is the
+  library that created it — fixed for its lifetime, never shown, and what decides where it is
+  saved; what it is **made of** (local / remote / mixed) is read from the nodes' origins and is
+  what the corner capsule reports. Moving a document between libraries is a rebuild plus a delete,
+  never a reassignment. A workflow opened from a backend's list lives on that backend: saving
+  writes the backend's own file and keeps no local copy, so the two libraries never drift apart.
 - **Extensions**: capability packages that enhance the plugin (workflow formats, node views,
   toolbar actions, panels, hover cards, execution backends). Drag a folder into the puzzle menu to
   register one; order them by dragging, top wins. See [extensions/README.md](extensions/README.md).

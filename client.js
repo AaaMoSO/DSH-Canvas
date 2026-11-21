@@ -674,8 +674,9 @@ const thumbCache = new Map()
     }
 
     /**
-     * What a graph is made of, read from the origins its nodes record. Nothing is inferred: a node
-     * says where it came from, and the canvas is the set of those answers.
+     * 逻辑归属: what a graph is made of, read from the origins its nodes record. Nothing is
+     * inferred: a node says where it came from, and the canvas is the set of those answers. This is
+     * the reading the corner capsule reports; it can differ from the document's home.
      */
     function canvasKind(graph) {
       const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
@@ -1191,6 +1192,7 @@ const thumbCache = new Map()
       'workflow.create': 'Create it',
       'workflow.discard': 'Discard it',
       'notice.newWorkflow': 'New workflow — name it to keep it',
+      'notice.homeUnavailable': 'This workflow belongs to a source that is not available right now.',
       'notice.emptyWorkflow': 'Add a node before saving or running',
       'dialog.unsavedRun': 'This workflow has no name yet: name it and save it before running.',
       grid: 'Show or hide the grid',
@@ -1373,6 +1375,7 @@ const thumbCache = new Map()
       'workflow.create': '新建',
       'workflow.discard': '丢弃',
       'notice.newWorkflow': '已新建未命名工作流，命名保存后才会留下',
+      'notice.homeUnavailable': '这个工作流属于一个当前不可用的源。',
       'notice.emptyWorkflow': '先放一个节点，再保存或运行',
       'dialog.unsavedRun': '这个工作流还没有名字：先命名并保存，才能运行。',
       grid: '显示或隐藏网格',
@@ -2678,9 +2681,12 @@ const thumbCache = new Map()
       const [newWorkflowAsk, setNewWorkflowAsk] = React.useState(false)
       const menuShowing = barMenu !== null && barMenu.open === true
       const [currentWorkflow, setCurrentWorkflow] = useStored('currentWorkflow', loadStoredWorkflow)
-      // The library this document belongs to: `local` today, `mixed` once the sandbox exists, or a
-      // backend id when the document lives in that backend's own list. Recorded, never derived: a
-      // document localized in the sandbox is still a sandbox document until it is moved.
+      // 事实归属 (the factual home): which library created this document. Fixed at creation and
+      // never reassigned — moving a document between libraries is a rebuild plus a delete, not a
+      // transfer. It decides where the file is saved, and it is not shown in the interface.
+      // 逻辑归属 (the reading, `canvasKind`) is derived from the nodes and is what the corner
+      // capsule reports. The two can disagree — a bug or an import can leave a document whose
+      // nodes no longer match its home — which is exactly why the reading is not the fact.
       const [currentHome, setCurrentHome] = useStored('currentHome', 'local')
       // The saved copy of that workflow; when the canvas differs from it the workflow is a draft.
       const [baseline, setBaseline] = useStored('baseline', loadBaseline)
@@ -4131,16 +4137,6 @@ const thumbCache = new Map()
         return null
       }
 
-      /**
-       * The backend a mapped canvas belongs to, read from the origins its nodes record. A canvas
-       * whose packs are not loaded yet falls back to the only backend that writes workflows.
-       */
-      function mappedBackendOf(graph) {
-        const derived = remoteOwnerOf(graph)
-        if (derived !== null) return derived
-        return backends.find((backend) => typeof backend.writeWorkflow === 'function') ?? null
-      }
-
       /** The workflow format that belongs to that backend's extension. */
       function adapterFor(owner) {
         const match = adapters.find((adapter) => adapter.extension === owner.extension)
@@ -4154,16 +4150,10 @@ const thumbCache = new Map()
        */
       async function saveMappedWorkflow(name, options) {
         const graph = graphRef.current
-        // A new workflow belongs to the list it was started in, even while it is still empty.
-        const started = pendingSource !== null && pendingSource !== 'local'
-          ? backends.find((backend) => backend.id === pendingSource) ?? null
-          : null
-        // The document remembers the backend it lives in; node origins are only the fallback for
-        // documents written before a home was recorded.
-        const byHome = backends.find((backend) => backend.id === currentHome) ?? null
-        const owner = started ?? byHome ?? mappedBackendOf(graph)
+        // The document's home names the backend that owns it; node origins are not consulted here.
+        const owner = backendOfHome(currentHome)
         if (owner === null) {
-          showNotice(tr('notice.writeBackFailed', { message: tr('notice.noBackendForGraph') }))
+          showNotice(tr('notice.homeUnavailable'))
           return false
         }
         if (isServiceReady(owner.id) !== true) {
@@ -4192,7 +4182,6 @@ const thumbCache = new Map()
         // The canvas has a file now: it is an ordinary workflow from here on.
         workflowGraphsRef.current.delete(UNNAMED_KEY)
         setPendingSource(null)
-        setCurrentHome(owner.id)
         setCurrentWorkflow(target)
         const savedCopy = { name: target, json: graphSignature(graphRef.current) }
         setBaseline(savedCopy)
@@ -4208,8 +4197,8 @@ const thumbCache = new Map()
        */
       async function autosaveWorkflow(name) {
         if (name === null) return
-        // A mapped canvas is written back to its backend by hand, never in the background.
-        if (canvasKind(graphRef.current) === 'remote') return
+        // A document that belongs to a backend is written back by hand, never in the background.
+        if (isBackendHome(currentHome)) return
         try {
           const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
             method: 'PUT',
@@ -4229,16 +4218,10 @@ const thumbCache = new Map()
 
       /** Write the canvas document into the workflow library under `name`. */
       async function writeWorkflow(name, options) {
-        // A mapped canvas is saved where it came from, not into the local library; so is a
-        // workflow started in a backend's own list, even before it holds a single node.
-        const fromBackend = pendingSource !== null && pendingSource !== 'local'
-        if (canvasKind(graphRef.current) === 'remote' || fromBackend === true) {
+        // Where the file goes is the document's factual home, never what it happens to contain: a
+        // workflow created in a backend's list is saved there even when every node in it is local.
+        if (isBackendHome(currentHome)) {
           return await saveMappedWorkflow(name, options)
-        }
-        // "Save as" starts a new local workflow; a plain save keeps the existing name.
-        if (options?.asCopy === true) {
-          const current = graphRef.current
-          updateGraph({ nodes: current.nodes, links: current.links, extra: { ...(current.extra ?? {}), comfyuiSource: name } })
         }
         try {
           const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
@@ -4248,7 +4231,6 @@ const thumbCache = new Map()
           })
           if (response.ok !== true) throw new Error('HTTP ' + response.status)
           workflowGraphsRef.current.set(name, graphRef.current)
-          setCurrentHome('local')
           // The canvas has a file now: it is an ordinary workflow from here on.
           workflowGraphsRef.current.delete(UNNAMED_KEY)
           setPendingSource(null)
@@ -4351,7 +4333,7 @@ const thumbCache = new Map()
           return
         }
         if (dialog.mode === 'saveAs') {
-          const mappedOwner = canvasKind(graphRef.current) === 'remote' ? mappedBackendOf(graphRef.current) : null
+          const mappedOwner = isBackendHome(currentHome) ? backendOfHome(currentHome) : null
           if (mappedOwner !== null && typeof mappedOwner.listWorkflows === 'function') {
             let names = []
             try {
@@ -4381,13 +4363,13 @@ const thumbCache = new Map()
           return
         }
         const asCopy = dialog.mode === 'saveAs'
-        // A run that had to ask for a name follows the save it asked for, in the source that owns it.
+        // A run that had to ask for a name follows the save it asked for, where the document lives.
         const runAfterSave = dialog.runAfterSave === true
-        const owner = pendingSource
+        const backendRun = isBackendHome(currentHome)
         setDialog(null)
         const saved = await writeWorkflow(name, { asCopy })
         if (saved === true && runAfterSave === true) {
-          if (owner !== null && owner !== 'local') void runBackendWorkflow(name)
+          if (backendRun === true) void runBackendWorkflow(name)
           else void runWorkflow(name)
         }
       }
@@ -5218,6 +5200,16 @@ const thumbCache = new Map()
         return typeof value === 'string' && value !== '' ? value : 'local'
       }
 
+      /** Whether a factual home is another source's own list rather than a library of ours. */
+      function isBackendHome(home) {
+        return home !== 'local' && home !== 'mixed'
+      }
+
+      /** The backend a factual home names, when that backend is registered. */
+      function backendOfHome(home) {
+        return backends.find((backend) => backend.id === home) ?? null
+      }
+
       /** A document with nothing in it, and nothing about it carried over from the last one. */
       function emptyDocument() {
         return { nodes: [], links: [], groups: [], extra: {}, config: {} }
@@ -5257,7 +5249,7 @@ const thumbCache = new Map()
         setEditing(null)
         setProps(null)
         setCurrentWorkflow(null)
-        setCurrentHome('local')
+        setCurrentHome(source)
         setBaseline(null)
         clearBaseline()
         workflowGraphsRef.current.set(UNNAMED_KEY, graphRef.current)
