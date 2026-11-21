@@ -8787,7 +8787,7 @@ const thumbCache = new Map()
       // switch: a source that declares no library (Local, a backend) keeps the plain pack list, so
       // no extension's menu can change the menu of a source it does not own.
       const activeRegistered = sourceOfHome(activeSource)
-      const activeLibrary = libraryOf(activeRegistered)
+      const activeNodes = menuItemOf(activeRegistered, 'nodes')
 
       /**
        * The picture a source goes by: the account avatar for Local, the icon of the extension that
@@ -8902,10 +8902,10 @@ const thumbCache = new Map()
         // The chevron follows what is unfolded; the tint follows what owns the menu. A borrowing
         // source can leave its libraries unfolded while another listing is examined, and then only
         // that listing is lit — one row at the first level, never two.
-        const open = section.inline === true && activeLibrary !== null
+        const open = section.inline === true && activeNodes !== null
           ? nodesOpen === true
           : barSection === section.id
-        const lit = section.inline === true && activeLibrary !== null
+        const lit = section.inline === true && activeNodes !== null
           ? nodesOpen === true && (barSection === 'nodes' || barSection === null)
           : open
         return h('button', {
@@ -8916,7 +8916,7 @@ const thumbCache = new Map()
             if (section.inline === true) {
               // A borrowing source unfolds its libraries here; one with packs of its own opens the
               // band below straight away, because there is nothing to choose first.
-              if (activeLibrary !== null) {
+              if (activeNodes !== null) {
                 if (nodesOpen === true) {
                   setNodesOpen(false)
                   if (barSection === 'nodes') closeBand()
@@ -8958,16 +8958,22 @@ const thumbCache = new Map()
       ]
 
       /**
-       * The node library a source draws for itself, if it declares one. Everything about that menu is
-       * then the extension's: the canvas only mounts the rows it builds and keeps them wired, so a
-       * source that declares nothing keeps the plain pack list every source has.
+       * The menu a source draws for itself: one item per row the source wants, each with the panel
+       * that belongs behind it. The canvas keeps the menu frame and the rows every source has; what
+       * an item contains, and whether it unfolds in place, is the source's business.
        */
-      function libraryOf(source) {
-        if (source === null || source === undefined) return null
-        const library = source.library
-        if (library === null || typeof library !== 'object') return null
-        if (typeof library.menu !== 'function' || typeof library.content !== 'function') return null
-        return library
+      function menuItemsOf(source) {
+        if (source === null || source === undefined) return []
+        const menu = source.menu
+        if (menu === null || typeof menu !== 'object' || Array.isArray(menu.items) !== true) return []
+        return menu.items.filter((item) => item !== null && typeof item === 'object'
+          && typeof item.id === 'string' && item.id !== ''
+          && (typeof item.rows === 'function' || typeof item.panel === 'function'))
+      }
+
+      /** One named item of a source's menu, or null when it draws nothing under that name. */
+      function menuItemOf(source, id) {
+        return menuItemsOf(source).find((item) => item.id === id) ?? null
       }
 
       /**
@@ -9002,14 +9008,16 @@ const thumbCache = new Map()
 
       // A source that draws its own library fills the menu with the rows it built; the band below
       // holds whatever it says belongs to the library that was picked.
-      const libraryEl = nodesOpen !== true || activeLibrary === null ? null : h('div', {
-        key: 'node-library',
-        style: S.libraryTree,
-      }, activeLibrary.menu(libraryContext, librarySourceOpen))
+      const libraryEl = nodesOpen !== true || activeNodes === null || typeof activeNodes.rows !== 'function'
+        ? null
+        : h('div', {
+            key: 'node-library',
+            style: S.libraryTree,
+          }, activeNodes.rows(libraryContext, librarySourceOpen))
 
       // A source with packs of its own — Local, a backend — gets the canvas' plain list instead.
       const packRows = []
-      if (activeLibrary === null) {
+      if (activeNodes === null) {
         if (packsReady !== true) {
           packRows.push(libraryRows.hint(tr('library.loading')))
         } else {
@@ -9023,9 +9031,9 @@ const thumbCache = new Map()
           }
         }
       }
-      const bandRows = activeLibrary === null
+      const bandRows = activeNodes === null || typeof activeNodes.panel !== 'function'
         ? packRows
-        : [].concat(activeLibrary.content(libraryContext, librarySourceOpen))
+        : [].concat(activeNodes.panel(libraryContext, librarySourceOpen))
 
       /** The one-word state a library row reports for a document it holds. */
       function readingCapsule(item) {
@@ -9356,9 +9364,9 @@ const thumbCache = new Map()
       const sourceRows = []
       for (const source of sources) {
         const active = source.id === activeSource
-        const ownLibrary = libraryOf(sourceOfHome(source.id))
-        const nodes = ownLibrary !== null
-          ? (typeof ownLibrary.count === 'function' ? ownLibrary.count(libraryContext) : 0)
+        const ownNodes = menuItemOf(sourceOfHome(source.id), 'nodes')
+        const nodes = ownNodes !== null
+          ? (typeof ownNodes.count === 'function' ? ownNodes.count(libraryContext) : 0)
           : packs
             .filter((pack) => packVisible(pack) && sourceOfPack(pack) === source.id)
             .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
