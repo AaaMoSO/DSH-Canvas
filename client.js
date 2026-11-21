@@ -2748,9 +2748,11 @@ const thumbCache = new Map()
       const [serviceClock, setServiceClock] = React.useState(0)
       const [remoteRun, setRemoteRun] = React.useState(() => runController.snapshot().remoteRun)
       // Workflows that live in a backend (ComfyUI's own list), shown next to ours.
-      const [backendWorkflows, setBackendWorkflows] = useStored('backendWorkflows', () => ({ source: null, names: [] }))
+      // Every source keeps its own list: a slot for "whichever source was looked at last" made one
+      // source's count collapse the moment another one was opened.
+      const [backendLists, setBackendLists] = useStored('backendLists', () => ({}))
       // A registered source's own library, with the reading each document reports.
-      const [sourceWorkflows, setSourceWorkflows] = useStored('sourceWorkflows', () => ({ source: null, items: [] }))
+      const [sourceLists, setSourceLists] = useStored('sourceLists', () => ({}))
 // Extension packages: the puzzle menu, the add dialog, and the list from the Host.
       const [extensions, setExtensions] = useStored('extensions', [])
       const [extensionMenu, setExtensionMenu] = useStored('extensionMenu', false)
@@ -4559,14 +4561,14 @@ const thumbCache = new Map()
           && serviceStates[item.id]?.status === 'ready'
           && typeof item.listWorkflows === 'function')
         if (backend === undefined) {
-          setBackendWorkflows({ source: sourceId ?? null, names: [] })
+          if (sourceId !== undefined) setBackendLists((current) => ({ ...current, [sourceId]: [] }))
           return
         }
         try {
           const names = await backend.listWorkflows()
-          setBackendWorkflows({ source: backend.id, names: Array.isArray(names) ? names : [] })
+          setBackendLists((current) => ({ ...current, [backend.id]: Array.isArray(names) ? names : [] }))
         } catch {
-          setBackendWorkflows({ source: backend.id, names: [] })
+          setBackendLists((current) => ({ ...current, [backend.id]: [] }))
         }
       }, [extensionFeatures.backends, serviceStates])
 
@@ -4944,7 +4946,7 @@ const thumbCache = new Map()
             setServiceStates((current) => ({ ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
             // The shapes stay: a document that already holds these nodes must still draw them, and
             // the cache is refreshed when the service comes back rather than thrown away with it.
-            setBackendWorkflows({ source: null, names: [] })
+            setBackendLists((current) => ({ ...current, [backend.id]: [] }))
             showNotice(tr('notice.backendStopped', { name: backend.name ?? backend.id }))
           } catch (error) {
             setServiceStates((current) => ({ ...current, [backend.id]: { status: 'ready', startedAt: current[backend.id]?.startedAt ?? Date.now() } }))
@@ -5343,15 +5345,12 @@ const thumbCache = new Map()
       /** Load a registered source's library; a source that fails answers with none. */
       const loadSourceWorkflows = React.useCallback(async (sourceId) => {
         const source = extensionFeatures.sources.find((item) => item.id === sourceId)
-        if (source === undefined) {
-          setSourceWorkflows({ source: null, items: [] })
-          return
-        }
+        if (source === undefined) return
         try {
           const items = await source.listWorkflows()
-          setSourceWorkflows({ source: sourceId, items: Array.isArray(items) ? items : [] })
+          setSourceLists((current) => ({ ...current, [sourceId]: Array.isArray(items) ? items : [] }))
         } catch {
-          setSourceWorkflows({ source: sourceId, items: [] })
+          setSourceLists((current) => ({ ...current, [sourceId]: [] }))
         }
       }, [extensionFeatures.sources])
 
@@ -8780,8 +8779,8 @@ const thumbCache = new Map()
       }
       // A registered source's own library: its documents, each saying what it is made of, so the
       // run button never has to guess and the rows can be read without opening them.
-      if (activeRegistered !== null && sourceWorkflows.source === activeSource) {
-        for (const item of sourceWorkflows.items) {
+      if (activeRegistered !== null) {
+        for (const item of (sourceLists[activeSource] ?? [])) {
           const active = item.name === currentWorkflow && currentHome === activeSource
           workflowRows.push(h('button', {
             key: 'source-workflow:' + item.name,
@@ -8831,7 +8830,7 @@ const thumbCache = new Map()
         }
       }
       // A backend's workflows are just its source's workflows: same rows, no heading, no colour.
-      const remoteNames = backendWorkflows.source === activeSource ? backendWorkflows.names : []
+      const remoteNames = backendLists[activeSource] ?? []
       for (const name of remoteNames) {
         const active = name === currentWorkflow
         const state = workflowRunState(name)
@@ -8960,9 +8959,7 @@ const thumbCache = new Map()
           .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
         const workflowsHere = source.id === 'local'
           ? workflows.length
-          : (backendWorkflows.source === source.id
-            ? backendWorkflows.names.length
-            : (sourceWorkflows.source === source.id ? sourceWorkflows.items.length : 0))
+          : ((backendLists[source.id] ?? sourceLists[source.id] ?? []).length)
         sourceRows.push(h('button', {
           key: 'source:' + source.id,
           type: 'button',
@@ -9180,8 +9177,7 @@ const thumbCache = new Map()
       // The run control sits outside the panel, in line with the hovered row. Its wrapper starts
       // exactly at the panel edge, so travelling right from the row never crosses dead space.
       const runHoverRemote = runHover !== null
-        && backendWorkflows.source === activeSource
-        && backendWorkflows.names.includes(runHover.name)
+        && (backendLists[activeSource] ?? []).includes(runHover.name)
       const runButtonEl = runHover === null || barMenu === null || barMenu.open !== true
         || barSection !== 'workflows'
         ? null
