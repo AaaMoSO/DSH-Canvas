@@ -12,6 +12,7 @@ Thumbs.db
 # packs they add. The packs that ship with the plugin stay tracked, so a clone still has a
 # node library; anything added beside them is ignored.
 workflows/
+inbox/
 packs/
 
 # The mixed source's sandbox belongs to its extension and is user data.

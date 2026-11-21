@@ -3373,6 +3373,33 @@ const thumbCache = new Map()
       }, [])
 
       /** The slice of the canvas an extension may touch, passed to its callbacks. */
+      /**
+       * Turn dropped files into host paths. Electron already tells us where they came from; a plain
+       * browser does not, so the file is handed to the Host, which stores it and answers with its
+       * absolute path. Everything that needs a path for a backend or the conversation API uses this.
+       */
+      async function hostPathsOf(files) {
+        const paths = []
+        for (const file of files) {
+          const direct = typeof file?.path === 'string' && file.path !== '' ? file.path : ''
+          if (direct !== '') {
+            paths.push({ path: direct, name: file.name, bytes: file.size })
+            continue
+          }
+          const response = await fetch('/node-canvas/inbox?name=' + encodeURIComponent(file.name ?? 'file'), {
+            method: 'POST',
+            headers: { 'content-type': file.type === '' ? 'application/octet-stream' : file.type },
+            body: file,
+          })
+          const payload = await response.json().catch(() => null)
+          if (response.ok !== true || payload?.ok !== true) {
+            throw new Error(payload?.error ?? ('HTTP ' + response.status))
+          }
+          paths.push(payload.file)
+        }
+        return paths
+      }
+
       function extensionHelpers(node) {
         return {
           graph: graphRef.current,
@@ -3382,6 +3409,11 @@ const thumbCache = new Map()
           pushHistory,
           updateGraph,
           tr,
+          /** The host paths of the files dropped in one event, in the order they were dropped. */
+          droppedFiles: (event) => hostPathsOf(
+            event === null || event === undefined ? []
+              : Array.from(event.dataTransfer?.files ?? []),
+          ),
           setWidget: (name, value) => {
             if (node === undefined) return
             const index = widgetSpecsOf(node).findIndex((spec) => spec.name === name)

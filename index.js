@@ -47,6 +47,9 @@ const EXTENSION_FILE_TYPES = {
 const WORKFLOWS_DIR = fileURLToPath(new URL('./workflows/', import.meta.url))
 // Programs for nodes that belong to no pack live here, keyed by node type.
 const FALLBACK_PROGRAMS = fileURLToPath(new URL('./nodes/', import.meta.url))
+// Files a browser dropped land here; their absolute paths are what the canvas hands to a backend.
+const INBOX_DIR = fileURLToPath(new URL('./inbox/', import.meta.url))
+const MAX_INBOX_BYTES = 64 * 1024 * 1024
 // Node programs live beside the packs: one `<Type>.mjs` per executable node type.
 const executor = new Executor({
   rootDir: fileURLToPath(new URL('./', import.meta.url)),
@@ -126,6 +129,11 @@ async function handle(req, res) {
     if (url.pathname === `${PREFIX}/account`) {
       if (req.method !== 'GET') throw new HttpError(405, 'use GET')
       send(res, 200, { ok: true, ...(await readAccount(url)) })
+      return
+    }
+    if (url.pathname === `${PREFIX}/inbox`) {
+      if (req.method !== 'POST') throw new HttpError(405, 'use POST')
+      send(res, 200, { ok: true, file: await readInbox(req, url) })
       return
     }
     if (url.pathname === `${PREFIX}/files`) {
@@ -1153,6 +1161,28 @@ async function sendImage(res, root, name) {
 }
 
 /** Read and parse a JSON request body, refusing anything over `MAX_RUN_BODY`. */
+/**
+ * Take one dropped file and keep it, so a browser without a path can still name where it is.
+ * The answer is the absolute host path the canvas gives to whatever needs to read that file.
+ */
+async function readInbox(req, url) {
+  const raw = url.searchParams.get('name') ?? 'file'
+  const name = path.basename(raw).replace(/[\u0000-\u001f]/g, '').trim() || 'file'
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > MAX_INBOX_BYTES) throw new HttpError(413, 'file too large (64 MB)')
+    chunks.push(chunk)
+  }
+  if (size === 0) throw new HttpError(400, 'empty file')
+  await mkdir(INBOX_DIR, { recursive: true })
+  const stamp = Date.now().toString(36)
+  const target = path.join(INBOX_DIR, stamp + '-' + name)
+  await writeFile(target, Buffer.concat(chunks))
+  return { path: target, name, bytes: size }
+}
+
 async function readJson(req) {
   const chunks = []
   let size = 0
