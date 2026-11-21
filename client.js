@@ -6750,6 +6750,15 @@ const thumbCache = new Map()
         openBand('nodes')
       }
 
+      /** Clicking the library that is already showing closes the band again, like every other row. */
+      function libraryClicked(id) {
+        if (barSection === 'nodes' && librarySourceOpen === id && bandClosing !== true) {
+          closeBand()
+          return
+        }
+        openLibrary(id)
+      }
+
       function selectSource(id) {
         if (id === activeSource) return
         setActiveSource(id)
@@ -8850,7 +8859,7 @@ const thumbCache = new Map()
               opacity: ready ? 1 : 0.55,
               ...(shown ? S.typeRowActive : null),
             },
-            onClick: () => openLibrary(id),
+            onClick: () => libraryClicked(id),
           }, [
             h('span', { key: 'name', style: S.typeName }, (ready ? '' : '○ ') + library.name),
             h('span', {
