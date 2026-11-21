@@ -1203,6 +1203,7 @@ const thumbCache = new Map()
       'node.sourceLocal': 'Local',
       'node.sourceRemote': 'Remote',
       'workflow.new': 'New workflow',
+      'workflow.import': 'Import a workflow file',
       'workflow.unnamed': 'Untitled workflow',
       'workflow.unsaved': 'Unsaved',
       'workflow.create': 'Create it',
@@ -1232,7 +1233,6 @@ const thumbCache = new Map()
       minimap: 'Overview',
       'empty.title': 'An empty canvas',
       'empty.sub': 'Drop a ComfyUI workflow file here to begin. Nodes come from an imported workflow or a copied selection.',
-      dragging: 'Drop to import the workflow',
       'library.loading': 'Loading packs…',
       'library.empty': 'Add a pack under node-canvas/packs/ and reload.',
       'library.section.nodes': 'Node library',
@@ -1405,6 +1405,7 @@ const thumbCache = new Map()
       'node.sourceLocal': '本地',
       'node.sourceRemote': '远程',
       'workflow.new': '新建工作流',
+      'workflow.import': '导入工作流文件',
       'workflow.unnamed': '未命名工作流',
       'workflow.unsaved': '未保存',
       'workflow.create': '新建',
@@ -1434,7 +1435,6 @@ const thumbCache = new Map()
       minimap: '缩略图',
       'empty.title': '画布是空的',
       'empty.sub': '把 ComfyUI 工作流文件拖进来开始。节点来自导入的工作流，或复制的选区。',
-      dragging: '松开以导入工作流',
       'library.loading': '正在载入节点包…',
       'library.empty': '把节点包放进 node-canvas/packs/ 后刷新。',
       'library.section.nodes': '节点库',
@@ -1568,6 +1568,7 @@ const thumbCache = new Map()
       save: ['M4 6a2 2 0 0 1 2-2h9l4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z', 'M8 4v5h6V4', 'M8 13h8v7H8z'],
       saveAs: ['M4 6a2 2 0 0 1 2-2h8l3 3v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z', 'M8 4v4h5V4', 'M16 14v6', 'M13 17h6'],
       exportWorkflow: ['M12 15V4', 'M8.5 7.5 12 4l3.5 3.5', 'M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4'],
+      importWorkflow: ['M12 3v10', 'M8.5 9.5 12 13l3.5-3.5', 'M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5'],
       // Solid, so the little run control reads as a triangle rather than an outline.
       play: ['M9 5.5 18.5 12 9 18.5Z'],
       pause: ['M9 5.5v13', 'M15 5.5v13'],
@@ -1693,20 +1694,6 @@ const thumbCache = new Map()
         flexDirection: 'column',
         minHeight: 0,
         background: 'var(--dsw-alias-bg-base)',
-      },
-      dropOverlay: {
-        position: 'absolute',
-        inset: '8px',
-        zIndex: 30,
-        display: 'grid',
-        placeItems: 'center',
-        pointerEvents: 'none',
-        borderRadius: '12px',
-        border: '2px dashed var(--dsw-alias-brand-primary)',
-        background: 'color-mix(in srgb, var(--dsw-alias-bg-base) 78%, transparent)',
-        color: 'var(--dsw-alias-label-primary)',
-        fontSize: '13px',
-        fontWeight: 600,
       },
       libraryHint: {
         padding: '6px 4px',
@@ -1850,6 +1837,10 @@ const thumbCache = new Map()
         boxSizing: 'border-box',
         border: '1px dashed var(--dsw-alias-border-l3)',
         borderRadius: '7px',
+      },
+      workflowNewLabel: {
+        fontSize: '11px',
+        color: 'var(--dsw-alias-label-secondary)',
       },
       workflowNewButton: {
         flex: 1,
@@ -2728,7 +2719,6 @@ const thumbCache = new Map()
       const [marquee, setMarquee] = React.useState(null)
       const marqueeRef = React.useRef(null)
       const [hoverPort, setHoverPort] = React.useState(null)
-      const [dragging, setDragging] = React.useState(false)
       const [packs, setPacks] = useStored('packs', [])
       // Local is the plugin's own node/workflow protocol; everything else is a backend's source.
       const [activeSource, setActiveSource] = useStored('source', () => {
@@ -5721,11 +5711,16 @@ const thumbCache = new Map()
           setBaseline(saved)
           storeBaseline(saved)
         } else {
-          // An imported file is not the library workflow the canvas was editing.
+          // A file picked in a library becomes an unnamed document of that library: naming and
+          // saving it later writes it there, which is the home tag the import picks up.
+          const home = homeOf(options?.source)
+          if (graphRef.current.nodes.length > 0) rememberCurrent()
           setCurrentWorkflow(null)
-          setCurrentHome('local')
+          setCurrentHome(home)
           setBaseline(null)
           clearBaseline()
+          workflowGraphsRef.current.set(UNNAMED_KEY, next)
+          setPendingSource(home)
         }
         showNotice(tr('notice.imported', { n: next.nodes.length }))
         // An imported workflow often uses node types this canvas has never seen; ask the active
@@ -5737,32 +5732,26 @@ const thumbCache = new Map()
         focusGraph(next)
       }
 
-      function onDragOver(event) {
-        const store = event.dataTransfer
-        if (store === null || store === undefined) return
-        const types = store.types === undefined ? [] : Array.from(store.types)
-        if (types.includes('Files') === false) return
-        event.preventDefault()
-        store.dropEffect = 'copy'
-        setDragging(true)
-      }
-
-      function onDragLeave(event) {
-        // dragleave also fires when moving onto a child; only a real exit clears the hint
-        const next = event.relatedTarget
-        if (next !== null && next !== undefined && event.currentTarget.contains(next)) return
-        setDragging(false)
-      }
-
-      function onDrop(event) {
-        event.preventDefault()
-        setDragging(false)
-        const store = event.dataTransfer
-        const file = store === null || store === undefined ? undefined : store.files[0]
-        if (file === undefined) return
-        const reader = new FileReader()
-        reader.onload = () => importWorkflowText(String(reader.result), file.name.replace(/\.json$/i, ''))
-        reader.readAsText(file)
+      /** Ask for one workflow file: the browser hands over its text, never its path. */
+      function pickWorkflowFile() {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.json,application/json'
+        input.style.display = 'none'
+        input.addEventListener('change', () => {
+          const file = input.files !== null && input.files.length > 0 ? input.files[0] : null
+          input.remove()
+          if (file === null) return
+          const reader = new FileReader()
+          reader.onload = () => importWorkflowText(
+            String(reader.result),
+            file.name.replace(/\.json$/i, ''),
+            { source: activeSource },
+          )
+          reader.readAsText(file)
+        })
+        document.body.appendChild(input)
+        input.click()
       }
 
       function toShellPoint(event) {
@@ -9277,6 +9266,18 @@ const thumbCache = new Map()
                 onClick: () => setNewWorkflowAsk(false),
               }, Glyph('close', 12)),
             ]))
+        // Next to the plus: the same dashed slot, for a file instead of an empty canvas.
+        workflowRows.push(h('div', { key: 'workflow-import', style: S.workflowNew }, h('button', {
+          key: 'import',
+          type: 'button',
+          title: tr('workflow.import'),
+          'aria-label': tr('workflow.import'),
+          style: { ...S.workflowNewButton, gap: '6px' },
+          onClick: () => pickWorkflowFile(),
+        }, [
+          Glyph('importWorkflow', 14),
+          h('span', { key: 'label', style: S.workflowNewLabel }, tr('workflow.import')),
+        ])))
       }
 
       const sourceRows = []
@@ -10668,21 +10669,14 @@ const thumbCache = new Map()
             ]),
           ])
 
-      const dropOverlay = dragging
-        ? h('div', { key: 'drop', style: S.dropOverlay }, tr('dragging'))
-        : null
-
       const page = h('div', {
         key: 'page',
         ref: pageRef,
         style: pageStyle,
-        onDragOver,
-        onDragLeave,
-        onDrop,
         // One handler for the whole panel: keys pressed while the toolbar or the library has
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
-      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, settingsPickerEl, panelsEl, comboMenuEl, dropOverlay])
+      }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, settingsPickerEl, panelsEl, comboMenuEl])
 
       // The frame is what the host lays out. The page inside it becomes a fixed sheet while the
       // door is open, so the frame is the only place the canvas can still be located: its left edge
