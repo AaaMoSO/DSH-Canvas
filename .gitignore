@@ -13,3 +13,6 @@ Thumbs.db
 # node library; anything added beside them is ignored.
 workflows/
 packs/
+
+# The mixed source's sandbox belongs to its extension and is user data.
+extensions/mixed/workflows/

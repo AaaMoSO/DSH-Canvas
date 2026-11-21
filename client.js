@@ -673,24 +673,35 @@ const thumbCache = new Map()
       return found.sort()
     }
 
-    /**
-     * 逻辑归属: what a graph is made of, read from the origins its nodes record. Nothing is
-     * inferred: a node says where it came from, and the canvas is the set of those answers. This is
-     * the reading the corner capsule reports; it can differ from the document's home.
-     */
-    function canvasKind(graph) {
-      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
-      if (nodes.length === 0) return null
-      let kind = null
-      for (const node of nodes) {
-        const owner = originKind(node.origin)
-        // A node that has not been stamped yet leaves the canvas undecided; callers treat that as
-        // "no kind yet" instead of inventing one.
-        if (owner === null) return null
-        if (kind === null) kind = owner
-        else if (kind !== owner) return 'mixed'
+    /** The origins a graph is made of, as counts: the raw fact, without a verdict. */
+    function countsOfGraph(graph) {
+      const counts = { local: 0, remote: 0, undecided: 0 }
+      for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+        const kind = originKind(node.origin)
+        if (kind === 'local') counts.local += 1
+        else if (kind === 'remote') counts.remote += 1
+        else counts.undecided += 1
       }
-      return kind
+      return counts
+    }
+
+    /**
+     * 逻辑归属: what a graph is made of, decided from counts alone so a library can report a
+     * document's state without loading it. Nothing is inferred: a node says where it came from. An
+     * unstamped node leaves the reading undecided rather than inventing one.
+     */
+    function kindOfCounts(counts) {
+      const local = counts?.local === undefined ? 0 : counts.local
+      const remote = counts?.remote === undefined ? 0 : counts.remote
+      const undecided = counts?.undecided === undefined ? 0 : counts.undecided
+      if (local + remote + undecided === 0) return null
+      if (undecided > 0) return null
+      if (local > 0 && remote > 0) return 'mixed'
+      return local > 0 ? 'local' : 'remote'
+    }
+
+    function canvasKind(graph) {
+      return kindOfCounts(countsOfGraph(graph))
     }
 
     /**
@@ -806,6 +817,11 @@ const thumbCache = new Map()
 
     function hydrateGraph(graph, definitionOf) {
       return { ...graph, nodes: graph.nodes.map((node) => hydrateNode(node, definitionOf)) }
+    }
+
+    /** The document a library stores: this library's copy of the graph, inside a v4 envelope. */
+    function documentOf(name, graph, home) {
+      return { format: 'node-canvas-workflow', version: 4, name, home, graph: serializeGraph(graph) }
     }
 
     /** What goes into a workflow file: the graph itself, never a copy of the node definitions. */
@@ -1193,6 +1209,14 @@ const thumbCache = new Map()
       'workflow.discard': 'Discard it',
       'notice.newWorkflow': 'New workflow — name it to keep it',
       'notice.homeUnavailable': 'This workflow belongs to a source that is not available right now.',
+      'library.noNodes': 'This source keeps no nodes of its own. Switch to the source a node lives in and drag it into the workflow.',
+      'workflow.reading.local': 'Ready',
+      'workflow.reading.foreign': 'Not localized',
+      'workflow.reading.missing': 'Definitions missing',
+      'workflow.reading.unknown': 'Unresolved',
+      'dialog.cannotRunTitle': 'Not runnable yet',
+      'dialog.cannotRunMessage': 'This workflow still holds nodes that are not local, so the local executor cannot run it.',
+      'dialog.ok': 'Got it',
       'notice.emptyWorkflow': 'Add a node before saving or running',
       'dialog.unsavedRun': 'This workflow has no name yet: name it and save it before running.',
       grid: 'Show or hide the grid',
@@ -1376,6 +1400,14 @@ const thumbCache = new Map()
       'workflow.discard': '丢弃',
       'notice.newWorkflow': '已新建未命名工作流，命名保存后才会留下',
       'notice.homeUnavailable': '这个工作流属于一个当前不可用的源。',
+      'library.noNodes': '这个源不提供节点库。切到节点所属的那个源，把节点拖进工作流即可。',
+      'workflow.reading.local': '可运行',
+      'workflow.reading.foreign': '未本地化',
+      'workflow.reading.missing': '定义缺失',
+      'workflow.reading.unknown': '未定',
+      'dialog.cannotRunTitle': '还不能运行',
+      'dialog.cannotRunMessage': '这个工作流里还有未本地化的节点，本地执行器无法运行它。',
+      'dialog.ok': '知道了',
       'notice.emptyWorkflow': '先放一个节点，再保存或运行',
       'dialog.unsavedRun': '这个工作流还没有名字：先命名并保存，才能运行。',
       grid: '显示或隐藏网格',
@@ -2717,6 +2749,8 @@ const thumbCache = new Map()
       const [remoteRun, setRemoteRun] = React.useState(() => runController.snapshot().remoteRun)
       // Workflows that live in a backend (ComfyUI's own list), shown next to ours.
       const [backendWorkflows, setBackendWorkflows] = useStored('backendWorkflows', () => ({ source: null, names: [] }))
+      // A registered source's own library, with the reading each document reports.
+      const [sourceWorkflows, setSourceWorkflows] = useStored('sourceWorkflows', () => ({ source: null, items: [] }))
 // Extension packages: the puzzle menu, the add dialog, and the list from the Host.
       const [extensions, setExtensions] = useStored('extensions', [])
       const [extensionMenu, setExtensionMenu] = useStored('extensionMenu', false)
@@ -2732,6 +2766,7 @@ const thumbCache = new Map()
         panels: [],
         hovers: [],
         backends: [],
+        sources: [],
       })
       const [openPanels, setOpenPanels] = useStored('openPanels', [])
       // The settings window is a canvas feature: extensions only add sections to it.
@@ -3248,7 +3283,9 @@ const thumbCache = new Map()
           const payload = await fetch('/node-canvas/extensions', { cache: 'no-store' })
             .then((response) => (response.ok === true ? response.json() : null))
           const formats = []
-          const features = { nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [] }
+          const features = {
+            nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [], sources: [],
+          }
           const sources = [...(payload?.extensions ?? [])].reverse()
           for (const extension of sources) {
             if (typeof extension.client !== 'string' || extension.client === '') continue
@@ -3273,6 +3310,13 @@ const thumbCache = new Map()
                   registerExtensionHover: (hover) => add(features.hovers, hover, (value) => typeof value.render === 'function'),
                   /** An execution backend: the canvas keeps editing, this runs the graph. */
                   registerBackend: (backend) => add(features.backends, backend, (value) => typeof value.id === 'string' && typeof value.start === 'function'),
+                  /**
+                   * A source of its own: a library an extension manages, with its own rules. The
+                   * canvas reads and writes its documents through the methods it is given.
+                   */
+                  registerSource: (source) => add(features.sources, source, (value) => typeof value.id === 'string'
+                    && typeof value.listWorkflows === 'function'
+                    && typeof value.writeWorkflow === 'function'),
                 })
               } else if (module.adapter !== null && typeof module.adapter === 'object') {
                 // One-release compatibility with the first adapter-only shape.
@@ -3290,6 +3334,7 @@ const thumbCache = new Map()
             panels: features.panels.reverse(),
             hovers: features.hovers.reverse(),
             backends: features.backends.reverse(),
+            sources: features.sources.reverse(),
           })
         } catch {
           // The Host not answering leaves the registered capabilities as they were.
@@ -3550,7 +3595,7 @@ const thumbCache = new Map()
           showNotice(tr('notice.mixedCanvas'))
           return 0
         }
-        if (kind === 'remote' || kind === 'local') {
+        if ((kind === 'remote' || kind === 'local') && documentAllowsMixed() === false) {
           // A node with no origin is not foreign, it is undecided: the effect stamps it afterwards.
           const foreign = payload.nodes.some((node) => {
             const owner = originKind(node.origin)
@@ -4198,17 +4243,17 @@ const thumbCache = new Map()
       async function autosaveWorkflow(name) {
         if (name === null) return
         // A document that belongs to a backend is written back by hand, never in the background.
-        if (isBackendHome(currentHome)) return
+        const home = currentHome
+        if (isBackendHome(home)) return
         try {
-          const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
-            method: 'PUT',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ graph: serializeGraph(graphRef.current), home: currentHome }),
-          })
-          if (response.ok !== true) throw new Error('HTTP ' + response.status)
-          workflowGraphsRef.current.set(name, graphRef.current)
+          await writeDocument(home, name, graphRef.current)
           const savedCopy = { name, json: graphSignature(graphRef.current) }
-          workflowBaselinesRef.current.set(name, savedCopy.json)
+          if (home === 'local') {
+            workflowGraphsRef.current.set(name, graphRef.current)
+            workflowBaselinesRef.current.set(name, savedCopy.json)
+          } else {
+            void loadSourceWorkflows(home)
+          }
           setBaseline(savedCopy)
           storeBaseline(savedCopy)
         } catch (error) {
@@ -4220,27 +4265,27 @@ const thumbCache = new Map()
       async function writeWorkflow(name, options) {
         // Where the file goes is the document's factual home, never what it happens to contain: a
         // workflow created in a backend's list is saved there even when every node in it is local.
-        if (isBackendHome(currentHome)) {
+        const home = currentHome
+        if (isBackendHome(home)) {
           return await saveMappedWorkflow(name, options)
         }
         try {
-          const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
-            method: 'PUT',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ graph: serializeGraph(graphRef.current), home: currentHome }),
-          })
-          if (response.ok !== true) throw new Error('HTTP ' + response.status)
-          workflowGraphsRef.current.set(name, graphRef.current)
+          await writeDocument(home, name, graphRef.current)
           // The canvas has a file now: it is an ordinary workflow from here on.
           workflowGraphsRef.current.delete(UNNAMED_KEY)
           setPendingSource(null)
           setCurrentWorkflow(name)
           const savedCopy = { name, json: graphSignature(graphRef.current) }
-          workflowBaselinesRef.current.set(name, savedCopy.json)
+          if (home === 'local') {
+            workflowGraphsRef.current.set(name, graphRef.current)
+            workflowBaselinesRef.current.set(name, savedCopy.json)
+            loadWorkflows()
+          } else {
+            void loadSourceWorkflows(home)
+          }
           setBaseline(savedCopy)
           storeBaseline(savedCopy)
           showNotice(tr('notice.saved', { name }))
-          loadWorkflows()
           return true
         } catch (error) {
           showNotice(tr('notice.saveFailed', { message: error.message }))
@@ -4324,6 +4369,40 @@ const thumbCache = new Map()
         }
       }
 
+      /** Rename a document inside a registered source's own library. */
+      async function renameSourceWorkflow(sourceId, from, to) {
+        const source = sourceOfHome(sourceId)
+        if (source === null) return
+        try {
+          await source.renameWorkflow(from, to)
+          if (currentWorkflow === from && currentHome === sourceId) setCurrentWorkflow(to)
+          setDialog(null)
+          showNotice(tr('notice.renamed', { to }))
+          void loadSourceWorkflows(sourceId)
+        } catch (error) {
+          setDialog((current) => (current === null ? current : { ...current, error: error.message }))
+        }
+      }
+
+      /** Delete a document inside a registered source's own library. */
+      async function deleteSourceWorkflow(sourceId, name) {
+        const source = sourceOfHome(sourceId)
+        if (source === null) return
+        try {
+          await source.deleteWorkflow(name)
+          if (currentWorkflow === name && currentHome === sourceId) {
+            setCurrentWorkflow(null)
+            setCurrentHome('local')
+            setBaseline(null)
+            clearBaseline()
+          }
+          setDialog(null)
+          void loadSourceWorkflows(sourceId)
+        } catch (error) {
+          showNotice(tr('notice.saveFailed', { message: error.message }))
+        }
+      }
+
       async function submitWorkflowName(value) {
         if (dialog === null) return
         const name = value.trim()
@@ -4356,6 +4435,10 @@ const thumbCache = new Map()
             return
           }
           if (typeof dialog.source === 'string' && dialog.source !== '') {
+            if (sourceOfHome(dialog.source) !== null) {
+              await renameSourceWorkflow(dialog.source, dialog.origin, name)
+              return
+            }
             await renameBackendWorkflow(dialog.source, dialog.origin, name)
             return
           }
@@ -4464,23 +4547,6 @@ const thumbCache = new Map()
        * its run carries that workflow's name and the library row shows the same run; only a
        * draft canvas runs as the independent temporary workflow.
        */
-      /** Forget the node shapes one backend produced, cache included. */
-      function dropBackendPack(backendId) {
-        setPacks((current) => current.filter((pack) => pack.remote !== backendId))
-        packsCache = packsCache.filter((pack) => pack.remote !== backendId)
-        try {
-          const raw = localStorage.getItem(REMOTE_PACK_KEY)
-          if (raw !== null) {
-            const cached = JSON.parse(raw)
-            if (cached !== null && typeof cached === 'object' && cached.remote === backendId) {
-              localStorage.removeItem(REMOTE_PACK_KEY)
-            }
-          }
-        } catch {
-          // A corrupt cache is harmless; the pack is gone from state either way.
-        }
-      }
-
       /** The first ready backend that can list its own workflows. */
       function workflowBackend() {
         return backends.find((backend) => isServiceReady(backend.id) === true
@@ -4872,8 +4938,8 @@ const thumbCache = new Map()
               return
             }
             setServiceStates((current) => ({ ...current, [backend.id]: { status: 'idle', startedAt: 0 } }))
-            // The service is what makes these nodes real; without it they are just placeholders.
-            dropBackendPack(backend.id)
+            // The shapes stay: a document that already holds these nodes must still draw them, and
+            // the cache is refreshed when the service comes back rather than thrown away with it.
             setBackendWorkflows({ source: null, names: [] })
             showNotice(tr('notice.backendStopped', { name: backend.name ?? backend.id }))
           } catch (error) {
@@ -5048,7 +5114,8 @@ const thumbCache = new Map()
       }
 
       /** Start the workflow, or stop it when it is already running. */
-      async function runWorkflow(name) {
+      async function runWorkflow(name, home) {
+        const from = home === undefined ? 'local' : home
         const latest = latestRun(name)
         if (latest !== null && latest.status === 'running') {
           try {
@@ -5062,14 +5129,18 @@ const thumbCache = new Map()
         // The library runs what is on disk; unsaved canvas edits go through the temporary run.
         let graph
         try {
-          const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), { cache: 'no-store' })
-          if (response.ok !== true) throw new Error('HTTP ' + response.status)
-          const payload = await response.json()
-          graph = normalizeGraph(payload.graph !== null && typeof payload.graph === 'object'
-            ? payload.graph
+          const document = await readDocument(from, name)
+          graph = normalizeGraph(document.graph !== null && typeof document.graph === 'object'
+            ? document.graph
             : {})
         } catch (error) {
           showNotice(tr('notice.runFailed', { message: error.message }))
+          return
+        }
+        // A sandbox source only runs what has been localized: the reading decides, not the library.
+        const homeSource = sourceOfHome(from)
+        if (homeSource !== null && homeSource.runRequires === 'local' && canvasKind(graph) !== 'local') {
+          setDialog({ mode: 'cannotRun', value: name, error: null })
           return
         }
         let prompt
@@ -5200,10 +5271,88 @@ const thumbCache = new Map()
         return typeof value === 'string' && value !== '' ? value : 'local'
       }
 
+      /** The registered source a home names, if it is one. */
+      function sourceOfHome(home) {
+        return extensionFeatures.sources.find((item) => item.id === home) ?? null
+      }
+
       /** Whether a factual home is another source's own list rather than a library of ours. */
       function isBackendHome(home) {
-        return home !== 'local' && home !== 'mixed'
+        return home !== 'local' && sourceOfHome(home) === null
       }
+
+      /** Whether the document on the canvas may hold nodes from more than one source. */
+      function documentAllowsMixed() {
+        const source = sourceOfHome(currentHome)
+        return source !== null && source.allowsMixed === true
+      }
+
+      /** Whether any loaded pack declares this type; a document using a type none do has holes. */
+      function typeKnown(type) {
+        for (const types of libraries.values()) {
+          if (types.has(type) === true) return true
+        }
+        return false
+      }
+
+      /**
+       * How a stored document reads: its nodes' origins decide local / remote / mixed, and a type
+       * no loaded pack declares reads as missing rather than pretending the document is ready.
+       */
+      function readingOf(item) {
+        const kind = kindOfCounts(item.counts)
+        if (kind === null) return 'unknown'
+        if (Array.isArray(item.types) && item.types.some((type) => typeKnown(type) === false)) return 'missing'
+        return kind
+      }
+
+      /** Read one stored document, wherever its library keeps it. */
+      async function readDocument(home, name) {
+        const source = sourceOfHome(home)
+        if (source !== null) {
+          const document = await source.readWorkflow(name)
+          if (document === null || typeof document !== 'object') throw new Error('HTTP 404')
+          return document
+        }
+        const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), { cache: 'no-store' })
+        if (response.ok !== true) throw new Error('HTTP ' + response.status)
+        return await response.json()
+      }
+
+      /** Write the canvas into the library its home names. */
+      async function writeDocument(home, name, graph) {
+        const source = sourceOfHome(home)
+        if (source !== null) {
+          await source.writeWorkflow(name, documentOf(name, graph, home))
+          return
+        }
+        const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ graph: serializeGraph(graph), home }),
+        })
+        if (response.ok !== true) throw new Error('HTTP ' + response.status)
+      }
+
+      /** Load a registered source's library; a source that fails answers with none. */
+      const loadSourceWorkflows = React.useCallback(async (sourceId) => {
+        const source = extensionFeatures.sources.find((item) => item.id === sourceId)
+        if (source === undefined) {
+          setSourceWorkflows({ source: null, items: [] })
+          return
+        }
+        try {
+          const items = await source.listWorkflows()
+          setSourceWorkflows({ source: sourceId, items: Array.isArray(items) ? items : [] })
+        } catch {
+          setSourceWorkflows({ source: sourceId, items: [] })
+        }
+      }, [extensionFeatures.sources])
+
+      React.useEffect(() => {
+        if (sourceOfHome(activeSource) === null) return
+        void loadSourceWorkflows(activeSource)
+      }, [activeSource, loadSourceWorkflows])
 
       /** The backend a factual home names, when that backend is registered. */
       function backendOfHome(home) {
@@ -5307,12 +5456,15 @@ const thumbCache = new Map()
       }
 
       /** Open a saved workflow; the current canvas stays reachable through undo. */
-      async function openWorkflow(name) {
+      async function openWorkflow(name, home) {
+        const from = home === undefined ? 'local' : home
         // Keep whatever the canvas is holding for the workflow being left behind.
         if (currentWorkflow !== null && currentWorkflow !== name) {
           workflowGraphsRef.current.set(currentWorkflow, graphRef.current)
         }
-        const remembered = workflowGraphsRef.current.get(name)
+        // Only the local library keeps an in-memory copy: a registered source is asked directly, so
+        // two libraries holding a document of the same name can never open the wrong one.
+        const remembered = from === 'local' ? workflowGraphsRef.current.get(name) : undefined
         if (remembered !== undefined) {
           pushHistory()
           updateGraph(remembered)
@@ -5332,13 +5484,11 @@ const thumbCache = new Map()
           return
         }
         try {
-          const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), { cache: 'no-store' })
-          if (response.ok !== true) throw new Error('HTTP ' + response.status)
-          const payload = await response.json()
-          const next = normalizeGraph(payload.graph !== null && typeof payload.graph === 'object'
-            ? payload.graph
+          const document = await readDocument(from, name)
+          const next = normalizeGraph(document.graph !== null && typeof document.graph === 'object'
+            ? document.graph
             : {})
-          setCurrentHome(homeOf(payload.home))
+          setCurrentHome(homeOf(document.home === undefined ? from : document.home))
           pushHistory()
           updateGraph(next)
           // A workflow opens in the middle of the window, at its own scale.
@@ -6820,6 +6970,9 @@ const thumbCache = new Map()
        * node cannot be sent to ComfyUI. Refuse the insertion instead of failing at run time.
        */
       function rejectMixedNode(pack) {
+        // A document that belongs to a sandbox source may hold any node: the restriction is a rule
+        // of the workflow, so it follows the document and not the library being browsed.
+        if (documentAllowsMixed()) return false
         const kind = canvasKind(graphRef.current)
         // A document that already holds both kinds is not allowed to grow any further: whatever
         // was added before the guard existed must be split up first.
@@ -8362,6 +8515,11 @@ const thumbCache = new Map()
       const sources = [
         { id: 'local', name: tr('source.local') },
         ...extensionFeatures.backends.map((backend) => ({ id: backend.id, name: backend.name ?? backend.id })),
+        ...extensionFeatures.sources.map((source) => ({
+          id: source.id,
+          name: settingsText(source.name) || source.id,
+          order: typeof source.order === 'number' ? source.order : 50,
+        })),
       ]
       const sectionRows = [
         { id: 'source', label: tr('library.section.source') },
@@ -8420,6 +8578,12 @@ const thumbCache = new Map()
       }
 
       const packRows = []
+      const activeRegistered = sourceOfHome(activeSource)
+      // A source may keep no nodes of its own: its documents borrow nodes from every other library,
+      // which is why the library of such a source only explains that.
+      if (activeRegistered !== null && activeRegistered.nodes === 'none') {
+        packRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
+      }
       for (const pack of packs.filter((item) => sourceOfPack(item) === activeSource && packVisible(item))) {
         const expanded = openPack === pack.id
         packRows.push(h('button', {
@@ -8467,6 +8631,28 @@ const thumbCache = new Map()
           key: 'pack-empty',
           style: S.libraryHint,
         }, activeSource === 'local' ? tr('library.empty') : tr('library.sourceEmpty')))
+      }
+
+      /** The one-word state a library row reports for a document it holds. */
+      function readingCapsule(item) {
+        const reading = readingOf(item)
+        const tone = reading === 'local'
+          ? 'var(--dsw-alias-state-success-primary)'
+          : reading === 'missing'
+            ? 'var(--dsw-alias-state-warn-primary)'
+            : 'var(--dsw-alias-label-secondary)'
+        return h('span', {
+          key: 'reading',
+          style: {
+            ...S.workflowState,
+            background: 'color-mix(in srgb, ' + tone + ' 16%, var(--dsw-alias-bg-base))',
+            color: tone,
+          },
+        }, reading === 'local'
+          ? tr('workflow.reading.local')
+          : reading === 'missing'
+            ? tr('workflow.reading.missing')
+            : reading === 'unknown' ? tr('workflow.reading.unknown') : tr('workflow.reading.foreign'))
       }
 
       const workflowRows = []
@@ -8536,6 +8722,7 @@ const thumbCache = new Map()
             cancelRunHide()
             setRunHover({
               name: item.name,
+              home: 'local',
               top: Math.round(rect.top - pageRect.top),
               height: Math.round(rect.height),
             })
@@ -8584,6 +8771,58 @@ const thumbCache = new Map()
               }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
             : null,
         ]))
+      }
+      // A registered source's own library: its documents, each saying what it is made of, so the
+      // run button never has to guess and the rows can be read without opening them.
+      if (activeRegistered !== null && sourceWorkflows.source === activeSource) {
+        for (const item of sourceWorkflows.items) {
+          const active = item.name === currentWorkflow && currentHome === activeSource
+          workflowRows.push(h('button', {
+            key: 'source-workflow:' + item.name,
+            type: 'button',
+            title: item.name,
+            style: active
+              ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
+              : { ...S.nodeRow, ...S.workflowRow },
+            onClick: () => {
+              void openWorkflow(item.name, activeSource)
+            },
+            onPointerEnter: (event) => {
+              const page = pageRef.current
+              if (page === null) return
+              const rect = event.currentTarget.getBoundingClientRect()
+              const pageRect = page.getBoundingClientRect()
+              cancelRunHide()
+              setRunHover({
+                name: item.name,
+                home: activeSource,
+                reading: readingOf(item),
+                top: Math.round(rect.top - pageRect.top),
+                height: Math.round(rect.height),
+              })
+            },
+            onPointerLeave: scheduleRunHide,
+            onContextMenu: (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              openMenu(event, [
+                {
+                  label: tr('menu.renameWorkflow'),
+                  run: () => setDialog({ mode: 'rename', source: activeSource, origin: item.name, value: item.name, error: null }),
+                },
+                { separator: true },
+                {
+                  label: tr('menu.deleteWorkflow'),
+                  run: () => setDialog({ mode: 'delete', source: activeSource, value: item.name, error: null }),
+                },
+              ])
+            },
+          }, [
+            h('span', { key: 'dot', style: S.workflowDot }),
+            h('span', { key: 'text', style: S.nodeName }, item.name),
+            readingCapsule(item),
+          ]))
+        }
       }
       // A backend's workflows are just its source's workflows: same rows, no heading, no colour.
       const remoteNames = backendWorkflows.source === activeSource ? backendWorkflows.names : []
@@ -8715,7 +8954,9 @@ const thumbCache = new Map()
           .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
         const workflowsHere = source.id === 'local'
           ? workflows.length
-          : (backendWorkflows.source === source.id ? backendWorkflows.names.length : 0)
+          : (backendWorkflows.source === source.id
+            ? backendWorkflows.names.length
+            : (sourceWorkflows.source === source.id ? sourceWorkflows.items.length : 0))
         sourceRows.push(h('button', {
           key: 'source:' + source.id,
           type: 'button',
@@ -8966,7 +9207,8 @@ const thumbCache = new Map()
                 askToSavePending()
                 return
               }
-              void (runHoverRemote ? runBackendWorkflow(runHover.name) : runWorkflow(runHover.name))
+              const home = runHover.home === undefined ? 'local' : runHover.home
+              void (runHoverRemote ? runBackendWorkflow(runHover.name) : runWorkflow(runHover.name, home))
             },
           }, Glyph(workflowRunState(runHover.name) === 'running' ? 'pause' : 'play', 12)))
 
@@ -9653,16 +9895,20 @@ const thumbCache = new Map()
                 ? tr('dialog.saveAsTitle')
                 : dialog.mode === 'rename'
                   ? tr('dialog.renameTitle')
-                  : dialog.mode === 'remove-extension'
-                    ? tr('extensions.removeTitle')
-                    : tr('dialog.deleteTitle')),
-            dialog.mode === 'delete' || dialog.mode === 'remove-extension'
+                  : dialog.mode === 'cannotRun'
+                    ? tr('dialog.cannotRunTitle')
+                    : dialog.mode === 'remove-extension'
+                      ? tr('extensions.removeTitle')
+                      : tr('dialog.deleteTitle')),
+            dialog.mode === 'delete' || dialog.mode === 'remove-extension' || dialog.mode === 'cannotRun'
               ? h('div', {
                   key: 'message',
                   style: { fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' },
-                }, dialog.mode === 'remove-extension'
-                  ? tr('extensions.removeMessage', { name: dialog.name ?? dialog.value })
-                  : tr('dialog.deleteMessage', { name: dialog.value }))
+                }, dialog.mode === 'cannotRun'
+                  ? tr('dialog.cannotRunMessage')
+                  : dialog.mode === 'remove-extension'
+                    ? tr('extensions.removeMessage', { name: dialog.name ?? dialog.value })
+                    : tr('dialog.deleteMessage', { name: dialog.value }))
               : h('input', {
                   ...NO_SPELL,
                   key: 'name',
@@ -9700,7 +9946,7 @@ const thumbCache = new Map()
               key: 'actions',
               style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' },
             }, [
-              h('button', {
+              dialog.mode === 'cannotRun' ? null : h('button', {
                 key: 'cancel',
                 type: 'button',
                 style: S.dialogButton,
@@ -9721,10 +9967,15 @@ const thumbCache = new Map()
                 onClick: () => {
                   if (dialog.mode === 'delete') {
                     if (typeof dialog.source === 'string' && dialog.source !== '') {
-                      void deleteBackendWorkflow(dialog.source, dialog.value)
+                      if (sourceOfHome(dialog.source) !== null) void deleteSourceWorkflow(dialog.source, dialog.value)
+                      else void deleteBackendWorkflow(dialog.source, dialog.value)
                     } else {
                       void deleteWorkflow(dialog.value)
                     }
+                    return
+                  }
+                  if (dialog.mode === 'cannotRun') {
+                    setDialog(null)
                     return
                   }
                   if (dialog.mode === 'remove-extension') {
@@ -9735,9 +9986,11 @@ const thumbCache = new Map()
                   const field = nameInputRef.current
                   void submitWorkflowName(field === null ? dialog.value : field.value)
                 },
-              }, dialog.mode === 'delete' || dialog.mode === 'remove-extension'
-                ? tr('dialog.delete')
-                : tr('dialog.confirm')),
+              }, dialog.mode === 'cannotRun'
+                ? tr('dialog.ok')
+                : dialog.mode === 'delete' || dialog.mode === 'remove-extension'
+                  ? tr('dialog.delete')
+                  : tr('dialog.confirm')),
             ]),
           ])
 
