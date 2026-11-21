@@ -5510,6 +5510,10 @@ const thumbCache = new Map()
           setMarquee({ x: origin.x, y: origin.y, w: 0, h: 0 })
           return
         }
+        // Promote the sheet for the length of the pan: the browser then moves one cached raster
+        // instead of repainting every node, link and grid dot once per frame.
+        const panLayer = graphLayerRef.current
+        if (panLayer !== null) panLayer.style.willChange = 'transform'
         dragRef.current = {
           kind: 'pan',
           cx0: event.clientX,
@@ -5557,7 +5561,10 @@ const thumbCache = new Map()
           drag.frame = undefined
         }
         const layer = graphLayerRef.current
-        if (layer !== null) layer.style.transform = ''
+        if (layer !== null) {
+          layer.style.transform = ''
+          layer.style.willChange = ''
+        }
         if (drag.moved !== true) {
           select(new Set())
           return
@@ -5827,7 +5834,10 @@ const thumbCache = new Map()
         if (drag !== null && drag.kind === 'pan') {
           if (drag.frame !== undefined) cancelAnimationFrame(drag.frame)
           const layer = graphLayerRef.current
-          if (layer !== null) layer.style.transform = ''
+          if (layer !== null) {
+            layer.style.transform = ''
+            layer.style.willChange = ''
+          }
         }
         // A cancelled drag puts the nodes back where they were; nothing is committed.
         if (drag !== null && drag.kind === 'node') {
