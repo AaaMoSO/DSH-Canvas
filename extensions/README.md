@@ -97,7 +97,8 @@ export function setup(api) {
   deactivate(),// 可选：关闭服务，返回 { stopped }
   writeWorkflow(name, workflow), listWorkflows(), readWorkflow(name),
   newWorkflow(),       // 可选：本源的「新建工作流」返回什么文档；声明了才有库底那个加号
-  importWorkflow(file, ctx) // 可选：本源怎么读一个工作流文件；声明了才有库底那个导入虚线框
+  importWorkflow(file, ctx), // 可选：本源怎么读一个工作流文件；声明了才有库底那个导入虚线框
+  menu: { items: [...] }     // 可选：本源自己画的菜单行，见下（与 registerSource 同一套）
 }
 ```
 
@@ -142,8 +143,9 @@ api.registerSource({
 - **导入归源自己**：`importWorkflow({ name, text }, ctx)` 返回 `{ graph }` 就把这张图当成该源的未命名文档打开（保存时写进该源）；返回 `null` 就当没读出来。
   `ctx.parse(text)` **只认这个源自己声明的格式**（`registerWorkflowFormat` 里 `id` 与源 id 相同的那个适配器），外加画布自己的文档格式；别的拓展的格式在这里读不出来，所以不会互相污染。
   没声明导入的源，工作流库底部不会出现导入虚线框；本地由画布内置的读取器负责（同样只读画布自己的文档格式）；
-- **菜单归声明它的那个源画**：声明了 `menu.items` 的源，主菜单对应那一行下面是它 `rows()` 生成的行，
-  子菜单是它 `panel()` 生成的行；没声明的源（本地、后端）保持画布默认的行，一行都不会多；
+- **菜单归声明它的那个源画**：声明了 `menu.items` 的源（注册源或同名的后端都行），主菜单对应那一行下面是它
+  `rows()` 生成的行，子菜单是它 `panel()` 生成的行；没声明的源保持画布默认的行，一行都不会多；
+  `ctx.workflowRows()` 给出画布原本那份工作流列表，想在它基础上加东西的源直接拿来拼即可；
 - `ctx` 给选行的料和拼行的件：`sources / packsOf(id) / readyOf(id) / sourceIcon(id, size) / tr /
   picked / pick(id)`，行用 `pickRow(id, { label, ready, note }) / packRow(pack) / packOpen(pack) /
   nodeRow(pack, def) / hint(text) / header(text)` 拼。节点行自带拖拽、悬停预览和展开状态，

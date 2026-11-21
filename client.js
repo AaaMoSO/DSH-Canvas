@@ -8787,7 +8787,8 @@ const thumbCache = new Map()
       // switch: a source that declares no library (Local, a backend) keeps the plain pack list, so
       // no extension's menu can change the menu of a source it does not own.
       const activeRegistered = sourceOfHome(activeSource)
-      const activeNodes = menuItemOf(activeRegistered, 'nodes')
+      const activeMenuOwner = menuOwnerOf(activeSource)
+      const activeNodes = menuItemOf(activeMenuOwner, 'nodes')
 
       /**
        * The picture a source goes by: the account avatar for Local, the icon of the extension that
@@ -8893,6 +8894,8 @@ const thumbCache = new Map()
         readyOf: (id) => libraryReady(id) === true,
         sourceIcon,
         picked: librarySourceOpen,
+        /** The canvas' own workflow list for the active source, for an item that extends it. */
+        workflowRows: () => workflowRows,
         pick: (id) => libraryClicked(id),
         ...libraryRows,
       }
@@ -8911,7 +8914,7 @@ const thumbCache = new Map()
       // anything else it declared.
       const menuItems = []
       {
-        const declared = menuItemsOf(activeRegistered)
+        const declared = menuItemsOf(activeMenuOwner)
         for (const id of ['nodes', 'workflows']) {
           menuItems.push(declared.find((item) => item.id === id) ?? coreMenuItem(id))
         }
@@ -8993,6 +8996,17 @@ const thumbCache = new Map()
       /** One named item of a source's menu, or null when it draws nothing under that name. */
       function menuItemOf(source, id) {
         return menuItemsOf(source).find((item) => item.id === id) ?? null
+      }
+
+      /**
+       * The object that owns a source's menu: the source an extension registered, or the backend
+       * that answers to that name. Local has no owner — its menu is the canvas'.
+       */
+      function menuOwnerOf(sourceId) {
+        if (sourceId === 'local') return null
+        const registered = sourceOfHome(sourceId)
+        if (registered !== null) return registered
+        return backends.find((item) => item.id === sourceId) ?? null
       }
 
       /**
@@ -9381,7 +9395,7 @@ const thumbCache = new Map()
       const sourceRows = []
       for (const source of sources) {
         const active = source.id === activeSource
-        const ownNodes = menuItemOf(sourceOfHome(source.id), 'nodes')
+        const ownNodes = menuItemOf(menuOwnerOf(source.id), 'nodes')
         const nodes = ownNodes !== null
           ? (typeof ownNodes.count === 'function' ? ownNodes.count(libraryContext) : 0)
           : packs

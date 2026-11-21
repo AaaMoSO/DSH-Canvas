@@ -307,6 +307,18 @@ const backend = {
   newWorkflow() {
     return { nodes: [], links: [], groups: [], extra: {}, config: {} }
   },
+  /**
+   * This source's menu: one row, the workflow library. The panel is the canvas' own list today —
+   * the row belongs to this extension, so what it shows can change here without touching the canvas.
+   */
+  menu: {
+    items: [{
+      id: 'workflows',
+      panel(context) {
+        return context.workflowRows()
+      },
+    }],
+  },
   /** Import: a ComfyUI workflow file, read by the adapter this same extension registered. */
   importWorkflow(file, context) {
     return { graph: context.parse(file.text, 'comfyui') }
