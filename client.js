@@ -6759,6 +6759,18 @@ const thumbCache = new Map()
         openLibrary(id)
       }
 
+      /** A row that opens a listing below: clicking it again retracts the band. */
+      function sectionClicked(id) {
+        // Unfolding the node library belongs to its own row alone: opening another listing leaves
+        // it exactly as it was, so glancing at the workflows does not throw the picker away.
+        if (barSection === id && bandClosing !== true) {
+          closeBand()
+          return
+        }
+        // Switching listings keeps the band open and only swaps its content.
+        openBand(id)
+      }
+
       function selectSource(id) {
         if (id === activeSource) return
         setActiveSource(id)
@@ -8721,13 +8733,7 @@ const thumbCache = new Map()
               openBand('nodes')
               return
             }
-            if (nodesOpen === true) setNodesOpen(false)
-            if (barSection === section.id && bandClosing !== true) {
-              closeBand()
-              return
-            }
-            // Switching libraries keeps the band open and only swaps its content.
-            openBand(section.id)
+            sectionClicked(section.id)
           },
         }, [
           h('span', { key: 'label', style: S.typeName }, section.label),
