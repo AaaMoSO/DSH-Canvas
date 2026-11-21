@@ -109,6 +109,31 @@ export function setup(api) {
 
 菜单里的「源」可以切换当前源；切换后节点库与工作流库都只列该源的内容。
 
+后端之外，拓展还可以**自带一个源**（`registerSource`）——一个由它自己管理的工作流库，
+比如内置的 `mixed`：
+
+```js
+api.registerSource({
+  id, name,                    // 源的 id 同时是文档里的 home
+  nodes: 'none' | 'own',       // 是否提供节点库；'none' 时节点从别的源的库里拖进来
+  allowsMixed: true,           // 该源的文档允许混合各源节点（本地的限制对它不生效）
+  runRequires: 'local',        // 逻辑归属为 local 才允许运行
+  order,                       // 在源列表里的位置
+  listWorkflows(),             // [{ name, bytes, mtime, counts, types }]，counts 是 origin 的计数
+  readWorkflow(name),          // 文档 { home, graph }，或 null
+  writeWorkflow(name, document),
+  deleteWorkflow(name), renameWorkflow(from, to),
+})
+```
+
+约定：
+
+- 注册源是**常驻**的，没有服务可启动；它的库在装好拓展后就可用；
+- 文档的 `home`（事实归属）决定它存在哪里，逻辑归属（local / remote / mixed）由节点
+  `origin` 现算，两者互不替代；
+- 存储由拓展自己负责，卸载拓展即随它一起消失——内置的 `mixed` 就把文档写在
+  `extensions/mixed/workflows/`。
+
 **新建工作流也归源自己管**：本地库总有那个虚线加号；后端声明了 `newWorkflow()` 且服务可用时，
 它的工作流库底部才出现同样的加号。确认后画布放上该函数返回的文档——此时它还没有名字，不会
 自动保存、也不能运行；等到命名保存，文件写回声明它的那个源。
