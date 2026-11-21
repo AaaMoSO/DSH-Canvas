@@ -9612,6 +9612,8 @@ const thumbCache = new Map()
               const elapsed = status === 'starting' && startedAt > 0
                 ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
                 : 0
+              // An extension may bring a source instead of a service: its tile then opens it.
+              const sourceOfTile = extensionFeatures.sources.find((item) => item.extension === extension.id)
               const title = backend === undefined
                 ? extensionTitle(extension)
                 : status === 'ready'
@@ -9626,7 +9628,7 @@ const thumbCache = new Map()
               'data-extension-tile': extension.id,
               style: {
                 ...(extension.present === false ? { ...S.extensionTile, opacity: 0.45 } : S.extensionTile),
-                cursor: backend === undefined ? 'grab' : 'pointer',
+                cursor: backend === undefined && sourceOfTile === undefined ? 'grab' : 'pointer',
                 borderColor: ring,
                 borderWidth: '2px',
                 ...(extensionDrag === extension.id
@@ -9665,7 +9667,11 @@ const thumbCache = new Map()
                   suppressTileClickRef.current = false
                   return
                 }
-                if (backend !== undefined) void toggleBackendService(backend)
+                if (backend !== undefined) {
+                  void toggleBackendService(backend)
+                  return
+                }
+                if (sourceOfTile !== undefined) selectSource(sourceOfTile.id)
               },
               onContextMenu: (event) => {
                 event.preventDefault()
