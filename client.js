@@ -403,6 +403,8 @@ function getRunController() {
 const REMOTE_PACK_KEY = 'dsh.node-canvas.remotePacks.v2'
 // Which source (Local, ComfyUI, …) the libraries are showing.
 const SOURCE_KEY = 'dsh.node-canvas.source.v1'
+// A workflow that has no file yet is cached under a name no file can take.
+const UNNAMED_KEY = '\u0000untitled'
 // The menu column is resizable: its width, and how much of the height it keeps for itself.
 const LAYOUT_KEY = 'dsh.node-canvas.layout.v1'
 const LAYOUT_DEFAULT_SPLIT = 0.36
@@ -1034,7 +1036,11 @@ const thumbCache = new Map()
         const saved = loadBaseline()
         // A draft that still equals its saved copy has nothing worth restoring.
         if (saved !== null && saved.json === graphSignature(graph)) return null
-        return { graph, workflow: typeof parsed.workflow === 'string' ? parsed.workflow : null }
+        return {
+          graph,
+          workflow: typeof parsed.workflow === 'string' ? parsed.workflow : null,
+          pending: parsed.pending === true,
+        }
       } catch {
         return null
       }
@@ -1178,6 +1184,14 @@ const thumbCache = new Map()
       'canvas.kind.resolving': 'Unresolved',
       'node.sourceLocal': 'Local',
       'node.sourceRemote': 'Remote',
+      'workflow.new': 'New workflow',
+      'workflow.unnamed': 'Untitled workflow',
+      'workflow.unsaved': 'Unsaved',
+      'workflow.create': 'Create it',
+      'workflow.discard': 'Discard it',
+      'notice.newWorkflow': 'New workflow — name it to keep it',
+      'notice.emptyWorkflow': 'Add a node before saving or running',
+      'dialog.unsavedRun': 'This workflow has no name yet: name it and save it before running.',
       grid: 'Show or hide the grid',
       minimap: 'Overview',
       'empty.title': 'An empty canvas',
@@ -1352,6 +1366,14 @@ const thumbCache = new Map()
       'canvas.kind.resolving': '未定',
       'node.sourceLocal': '本地',
       'node.sourceRemote': '远程',
+      'workflow.new': '新建工作流',
+      'workflow.unnamed': '未命名工作流',
+      'workflow.unsaved': '未保存',
+      'workflow.create': '新建',
+      'workflow.discard': '丢弃',
+      'notice.newWorkflow': '已新建未命名工作流，命名保存后才会留下',
+      'notice.emptyWorkflow': '先放一个节点，再保存或运行',
+      'dialog.unsavedRun': '这个工作流还没有名字：先命名并保存，才能运行。',
       grid: '显示或隐藏网格',
       minimap: '缩略图',
       'empty.title': '画布是空的',
@@ -1481,6 +1503,7 @@ const thumbCache = new Map()
         'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
       ],
       close: ['M6 6l12 12', 'M18 6 6 18'],
+      check: ['M5 12.5 10 17.5 19 6.5'],
       undo: ['M9 5 4 10l5 5', 'M4 10h8.5a5.5 5.5 0 0 1 0 11H9'],
       redo: ['M15 5l5 5-5 5', 'M20 10h-8.5a5.5 5.5 0 0 0 0 11H15'],
       save: ['M4 6a2 2 0 0 1 2-2h9l4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z', 'M8 4v5h6V4', 'M8 13h8v7H8z'],
@@ -1750,6 +1773,40 @@ const thumbCache = new Map()
         flex: 'none',
         borderRadius: '50%',
         background: 'var(--dsw-alias-state-idle-primary)',
+      },
+      // The last row of the workflow list: a dashed slot whose plus becomes confirm/cancel.
+      workflowNew: {
+        display: 'flex',
+        alignItems: 'stretch',
+        gap: '6px',
+        height: '28px',
+        marginTop: '8px',
+        padding: '2px',
+        boxSizing: 'border-box',
+        border: '1px dashed var(--dsw-alias-border-l3)',
+        borderRadius: '7px',
+      },
+      workflowNewButton: {
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        border: 'none',
+        borderRadius: '999px',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+      },
+      workflowAsk: {
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        border: 'none',
+        borderRadius: '999px',
+        cursor: 'pointer',
       },
       // One slot of the puzzle menu: fills the bar's width and stays square.
       extensionTile: {
@@ -2612,6 +2669,11 @@ const thumbCache = new Map()
       // The workflow library and the name the canvas is currently saved under.
       const [workflows, setWorkflows] = useStored('workflows', [])
       const [workflowsReady, setWorkflowsReady] = useStored('workflowsReady', false)
+      // A workflow started from the library's plus: it has no file, so nothing saves or runs it
+      // until it is named. newWorkflowAsk is the slot's own confirm/cancel state.
+      const [pendingNew, setPendingNew] = useStored('pendingNew', false)
+      const [newWorkflowAsk, setNewWorkflowAsk] = React.useState(false)
+      const menuShowing = barMenu !== null && barMenu.open === true
       const [currentWorkflow, setCurrentWorkflow] = useStored('currentWorkflow', loadStoredWorkflow)
       // The saved copy of that workflow; when the canvas differs from it the workflow is a draft.
       const [baseline, setBaseline] = useStored('baseline', loadBaseline)
@@ -2910,13 +2972,26 @@ const thumbCache = new Map()
               v: 2,
               ...serializeGraph(graph),
               workflow: currentWorkflow,
+              pending: pendingNew === true,
             }))
           } catch {
             // A full or disabled storage keeps the canvas alive for this session.
           }
         }, 350)
         return () => clearTimeout(timer)
-      }, [graph, currentWorkflow, packsReady])
+      }, [graph, currentWorkflow, packsReady, pendingNew])
+
+      // The unnamed workflow has no file, so it lives in the in-memory cache: switching to another
+      // workflow and back must not lose what was put in it.
+      React.useEffect(() => {
+        if (pendingNew !== true || currentWorkflow !== null) return
+        workflowGraphsRef.current.set(UNNAMED_KEY, graph)
+      }, [pendingNew, currentWorkflow, graph])
+
+      // The confirm/cancel pair belongs to the workflow list; leaving it closes the question.
+      React.useEffect(() => {
+        if (menuShowing !== true || barSection !== 'workflows') setNewWorkflowAsk(false)
+      }, [menuShowing, barSection])
 
       React.useEffect(() => {
         // Panning changes `view` on every pointer move; writing storage per frame would stutter.
@@ -4150,6 +4225,9 @@ const thumbCache = new Map()
           })
           if (response.ok !== true) throw new Error('HTTP ' + response.status)
           workflowGraphsRef.current.set(name, graphRef.current)
+          // The canvas has a file now: it is an ordinary workflow from here on.
+          workflowGraphsRef.current.delete(UNNAMED_KEY)
+          setPendingNew(false)
           setCurrentWorkflow(name)
           const savedCopy = { name, json: graphSignature(graphRef.current) }
           workflowBaselinesRef.current.set(name, savedCopy.json)
@@ -4157,8 +4235,10 @@ const thumbCache = new Map()
           storeBaseline(savedCopy)
           showNotice(tr('notice.saved', { name }))
           loadWorkflows()
+          return true
         } catch (error) {
           showNotice(tr('notice.saveFailed', { message: error.message }))
+          return false
         }
       }
 
@@ -4276,8 +4356,11 @@ const thumbCache = new Map()
           return
         }
         const asCopy = dialog.mode === 'saveAs'
+        // A run that had to ask for a name follows the save it asked for.
+        const runAfterSave = dialog.runAfterSave === true
         setDialog(null)
-        await writeWorkflow(name, { asCopy })
+        const saved = await writeWorkflow(name, { asCopy })
+        if (saved === true && runAfterSave === true) void runWorkflow(name)
       }
 
       /** `idle` | `running` | `error`, taken from the newest run of that workflow. */
@@ -5088,6 +5171,89 @@ const thumbCache = new Map()
           runHideTimerRef.current = 0
           setRunHover(null)
         }, 180)
+      }
+
+      /** A document with nothing in it, and nothing about it carried over from the last one. */
+      function emptyDocument() {
+        return { nodes: [], links: [], groups: [], extra: {}, config: {} }
+      }
+
+      /** Keep the workflow being left behind, so switching back does not reload it. */
+      function rememberCurrent() {
+        if (currentWorkflow !== null) workflowGraphsRef.current.set(currentWorkflow, graphRef.current)
+      }
+
+      /**
+       * Start a workflow that has no file. It sits in the library as a temporary one: no autosave,
+       * no run, and nothing on disk until it is named.
+       */
+      function startPendingWorkflow() {
+        setNewWorkflowAsk(false)
+        // There is only ever one unnamed workflow; the plus returns to it instead of replacing it.
+        if (pendingNew === true) {
+          openPendingWorkflow()
+          return
+        }
+        if (graphRef.current.nodes.length > 0) rememberCurrent()
+        pushHistory()
+        updateGraph(emptyDocument())
+        select(new Set())
+        setEditing(null)
+        setProps(null)
+        setCurrentWorkflow(null)
+        setBaseline(null)
+        clearBaseline()
+        workflowGraphsRef.current.set(UNNAMED_KEY, graphRef.current)
+        setPendingNew(true)
+        focusGraph(graphRef.current)
+        showNotice(tr('notice.newWorkflow'))
+      }
+
+      /** Show the unnamed workflow again; its content only exists in memory. */
+      function openPendingWorkflow() {
+        rememberCurrent()
+        const remembered = workflowGraphsRef.current.get(UNNAMED_KEY)
+        pushHistory()
+        updateGraph(remembered ?? emptyDocument())
+        select(new Set())
+        setEditing(null)
+        setProps(null)
+        setCurrentWorkflow(null)
+        setBaseline(null)
+        clearBaseline()
+        focusGraph(graphRef.current)
+      }
+
+      /** Throw the unnamed workflow away, with whatever it holds. */
+      function discardPendingWorkflow() {
+        workflowGraphsRef.current.delete(UNNAMED_KEY)
+        setPendingNew(false)
+        if (currentWorkflow !== null) return
+        pushHistory()
+        updateGraph(emptyDocument())
+        select(new Set())
+        setEditing(null)
+        setProps(null)
+        setBaseline(null)
+        clearBaseline()
+      }
+
+      /**
+       * Running needs a file. An unnamed workflow is therefore named and saved first, and the run
+       * follows that save, so the click still means what it said.
+       */
+      function askToSavePending() {
+        if (graphRef.current.nodes.length === 0) {
+          showNotice(tr('notice.emptyWorkflow'))
+          return
+        }
+        setDialog({
+          mode: 'save',
+          value: '',
+          error: null,
+          hint: tr('dialog.unsavedRun'),
+          runAfterSave: true,
+        })
       }
 
       /** Open a saved workflow; the current canvas stays reachable through undo. */
@@ -6406,6 +6572,7 @@ const thumbCache = new Map()
         }
         updateGraph(hydrateGraph(draft.graph, definitionFor))
         if (draft.workflow !== null) setCurrentWorkflow(draft.workflow)
+        if (draft.pending === true) setPendingNew(true)
         setBaseline(loadBaseline())
       }, [packsReady, packs])
 
@@ -8057,6 +8224,51 @@ const thumbCache = new Map()
       }
 
       const workflowRows = []
+      // The workflow the plus started: it is in the list before it is on disk.
+      if (pendingNew === true && activeSource === 'local') {
+        workflowRows.push(h('button', {
+          key: 'workflow-pending',
+          type: 'button',
+          title: tr('workflow.unnamed'),
+          style: currentWorkflow === null
+            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
+            : { ...S.nodeRow, ...S.workflowRow },
+          onClick: () => openPendingWorkflow(),
+          onPointerEnter: (event) => {
+            const page = pageRef.current
+            if (page === null) return
+            const rect = event.currentTarget.getBoundingClientRect()
+            const pageRect = page.getBoundingClientRect()
+            cancelRunHide()
+            setRunHover({
+              name: UNNAMED_KEY,
+              pending: true,
+              top: Math.round(rect.top - pageRect.top),
+              height: Math.round(rect.height),
+            })
+          },
+          onPointerLeave: scheduleRunHide,
+          onContextMenu: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openMenu(event, [{ label: tr('workflow.discard'), run: discardPendingWorkflow }])
+          },
+        }, [
+          h('span', {
+            key: 'dot',
+            style: { ...S.workflowDot, background: 'var(--dsw-alias-state-warn-primary)' },
+          }),
+          h('span', { key: 'text', style: S.nodeName }, tr('workflow.unnamed')),
+          h('span', {
+            key: 'state',
+            style: {
+              ...S.workflowState,
+              background: 'color-mix(in srgb, var(--dsw-alias-label-tertiary) 18%, var(--dsw-alias-bg-base))',
+              color: 'var(--dsw-alias-label-secondary)',
+            },
+          }, tr('workflow.unsaved')),
+        ]))
+      }
       for (const item of (activeSource === 'local' ? workflows : [])) {
         const active = item.name === currentWorkflow
         const state = workflowRunState(item.name)
@@ -8206,6 +8418,45 @@ const thumbCache = new Map()
           ? tr('library.workflows.empty')
           : (isServiceReady(activeSource) === true ? tr('library.workflows.sourceEmpty') : tr('library.sourceOffline'))
         workflowRows.push(h('div', { key: 'workflow-empty', style: S.libraryHint }, hint))
+      }
+      // The bottom of the list: a dashed slot that starts a new workflow. Its plus becomes a
+      // confirm/cancel pair, so a stray click never leaves an empty workflow behind.
+      if (activeSource === 'local') {
+        workflowRows.push(h('div', { key: 'workflow-new', style: S.workflowNew }, newWorkflowAsk !== true
+          ? h('button', {
+              key: 'plus',
+              type: 'button',
+              title: tr('workflow.new'),
+              'aria-label': tr('workflow.new'),
+              style: S.workflowNewButton,
+              onClick: () => setNewWorkflowAsk(true),
+            }, Glyph('plus', 14))
+          : [
+              h('button', {
+                key: 'confirm',
+                type: 'button',
+                title: tr('workflow.create'),
+                'aria-label': tr('workflow.create'),
+                style: {
+                  ...S.workflowAsk,
+                  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent)',
+                  color: 'var(--dsw-alias-state-success-primary)',
+                },
+                onClick: () => startPendingWorkflow(),
+              }, Glyph('check', 13)),
+              h('button', {
+                key: 'cancel',
+                type: 'button',
+                title: tr('dialog.cancel'),
+                'aria-label': tr('dialog.cancel'),
+                style: {
+                  ...S.workflowAsk,
+                  background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent)',
+                  color: 'var(--dsw-alias-state-error-primary)',
+                },
+                onClick: () => setNewWorkflowAsk(false),
+              }, Glyph('close', 12)),
+            ]))
       }
 
       const sourceRows = []
@@ -8458,6 +8709,11 @@ const thumbCache = new Map()
             onPointerDown: (event) => event.stopPropagation(),
             onClick: (event) => {
               event.stopPropagation()
+              // An unnamed workflow has nothing to run: the click becomes the prompt to name it.
+              if (runHover.pending === true) {
+                askToSavePending()
+                return
+              }
               void (runHoverRemote ? runBackendWorkflow(runHover.name) : runWorkflow(runHover.name))
             },
           }, Glyph(workflowRunState(runHover.name) === 'running' ? 'pause' : 'play', 12)))
@@ -9180,6 +9436,10 @@ const thumbCache = new Map()
                     if (event.key === 'Escape') setDialog(null)
                   },
                 }),
+            dialog.hint === undefined || dialog.hint === null ? null : h('div', {
+              key: 'hint',
+              style: { fontSize: '11px', lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)' },
+            }, dialog.hint),
             dialog.error === null ? null : h('div', {
               key: 'error',
               style: { fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' },
