@@ -7913,10 +7913,13 @@ const thumbCache = new Map()
       }
 
       // What the canvas is made of, for the corner capsule: empty, local, remote, mixed, or
-      // undecided while some node's pack is not loaded yet.
+      // undecided while some node's pack is not loaded yet. Read once per node set rather than per
+      // render: the reading can only change when a node is added, removed or changed, and moving a
+      // node around must not pay for it.
+      const graphKind = React.useMemo(() => canvasKind(graph), [graph.nodes])
       const canvasSourceState = graph.nodes.length === 0
         ? 'empty'
-        : (canvasKind(graph) ?? 'resolving')
+        : (graphKind ?? 'resolving')
       // The canvas always *is* one library workflow, so the run it follows is that workflow's.
       const localRun = currentWorkflow === null ? null : (latestRun(currentWorkflow) ?? null)
       const localRunning = localRun !== null && localRun.status === 'running'
