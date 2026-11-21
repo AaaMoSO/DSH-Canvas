@@ -16,9 +16,11 @@ remote execution backend when you need its node pack.
   nodes' origins and a node's definition comes from its own pack, so a type that two packs both
   declare is never a guess: a node whose pack is missing shows no shape instead of another pack's.
 - **Workflows**: save / save as / export / rename / delete, plus a status pill that tells whether
-  the canvas still equals its saved copy. A workflow opened from a backend's list lives on that
-  backend: saving writes the backend's own file and keeps no local copy, so the two libraries
-  never drift apart. Save as creates the new file on the backend and the canvas follows its name.
+  the canvas still equals its saved copy. Every document records the library it belongs to
+  (`home`), so a save can never move it from one library to another by accident. A workflow opened
+  from a backend's list lives on that backend: saving writes the backend's own file and keeps no
+  local copy, so the two libraries never drift apart. Save as creates the new file on the backend
+  and the canvas follows its name.
 - **Extensions**: capability packages that enhance the plugin (workflow formats, node views,
   toolbar actions, panels, hover cards, execution backends). Drag a folder into the puzzle menu to
   register one; order them by dragging, top wins. See [extensions/README.md](extensions/README.md).
@@ -113,7 +115,7 @@ index.js       host: packs, workflows, output files, extension routes
 executor.js    generic executor: graph → programs, locks, per-run workspace
 packs/         node packs you install (not tracked: the folder is yours)
 extensions/    capability packages (a ComfyUI format adapter + backend, a hover card)
-workflows/     saved workflows (v3: types, values, and the pack each node came from)
+workflows/     saved workflows (v4: types, values, the pack each node came from, its home)
 locale/        plugin name/description shown by the harness
 ```
 

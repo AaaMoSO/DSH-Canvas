@@ -1040,6 +1040,7 @@ const thumbCache = new Map()
           graph,
           workflow: typeof parsed.workflow === 'string' ? parsed.workflow : null,
           pending: typeof parsed.pending === 'string' ? parsed.pending : null,
+          home: typeof parsed.home === 'string' && parsed.home !== '' ? parsed.home : 'local',
         }
       } catch {
         return null
@@ -2677,6 +2678,10 @@ const thumbCache = new Map()
       const [newWorkflowAsk, setNewWorkflowAsk] = React.useState(false)
       const menuShowing = barMenu !== null && barMenu.open === true
       const [currentWorkflow, setCurrentWorkflow] = useStored('currentWorkflow', loadStoredWorkflow)
+      // The library this document belongs to: `local` today, `mixed` once the sandbox exists, or a
+      // backend id when the document lives in that backend's own list. Recorded, never derived: a
+      // document localized in the sandbox is still a sandbox document until it is moved.
+      const [currentHome, setCurrentHome] = useStored('currentHome', 'local')
       // The saved copy of that workflow; when the canvas differs from it the workflow is a draft.
       const [baseline, setBaseline] = useStored('baseline', loadBaseline)
       // Runs known to the Host, newest first: mirrored from the run controller.
@@ -2977,13 +2982,14 @@ const thumbCache = new Map()
               ...serializeGraph(graph),
               workflow: currentWorkflow,
               pending: pendingSource,
+              home: currentHome,
             }))
           } catch {
             // A full or disabled storage keeps the canvas alive for this session.
           }
         }, 350)
         return () => clearTimeout(timer)
-      }, [graph, currentWorkflow, packsReady, pendingSource])
+      }, [graph, currentWorkflow, packsReady, pendingSource, currentHome])
 
       // The unnamed workflow has no file, so it lives in the in-memory cache: switching to another
       // workflow and back must not lose what was put in it.
@@ -4152,7 +4158,10 @@ const thumbCache = new Map()
         const started = pendingSource !== null && pendingSource !== 'local'
           ? backends.find((backend) => backend.id === pendingSource) ?? null
           : null
-        const owner = started ?? mappedBackendOf(graph)
+        // The document remembers the backend it lives in; node origins are only the fallback for
+        // documents written before a home was recorded.
+        const byHome = backends.find((backend) => backend.id === currentHome) ?? null
+        const owner = started ?? byHome ?? mappedBackendOf(graph)
         if (owner === null) {
           showNotice(tr('notice.writeBackFailed', { message: tr('notice.noBackendForGraph') }))
           return false
@@ -4183,6 +4192,7 @@ const thumbCache = new Map()
         // The canvas has a file now: it is an ordinary workflow from here on.
         workflowGraphsRef.current.delete(UNNAMED_KEY)
         setPendingSource(null)
+        setCurrentHome(owner.id)
         setCurrentWorkflow(target)
         const savedCopy = { name: target, json: graphSignature(graphRef.current) }
         setBaseline(savedCopy)
@@ -4204,7 +4214,7 @@ const thumbCache = new Map()
           const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ graph: serializeGraph(graphRef.current) }),
+            body: JSON.stringify({ graph: serializeGraph(graphRef.current), home: currentHome }),
           })
           if (response.ok !== true) throw new Error('HTTP ' + response.status)
           workflowGraphsRef.current.set(name, graphRef.current)
@@ -4234,10 +4244,11 @@ const thumbCache = new Map()
           const response = await fetch('/node-canvas/workflows/' + encodeURIComponent(name), {
             method: 'PUT',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ graph: serializeGraph(graphRef.current) }),
+            body: JSON.stringify({ graph: serializeGraph(graphRef.current), home: currentHome }),
           })
           if (response.ok !== true) throw new Error('HTTP ' + response.status)
           workflowGraphsRef.current.set(name, graphRef.current)
+          setCurrentHome('local')
           // The canvas has a file now: it is an ordinary workflow from here on.
           workflowGraphsRef.current.delete(UNNAMED_KEY)
           setPendingSource(null)
@@ -4320,6 +4331,7 @@ const thumbCache = new Map()
           workflowBaselinesRef.current.delete(name)
           if (currentWorkflow === name) {
             setCurrentWorkflow(null)
+            setCurrentHome('local')
             setBaseline(null)
             clearBaseline()
           }
@@ -5201,6 +5213,11 @@ const thumbCache = new Map()
         }, 180)
       }
 
+      /** A home as stored: anything unreadable is a local document, which is what v3 files are. */
+      function homeOf(value) {
+        return typeof value === 'string' && value !== '' ? value : 'local'
+      }
+
       /** A document with nothing in it, and nothing about it carried over from the last one. */
       function emptyDocument() {
         return { nodes: [], links: [], groups: [], extra: {}, config: {} }
@@ -5240,6 +5257,7 @@ const thumbCache = new Map()
         setEditing(null)
         setProps(null)
         setCurrentWorkflow(null)
+        setCurrentHome('local')
         setBaseline(null)
         clearBaseline()
         workflowGraphsRef.current.set(UNNAMED_KEY, graphRef.current)
@@ -5258,6 +5276,7 @@ const thumbCache = new Map()
         setEditing(null)
         setProps(null)
         setCurrentWorkflow(null)
+        setCurrentHome('local')
         setBaseline(null)
         clearBaseline()
         focusGraph(graphRef.current)
@@ -5327,6 +5346,7 @@ const thumbCache = new Map()
           const next = normalizeGraph(payload.graph !== null && typeof payload.graph === 'object'
             ? payload.graph
             : {})
+          setCurrentHome(homeOf(payload.home))
           pushHistory()
           updateGraph(next)
           // A workflow opens in the middle of the window, at its own scale.
@@ -5400,6 +5420,7 @@ const thumbCache = new Map()
         if (adopt !== null) {
           // Opened from a backend's own list: that file is the saved copy of what is on screen.
           const saved = { name: adopt, json: graphSignature(next) }
+          setCurrentHome(homeOf(options?.source))
           setCurrentWorkflow(adopt)
           workflowGraphsRef.current.set(adopt, next)
           workflowBaselinesRef.current.set(adopt, saved.json)
@@ -5408,6 +5429,7 @@ const thumbCache = new Map()
         } else {
           // An imported file is not the library workflow the canvas was editing.
           setCurrentWorkflow(null)
+          setCurrentHome('local')
           setBaseline(null)
           clearBaseline()
         }
@@ -6797,6 +6819,7 @@ const thumbCache = new Map()
         updateGraph(hydrateGraph(draft.graph, definitionFor))
         if (draft.workflow !== null) setCurrentWorkflow(draft.workflow)
         if (draft.pending !== null) setPendingSource(draft.pending)
+        setCurrentHome(draft.home)
         setBaseline(loadBaseline())
       }, [packsReady, packs])
 

@@ -161,10 +161,10 @@ async function handle(req, res) {
       const body = await readJson(req)
       const to = workflowName(body.to)
       if (from === null || to === null) throw new HttpError(400, 'invalid workflow name')
-      const graph = await readWorkflow(from)
-      if (graph === null) throw new HttpError(404, 'no workflow named ' + from)
+      const document = await readWorkflow(from)
+      if (document === null) throw new HttpError(404, 'no workflow named ' + from)
       if ((await readWorkflow(to)) !== null) throw new HttpError(409, 'a workflow named ' + to + ' already exists')
-      await writeWorkflow(to, graph)
+      await writeWorkflow(to, document.graph, document.home)
       await deleteWorkflowFile(from)
       send(res, 200, { ok: true, name: to })
       return
@@ -179,16 +179,16 @@ async function handle(req, res) {
         return
       }
       if (req.method === 'GET') {
-        const graph = await readWorkflow(name)
-        if (graph === null) throw new HttpError(404, 'no workflow named ' + name)
-        send(res, 200, { ok: true, name, graph })
+        const document = await readWorkflow(name)
+        if (document === null) throw new HttpError(404, 'no workflow named ' + name)
+        send(res, 200, { ok: true, name, home: document.home, graph: document.graph })
         return
       }
       if (req.method === 'PUT') {
         const body = await readJson(req)
         const graph = body.graph !== null && typeof body.graph === 'object' ? body.graph : null
         if (graph === null) throw new HttpError(400, 'body needs { graph }')
-        await writeWorkflow(name, graph)
+        await writeWorkflow(name, graph, body.home)
         send(res, 200, { ok: true, name })
         return
       }
@@ -1200,7 +1200,10 @@ async function listWorkflows() {
   return workflows
 }
 
-/** The canvas document saved under this name, or null when there is none. */
+/**
+ * The canvas document saved under this name, or null when there is none. `home` is the library the
+ * document belongs to: recorded in the file since v4, and local for anything written before that.
+ */
 async function readWorkflow(name) {
   let raw
   try {
@@ -1208,20 +1211,28 @@ async function readWorkflow(name) {
   } catch {
     return null
   }
+  let parsed
   try {
-    const parsed = JSON.parse(raw)
-    if (parsed !== null && typeof parsed === 'object' && parsed.graph !== null
-      && typeof parsed.graph === 'object') return parsed.graph
-    return parsed !== null && typeof parsed === 'object' ? parsed : null
+    parsed = JSON.parse(raw)
   } catch {
     return null
   }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const graph = parsed.graph !== null && typeof parsed.graph === 'object' ? parsed.graph : parsed
+  const home = typeof parsed.home === 'string' && parsed.home !== '' ? parsed.home : 'local'
+  return { graph, home }
 }
 
-async function writeWorkflow(name, graph) {
+async function writeWorkflow(name, graph, home) {
   await mkdir(WORKFLOWS_DIR, { recursive: true })
-  // v3: every node carries the pack that produced it, so a document is never guessed at again.
-  const document = { format: 'node-canvas-workflow', version: 3, name, graph }
+  // v4: the document remembers the library it belongs to, so a save can never move it by accident.
+  const document = {
+    format: 'node-canvas-workflow',
+    version: 4,
+    name,
+    home: typeof home === 'string' && home !== '' ? home : 'local',
+    graph,
+  }
   await writeFile(path.join(WORKFLOWS_DIR, name + '.json'), JSON.stringify(document, null, 2), 'utf8')
 }
 
