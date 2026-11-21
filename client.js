@@ -8897,65 +8897,84 @@ const thumbCache = new Map()
         ...libraryRows,
       }
 
-      /** One row of the menu's own column: a directory below, or the library unfolded in place. */
-      const sectionRow = (section) => {
-        // The chevron follows what is unfolded; the tint follows what owns the menu. A borrowing
-        // source can leave its libraries unfolded while another listing is examined, and then only
-        // that listing is lit — one row at the first level, never two.
-        const open = section.inline === true && activeNodes !== null
-          ? nodesOpen === true
-          : barSection === section.id
-        const lit = section.inline === true && activeNodes !== null
-          ? nodesOpen === true && (barSection === 'nodes' || barSection === null)
+      /**
+       * The rows every source has, drawn by the canvas: the local source has nothing else, and a
+       * source that declares nothing under a name keeps the canvas' row of that name.
+       */
+      function coreMenuItem(id) {
+        if (id === 'nodes') return { id, label: tr('library.section.nodes'), panel: () => packRows }
+        if (id === 'workflows') return { id, label: tr('library.section.workflows'), panel: () => workflowRows }
+        return null
+      }
+
+      // The active source's column: its own items, in the order the canvas knows them first, then
+      // anything else it declared.
+      const menuItems = []
+      {
+        const declared = menuItemsOf(activeRegistered)
+        for (const id of ['nodes', 'workflows']) {
+          menuItems.push(declared.find((item) => item.id === id) ?? coreMenuItem(id))
+        }
+        for (const item of declared) {
+          if (item.id !== 'nodes' && item.id !== 'workflows') menuItems.push(item)
+        }
+      }
+
+      /** What a row is called when its source did not name it: the canvas' own wording for known ids. */
+      function sectionLabel(id) {
+        if (id === 'nodes') return tr('library.section.nodes')
+        if (id === 'workflows') return tr('library.section.workflows')
+        return id
+      }
+
+      /** One row of the menu's own column: a panel below, or the rows the source unfolds in place. */
+      const sectionRow = (item) => {
+        // A source that draws rows of its own wants them unfolded under the row; everything else
+        // keeps its panel in the band below. The tint follows what owns the menu, never two rows.
+        const inline = typeof item.rows === 'function'
+        const open = inline ? nodesOpen === true : barSection === item.id
+        const lit = inline
+          ? nodesOpen === true && (barSection === item.id || barSection === null)
           : open
         return h('button', {
-          key: 'section:' + section.id,
+          key: 'section:' + item.id,
           type: 'button',
           style: lit ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
           onClick: () => {
-            if (section.inline === true) {
-              // A borrowing source unfolds its libraries here; one with packs of its own opens the
-              // band below straight away, because there is nothing to choose first.
-              if (activeNodes !== null) {
-                if (nodesOpen === true) {
-                  setNodesOpen(false)
-                  if (barSection === 'nodes') closeBand()
-                } else {
-                  setNodesOpen(true)
-                  if (librarySourceOpen !== null) openLibrary(librarySourceOpen)
-                }
-                return
+            if (inline) {
+              if (nodesOpen === true) {
+                setNodesOpen(false)
+                if (barSection === item.id) closeBand()
+              } else {
+                setNodesOpen(true)
+                if (librarySourceOpen !== null) openLibrary(librarySourceOpen)
               }
-              if (barSection === 'nodes' && bandClosing !== true) {
-                closeBand()
-                return
-              }
-              openBand('nodes')
               return
             }
-            sectionClicked(section.id)
+            sectionClicked(item.id)
           },
         }, [
-          h('span', { key: 'label', style: S.typeName }, section.label),
-          // Which source is in use: its own icon, or the account avatar for Local.
-          section.id === 'source'
-            ? h('span', { key: 'current', style: S.sourceCurrent }, [
-                sourceIcon(activeSource, 15),
-                h('span', { key: 'name', style: S.sourceCurrentName },
-                  (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name),
-              ])
-            : null,
-          h('span', {
-            key: 'chevron',
-            style: section.id === 'source' ? { ...S.typeChevron, marginLeft: '2px' } : S.typeChevron,
-          }, open ? '▾' : '▸'),
+          h('span', { key: 'label', style: S.typeName }, item.label ?? sectionLabel(item.id)),
+          h('span', { key: 'chevron', style: S.typeChevron }, open ? '▾' : '▸'),
         ])
       }
-      const sectionRows = [
-        sectionRow({ id: 'source', label: tr('library.section.source') }),
-        sectionRow({ id: 'nodes', label: tr('library.section.nodes'), inline: true }),
-        sectionRow({ id: 'workflows', label: tr('library.section.workflows') }),
-      ]
+
+      /** The source row: the menu's first line, and the one row the canvas always owns. */
+      const sourceRow = h('button', {
+        key: 'section:source',
+        type: 'button',
+        style: barSection === 'source' ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
+        onClick: () => sectionClicked('source'),
+      }, [
+        h('span', { key: 'label', style: S.typeName }, tr('library.section.source')),
+        h('span', { key: 'current', style: S.sourceCurrent }, [
+          sourceIcon(activeSource, 15),
+          h('span', { key: 'name', style: S.sourceCurrentName },
+            (sources.find((entry) => entry.id === activeSource) ?? { name: activeSource }).name),
+        ]),
+        h('span', { key: 'chevron', style: { ...S.typeChevron, marginLeft: '2px' } },
+          barSection === 'source' ? '▾' : '▸'),
+      ])
 
       /**
        * The menu a source draws for itself: one item per row the source wants, each with the panel
@@ -9017,7 +9036,7 @@ const thumbCache = new Map()
 
       // A source with packs of its own — Local, a backend — gets the canvas' plain list instead.
       const packRows = []
-      if (activeNodes === null) {
+      if (activeNodes === null || typeof activeNodes.panel !== 'function') {
         if (packsReady !== true) {
           packRows.push(libraryRows.hint(tr('library.loading')))
         } else {
@@ -9031,9 +9050,7 @@ const thumbCache = new Map()
           }
         }
       }
-      const bandRows = activeNodes === null || typeof activeNodes.panel !== 'function'
-        ? packRows
-        : [].concat(activeNodes.panel(libraryContext, librarySourceOpen))
+
 
       /** The one-word state a library row reports for a document it holds. */
       function readingCapsule(item) {
@@ -9415,11 +9432,16 @@ const thumbCache = new Map()
         + 'box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 2px 10px rgba(0,0,0,0.14)!important}'
         + '.nc-resize-x:active,.nc-resize-y:active{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent)}')
 
-      // The band below the menu carries the directory listings, and the packs of the library the
-      // menu picked.
-      const submenuRows = barSection === 'nodes'
-        ? bandRows
-        : (barSection === 'workflows' ? workflowRows : sourceRows)
+      // The band below the menu carries whatever panel the row that owns the menu has; the rows the
+      // canvas owns answer for themselves.
+      const bandItem = barSection === null
+        ? null
+        : (menuItems.find((item) => item.id === barSection) ?? null)
+      const submenuRows = barSection === null
+        ? []
+        : (bandItem !== null && typeof bandItem.panel === 'function'
+          ? [].concat(bandItem.panel(libraryContext, librarySourceOpen))
+          : (barSection === 'nodes' ? packRows : (barSection === 'workflows' ? workflowRows : sourceRows)))
 
       /** The miniature itself: ports on both sides, widget bars underneath. */
       function previewRows(def) {
@@ -9454,13 +9476,13 @@ const thumbCache = new Map()
         return rows
       }
 
-      // The menu's column: its rows, with the node library unfolding under the row that leads to it.
-      const menuRows = [
-        sectionRows[0],
-        sectionRows[1],
-        libraryEl,
-        sectionRows[2],
-      ]
+      // The menu's column: the source row, then every item of the active source, with the rows an
+      // item unfolds itself rendered directly under that item.
+      const menuRows = [sourceRow]
+      for (const item of menuItems) {
+        menuRows.push(sectionRow(item))
+        if (item.id === 'nodes' && typeof item.rows === 'function' && nodesOpen === true) menuRows.push(libraryEl)
+      }
 
       const barMenuEl = barMenu === null
         ? null
