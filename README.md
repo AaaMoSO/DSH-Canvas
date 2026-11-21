@@ -7,9 +7,9 @@ remote execution backend when you need its node pack.
 ## What it does
 
 - **Infinite canvas**: create nodes, wire ports, marquee/zoom/pan, groups, undo, minimap.
-- **Node packs**: a pack is a folder with `pack.json` (node definitions) and `nodes/<Type>.mjs`
-  (programs). A workflow stores types, widget values and each node's origin — definitions and
-  programs always come from the installed packs.
+- **Node packs**: the plugin ships empty — the Local library is whatever you put in `packs/`
+  (see [Writing a node pack](#writing-a-node-pack)). A workflow stores types, widget values and
+  each node's origin; definitions and programs always come from the installed packs.
 - **Ownership**: every node records the pack that produced it — `origin`, written when the node
   is created and, for a file that predates the field, once when it is first opened. Values are
   `local:<pack>` or `remote:<pack>`. The canvas kind (local / remote / mixed) is the set of its
@@ -48,7 +48,7 @@ cp config.example.json config.json
 
 | Key | Meaning |
 |---|---|
-| `sdCppRoot` | sd.cpp checkout (its `bin/sd-server.exe` and `models/` are used by the sd.cpp pack) |
+| `sdCppRoot` | sd.cpp checkout; the sd.cpp node pack (installed under `packs/`) reads its `bin/sd-server.exe` and `models/` |
 | `sdCppPort` | port the plugin starts `sd-server` on |
 | `outputDir` | folder the previews read finished images from |
 | `workspaceRoot` | scratch root for per-run directories (empty = `.workspace/` beside the plugin) |
@@ -57,13 +57,61 @@ cp config.example.json config.json
 The ComfyUI extension has its own [settings](extensions/comfyui/settings.example.json) (service
 path, python, URL). Copy it to `extensions/comfyui/settings.json` when you use that backend.
 
+## Writing a node pack
+
+`packs/` is yours. A pack is one directory in it:
+
+```
+packs/my-pack/
+  pack.json           # what the nodes are
+  nodes/AddText.mjs   # what they do, one file per type
+```
+
+`pack.json` — the shape mirrors ComfyUI's `/object_info`:
+
+```json
+{
+  "name": "My pack",
+  "nodes": [
+    {
+      "type": "AddText",
+      "display_name": "Add text",
+      "category": "text",
+      "inputs": [
+        { "name": "text", "type": "STRING", "widget": true, "default": "" }
+      ],
+      "outputs": [{ "name": "text", "type": "STRING" }]
+    }
+  ]
+}
+```
+
+`nodes/AddText.mjs` — the returned array is the node's outputs, in order:
+
+```js
+export async function run(inputs, ctx) {
+  return [{ text: String(inputs.text ?? '').toUpperCase() }]
+}
+```
+
+- an input with `"widget": true` is drawn as a control instead of a socket: `"multiline": true`
+  makes it a textarea, `"options": [...]` a dropdown, and `"folder"` (with the pack's
+  `"modelsRoot"`) a file picker;
+- a pack may set `"outputRoot"` and a node `"preview": { "type": "image", "prefixFrom": "…" }`
+  to list and show the files that node writes;
+- the library re-reads `packs/` every time its menu opens, so a pack you copy in works without a
+  restart;
+- a node whose program is missing still draws, and only fails when it runs.
+
+Extensions can contribute packs too — see [extensions/README.md](extensions/README.md).
+
 ## Layout
 
 ```
 client.js      canvas UI (single bundle, no JSX)
 index.js       host: packs, workflows, output files, extension routes
 executor.js    generic executor: graph → programs, locks, per-run workspace
-packs/         node packs
+packs/         node packs you install (not tracked: the folder is yours)
 extensions/    capability packages (a ComfyUI format adapter + backend, a hover card)
 workflows/     saved workflows (v3: types, values, and the pack each node came from)
 locale/        plugin name/description shown by the harness
