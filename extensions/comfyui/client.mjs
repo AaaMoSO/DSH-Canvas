@@ -300,6 +300,13 @@ const backend = {
   async cancel() {
     await call('/interrupt', { method: 'POST' })
   },
+  /**
+   * A new workflow for this source. The canvas asks instead of assuming: ComfyUI's new workflow is
+   * an empty graph, and it only becomes a file here when the user names it.
+   */
+  newWorkflow() {
+    return { nodes: [], links: [], groups: [], extra: {}, config: {} }
+  },
   /** Save the edited graph where ComfyUI's workflow list reads it. */
   async writeWorkflow(name, workflow) {
     return call('/workflow/write', {

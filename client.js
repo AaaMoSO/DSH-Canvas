@@ -1039,7 +1039,7 @@ const thumbCache = new Map()
         return {
           graph,
           workflow: typeof parsed.workflow === 'string' ? parsed.workflow : null,
-          pending: parsed.pending === true,
+          pending: typeof parsed.pending === 'string' ? parsed.pending : null,
         }
       } catch {
         return null
@@ -2669,9 +2669,10 @@ const thumbCache = new Map()
       // The workflow library and the name the canvas is currently saved under.
       const [workflows, setWorkflows] = useStored('workflows', [])
       const [workflowsReady, setWorkflowsReady] = useStored('workflowsReady', false)
-      // A workflow started from the library's plus: it has no file, so nothing saves or runs it
-      // until it is named. newWorkflowAsk is the slot's own confirm/cancel state.
-      const [pendingNew, setPendingNew] = useStored('pendingNew', false)
+      // The source a workflow started from the library's plus belongs to, if there is one. It has
+      // no file, so nothing saves or runs it until it is named; newWorkflowAsk is the slot's own
+      // confirm/cancel state.
+      const [pendingSource, setPendingSource] = useStored('pendingSource', null)
       const [newWorkflowAsk, setNewWorkflowAsk] = React.useState(false)
       const menuShowing = barMenu !== null && barMenu.open === true
       const [currentWorkflow, setCurrentWorkflow] = useStored('currentWorkflow', loadStoredWorkflow)
@@ -2972,21 +2973,21 @@ const thumbCache = new Map()
               v: 2,
               ...serializeGraph(graph),
               workflow: currentWorkflow,
-              pending: pendingNew === true,
+              pending: pendingSource,
             }))
           } catch {
             // A full or disabled storage keeps the canvas alive for this session.
           }
         }, 350)
         return () => clearTimeout(timer)
-      }, [graph, currentWorkflow, packsReady, pendingNew])
+      }, [graph, currentWorkflow, packsReady, pendingSource])
 
       // The unnamed workflow has no file, so it lives in the in-memory cache: switching to another
       // workflow and back must not lose what was put in it.
       React.useEffect(() => {
-        if (pendingNew !== true || currentWorkflow !== null) return
+        if (pendingSource === null || currentWorkflow !== null) return
         workflowGraphsRef.current.set(UNNAMED_KEY, graph)
-      }, [pendingNew, currentWorkflow, graph])
+      }, [pendingSource, currentWorkflow, graph])
 
       // The confirm/cancel pair belongs to the workflow list; leaving it closes the question.
       React.useEffect(() => {
@@ -4144,19 +4145,23 @@ const thumbCache = new Map()
        */
       async function saveMappedWorkflow(name, options) {
         const graph = graphRef.current
-        const owner = mappedBackendOf(graph)
+        // A new workflow belongs to the list it was started in, even while it is still empty.
+        const started = pendingSource !== null && pendingSource !== 'local'
+          ? backends.find((backend) => backend.id === pendingSource) ?? null
+          : null
+        const owner = started ?? mappedBackendOf(graph)
         if (owner === null) {
           showNotice(tr('notice.writeBackFailed', { message: tr('notice.noBackendForGraph') }))
-          return
+          return false
         }
         if (isServiceReady(owner.id) !== true) {
           showNotice(tr('notice.backendNeeded', { name: owner.name ?? owner.id }))
-          return
+          return false
         }
         const adapter = adapterFor(owner)
         if (adapter === undefined || typeof adapter.serialize !== 'function') {
           showNotice(tr('notice.writeBackFailed', { message: tr('notice.noBackendForGraph') }))
-          return
+          return false
         }
         const asCopy = options?.asCopy === true
         const mapped = typeof graph.extra?.comfyuiSource === 'string' && graph.extra.comfyuiSource.trim() !== ''
@@ -4167,17 +4172,21 @@ const thumbCache = new Map()
           await owner.writeWorkflow(target, adapter.serialize(graph, adapterContext()))
         } catch (error) {
           showNotice(tr('notice.writeBackFailed', { message: error.message }))
-          return
+          return false
         }
         updateGraph({
           extra: { ...(graph.extra ?? {}), comfyuiSource: target },
         })
+        // The canvas has a file now: it is an ordinary workflow from here on.
+        workflowGraphsRef.current.delete(UNNAMED_KEY)
+        setPendingSource(null)
         setCurrentWorkflow(target)
         const savedCopy = { name: target, json: graphSignature(graphRef.current) }
         setBaseline(savedCopy)
         storeBaseline(savedCopy)
         showNotice(tr('notice.writeBackDone', { name: target }))
         void loadBackendWorkflows(owner.id)
+        return true
       }
 
       /**
@@ -4207,10 +4216,11 @@ const thumbCache = new Map()
 
       /** Write the canvas document into the workflow library under `name`. */
       async function writeWorkflow(name, options) {
-        // A mapped canvas is saved where it came from, not into the local library.
-        if (canvasKind(graphRef.current) === 'remote') {
-          await saveMappedWorkflow(name, options)
-          return
+        // A mapped canvas is saved where it came from, not into the local library; so is a
+        // workflow started in a backend's own list, even before it holds a single node.
+        const fromBackend = pendingSource !== null && pendingSource !== 'local'
+        if (canvasKind(graphRef.current) === 'remote' || fromBackend === true) {
+          return await saveMappedWorkflow(name, options)
         }
         // "Save as" starts a new local workflow; a plain save keeps the existing name.
         if (options?.asCopy === true) {
@@ -4227,7 +4237,7 @@ const thumbCache = new Map()
           workflowGraphsRef.current.set(name, graphRef.current)
           // The canvas has a file now: it is an ordinary workflow from here on.
           workflowGraphsRef.current.delete(UNNAMED_KEY)
-          setPendingNew(false)
+          setPendingSource(null)
           setCurrentWorkflow(name)
           const savedCopy = { name, json: graphSignature(graphRef.current) }
           workflowBaselinesRef.current.set(name, savedCopy.json)
@@ -4356,11 +4366,15 @@ const thumbCache = new Map()
           return
         }
         const asCopy = dialog.mode === 'saveAs'
-        // A run that had to ask for a name follows the save it asked for.
+        // A run that had to ask for a name follows the save it asked for, in the source that owns it.
         const runAfterSave = dialog.runAfterSave === true
+        const owner = pendingSource
         setDialog(null)
         const saved = await writeWorkflow(name, { asCopy })
-        if (saved === true && runAfterSave === true) void runWorkflow(name)
+        if (saved === true && runAfterSave === true) {
+          if (owner !== null && owner !== 'local') void runBackendWorkflow(name)
+          else void runWorkflow(name)
+        }
       }
 
       /** `idle` | `running` | `error`, taken from the newest run of that workflow. */
@@ -4946,6 +4960,17 @@ const thumbCache = new Map()
         return ''
       }
 
+      /**
+       * Whether a source offers "new workflow". The local library always does; a backend says so by
+       * declaring the hook, and only while its files can actually be written.
+       */
+      function canStartWorkflow(sourceId) {
+        if (sourceId === 'local') return true
+        if (isServiceReady(sourceId) !== true) return false
+        const backend = backends.find((item) => item.id === sourceId)
+        return backend !== undefined && typeof backend.newWorkflow === 'function'
+      }
+
       /** The backend that owns a remote workflow, taken from what its nodes say. */
       function remoteOwnerOf(graph) {
         for (const node of graph.nodes) {
@@ -5184,19 +5209,30 @@ const thumbCache = new Map()
       }
 
       /**
-       * Start a workflow that has no file. It sits in the library as a temporary one: no autosave,
-       * no run, and nothing on disk until it is named.
+       * Start a workflow that has no file. The source says what a new one of theirs starts as, so a
+       * backend's new workflow is as much its own shape as a local one. Either way it sits in the
+       * library as a temporary row: no autosave, no run, and nothing on disk until it is named.
        */
-      function startPendingWorkflow() {
+      async function startPendingWorkflow() {
         setNewWorkflowAsk(false)
-        // There is only ever one unnamed workflow; the plus returns to it instead of replacing it.
-        if (pendingNew === true) {
-          openPendingWorkflow()
-          return
+        const source = activeSource
+        let document = emptyDocument()
+        if (source !== 'local') {
+          const backend = backends.find((item) => item.id === source)
+          if (backend === undefined || typeof backend.newWorkflow !== 'function') return
+          let started
+          try {
+            started = await backend.newWorkflow()
+          } catch (error) {
+            showNotice(tr('notice.runFailed', { message: error.message }))
+            return
+          }
+          if (started === null || started === undefined) return
+          document = started.graph ?? started
         }
         if (graphRef.current.nodes.length > 0) rememberCurrent()
         pushHistory()
-        updateGraph(emptyDocument())
+        updateGraph({ ...emptyDocument(), ...document })
         select(new Set())
         setEditing(null)
         setProps(null)
@@ -5204,7 +5240,7 @@ const thumbCache = new Map()
         setBaseline(null)
         clearBaseline()
         workflowGraphsRef.current.set(UNNAMED_KEY, graphRef.current)
-        setPendingNew(true)
+        setPendingSource(source)
         focusGraph(graphRef.current)
         showNotice(tr('notice.newWorkflow'))
       }
@@ -5227,7 +5263,7 @@ const thumbCache = new Map()
       /** Throw the unnamed workflow away, with whatever it holds. */
       function discardPendingWorkflow() {
         workflowGraphsRef.current.delete(UNNAMED_KEY)
-        setPendingNew(false)
+        setPendingSource(null)
         if (currentWorkflow !== null) return
         pushHistory()
         updateGraph(emptyDocument())
@@ -6572,7 +6608,7 @@ const thumbCache = new Map()
         }
         updateGraph(hydrateGraph(draft.graph, definitionFor))
         if (draft.workflow !== null) setCurrentWorkflow(draft.workflow)
-        if (draft.pending === true) setPendingNew(true)
+        if (draft.pending !== null) setPendingSource(draft.pending)
         setBaseline(loadBaseline())
       }, [packsReady, packs])
 
@@ -8225,7 +8261,7 @@ const thumbCache = new Map()
 
       const workflowRows = []
       // The workflow the plus started: it is in the list before it is on disk.
-      if (pendingNew === true && activeSource === 'local') {
+      if (pendingSource !== null && activeSource === pendingSource) {
         workflowRows.push(h('button', {
           key: 'workflow-pending',
           type: 'button',
@@ -8421,7 +8457,7 @@ const thumbCache = new Map()
       }
       // The bottom of the list: a dashed slot that starts a new workflow. Its plus becomes a
       // confirm/cancel pair, so a stray click never leaves an empty workflow behind.
-      if (activeSource === 'local') {
+      if (canStartWorkflow(activeSource) === true) {
         workflowRows.push(h('div', { key: 'workflow-new', style: S.workflowNew }, newWorkflowAsk !== true
           ? h('button', {
               key: 'plus',
@@ -8442,7 +8478,9 @@ const thumbCache = new Map()
                   background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent)',
                   color: 'var(--dsw-alias-state-success-primary)',
                 },
-                onClick: () => startPendingWorkflow(),
+                onClick: () => {
+                  void startPendingWorkflow()
+                },
               }, Glyph('check', 13)),
               h('button', {
                 key: 'cancel',

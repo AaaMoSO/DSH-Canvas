@@ -95,7 +95,8 @@ export function setup(api) {
   poll(id),    // { status: 'queued'|'done'|'error'|'cancelled', images?, error? }
   cancel(id),  // 可选
   deactivate(),// 可选：关闭服务，返回 { stopped }
-  writeWorkflow(name, workflow), listWorkflows(), readWorkflow(name)
+  writeWorkflow(name, workflow), listWorkflows(), readWorkflow(name),
+  newWorkflow()  // 可选：本源的「新建工作流」返回什么文档；声明了才有库底那个加号
 }
 ```
 
@@ -107,6 +108,10 @@ export function setup(api) {
   节点库就按这个结构分组，而不是一坨。
 
 菜单里的「源」可以切换当前源；切换后节点库与工作流库都只列该源的内容。
+
+**新建工作流也归源自己管**：本地库总有那个虚线加号；后端声明了 `newWorkflow()` 且服务可用时，
+它的工作流库底部才出现同样的加号。确认后画布放上该函数返回的文档——此时它还没有名字，不会
+自动保存、也不能运行；等到命名保存，文件写回声明它的那个源。
 
 ## 优先级
 
