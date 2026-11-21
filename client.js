@@ -1838,10 +1838,6 @@ const thumbCache = new Map()
         border: '1px dashed var(--dsw-alias-border-l3)',
         borderRadius: '7px',
       },
-      workflowNewLabel: {
-        fontSize: '11px',
-        color: 'var(--dsw-alias-label-secondary)',
-      },
       workflowNewButton: {
         flex: 1,
         display: 'flex',
@@ -5695,45 +5691,80 @@ const thumbCache = new Map()
           showNotice(tr('notice.badFile'))
           return
         }
+        const adopt = typeof options?.adopt === 'string' && options.adopt !== '' ? options.adopt : null
+        if (adopt === null) {
+          openImportedGraph(next, options?.source)
+          return
+        }
         pushHistory()
         updateGraph(next)
         select(new Set())
         setEditing(null)
         setProps(null)
-        const adopt = typeof options?.adopt === 'string' && options.adopt !== '' ? options.adopt : null
-        if (adopt !== null) {
-          // Opened from a backend's own list: that file is the saved copy of what is on screen.
-          const saved = { name: adopt, json: graphSignature(next) }
-          setCurrentHome(homeOf(options?.source))
-          setCurrentWorkflow(adopt)
-          workflowGraphsRef.current.set(adopt, next)
-          workflowBaselinesRef.current.set(adopt, saved.json)
-          setBaseline(saved)
-          storeBaseline(saved)
-        } else {
-          // A file picked in a library becomes an unnamed document of that library: naming and
-          // saving it later writes it there, which is the home tag the import picks up.
-          const home = homeOf(options?.source)
-          if (graphRef.current.nodes.length > 0) rememberCurrent()
-          setCurrentWorkflow(null)
-          setCurrentHome(home)
-          setBaseline(null)
-          clearBaseline()
-          workflowGraphsRef.current.set(UNNAMED_KEY, next)
-          setPendingSource(home)
-        }
+        // Opened from a backend's own list: that file is the saved copy of what is on screen.
+        const saved = { name: adopt, json: graphSignature(next) }
+        setCurrentHome(homeOf(options?.source))
+        setCurrentWorkflow(adopt)
+        workflowGraphsRef.current.set(adopt, next)
+        workflowBaselinesRef.current.set(adopt, saved.json)
+        setBaseline(saved)
+        storeBaseline(saved)
         showNotice(tr('notice.imported', { n: next.nodes.length }))
-        // An imported workflow often uses node types this canvas has never seen; ask the active
-        // backend for their shapes instead of leaving red placeholders behind.
-        if (next.nodes.some((node) => node.missing === true)) {
-          const owner = backends.find((backend) => isServiceReady(backend.id) === true)
-          if (owner !== undefined) void prepareBackend(owner)
-        }
         focusGraph(next)
       }
 
+      /**
+       * An imported graph becomes an unnamed document of the library that imported it: naming and
+       * saving it later writes the document there, which is the home the import gave it.
+       */
+      function openImportedGraph(graph, sourceId) {
+        if (graphRef.current.nodes.length > 0) rememberCurrent()
+        pushHistory()
+        updateGraph(graph)
+        select(new Set())
+        setEditing(null)
+        setProps(null)
+        const home = homeOf(sourceId)
+        setCurrentWorkflow(null)
+        setCurrentHome(home)
+        setBaseline(null)
+        clearBaseline()
+        workflowGraphsRef.current.set(UNNAMED_KEY, graph)
+        setPendingSource(home)
+        showNotice(tr('notice.imported', { n: graph.nodes.length }))
+        // An imported workflow often uses types this canvas has never seen; ask the active backend
+        // for their shapes instead of leaving red placeholders behind.
+        if (graph.nodes.some((node) => node.missing === true)) {
+          const owner = backends.find((backend) => isServiceReady(backend.id) === true)
+          if (owner !== undefined) void prepareBackend(owner)
+        }
+        focusGraph(graph)
+      }
+
+      /** The local library's import: any file format the canvas itself can read. */
+      function localImporter(file, context) {
+        return { graph: context.parse(file.text, 'local') }
+      }
+
+      /**
+       * What a source does with an imported file, if it does anything at all. Import belongs to the
+       * source: a format an extension brought stays inside that extension, and a source that
+       * declares nothing simply has no import slot.
+       */
+      function importerOf(sourceId) {
+        if (sourceId === 'local') return localImporter
+        const registered = sourceOfHome(sourceId)
+        if (registered !== null) {
+          return typeof registered.importWorkflow === 'function' ? registered.importWorkflow : null
+        }
+        const backend = backends.find((item) => item.id === sourceId)
+        return backend !== undefined && typeof backend.importWorkflow === 'function' ? backend.importWorkflow : null
+      }
+
       /** Ask for one workflow file: the browser hands over its text, never its path. */
-      function pickWorkflowFile() {
+      function pickWorkflowFile(sourceId) {
+        const importer = importerOf(sourceId)
+        if (importer === null) return
         const input = document.createElement('input')
         input.type = 'file'
         input.accept = '.json,application/json'
@@ -5743,15 +5774,38 @@ const thumbCache = new Map()
           input.remove()
           if (file === null) return
           const reader = new FileReader()
-          reader.onload = () => importWorkflowText(
-            String(reader.result),
-            file.name.replace(/\.json$/i, ''),
-            { source: activeSource },
-          )
+          reader.onload = () => {
+            void runImport(importer, sourceId, {
+              name: file.name.replace(/\.json$/i, ''),
+              text: String(reader.result),
+            })
+          }
           reader.readAsText(file)
         })
         document.body.appendChild(input)
         input.click()
+      }
+
+      /** Hand the file to the source, then open whatever graph it made of it. */
+      async function runImport(importer, sourceId, file) {
+        let result
+        try {
+          result = await importer(file, { parse: (text, sourceName) => graphFromText(text, sourceName) })
+        } catch {
+          showNotice(tr('notice.badFile'))
+          return
+        }
+        const graph = result === null || result === undefined ? null : result.graph
+        if (graph === null || graph === undefined
+          || (Array.isArray(graph.nodes) !== true && Array.isArray(graph.links) !== true)) {
+          showNotice(tr('notice.badFile'))
+          return
+        }
+        if (graph.nodes.length === 0 && graph.links.length === 0) {
+          showNotice(tr('notice.badFile'))
+          return
+        }
+        openImportedGraph(graph, sourceId)
       }
 
       function toShellPoint(event) {
@@ -9266,18 +9320,19 @@ const thumbCache = new Map()
                 onClick: () => setNewWorkflowAsk(false),
               }, Glyph('close', 12)),
             ]))
-        // Next to the plus: the same dashed slot, for a file instead of an empty canvas.
+      }
+      // Under the plus: the same dashed slot, for a file instead of an empty canvas. It exists only
+      // where the source knows what to do with a file, which is what keeps every import the
+      // property of the source that owns it.
+      if (importerOf(activeSource) !== null) {
         workflowRows.push(h('div', { key: 'workflow-import', style: S.workflowNew }, h('button', {
           key: 'import',
           type: 'button',
           title: tr('workflow.import'),
           'aria-label': tr('workflow.import'),
-          style: { ...S.workflowNewButton, gap: '6px' },
-          onClick: () => pickWorkflowFile(),
-        }, [
-          Glyph('importWorkflow', 14),
-          h('span', { key: 'label', style: S.workflowNewLabel }, tr('workflow.import')),
-        ])))
+          style: S.workflowNewButton,
+          onClick: () => pickWorkflowFile(activeSource),
+        }, Glyph('importWorkflow', 14))))
       }
 
       const sourceRows = []

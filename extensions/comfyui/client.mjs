@@ -307,6 +307,10 @@ const backend = {
   newWorkflow() {
     return { nodes: [], links: [], groups: [], extra: {}, config: {} }
   },
+  /** Import: a ComfyUI workflow file, read by the adapter this same extension registered. */
+  importWorkflow(file, context) {
+    return { graph: context.parse(file.text, 'comfyui') }
+  },
   /** Save the edited graph where ComfyUI's workflow list reads it. */
   async writeWorkflow(name, workflow) {
     return call('/workflow/write', {

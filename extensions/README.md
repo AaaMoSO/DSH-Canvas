@@ -96,7 +96,8 @@ export function setup(api) {
   cancel(id),  // 可选
   deactivate(),// 可选：关闭服务，返回 { stopped }
   writeWorkflow(name, workflow), listWorkflows(), readWorkflow(name),
-  newWorkflow()  // 可选：本源的「新建工作流」返回什么文档；声明了才有库底那个加号
+  newWorkflow(),       // 可选：本源的「新建工作流」返回什么文档；声明了才有库底那个加号
+  importWorkflow(file, ctx) // 可选：本源怎么读一个工作流文件；声明了才有库底那个导入虚线框
 }
 ```
 
@@ -122,6 +123,7 @@ api.registerSource({
     menu(ctx, picked),         // 必填：主菜单「节点库」下面那几行
     content(ctx, picked),      // 必填：子菜单里，选中某个库之后的内容
   },
+  importWorkflow(file, ctx),   // 可选：这个源怎么读一个工作流文件；声明了才有库底那个导入虚线框
   allowsMixed: true,           // 该源的文档允许混合各源节点（本地的限制对它不生效）
   runRequires: 'local',        // 逻辑归属为 local 才允许运行
   order,                       // 在源列表里的位置
@@ -134,7 +136,7 @@ api.registerSource({
 
 约定：
 
-- 注册源是**常驻**的，没有服务可启动；它的库在装好拓展后就可用；
+- **导入归源自己**：`importWorkflow({ name, text }, ctx)` 返回 `{ graph }` 就把这张图当成该源的未命名文档打开（保存时写进该源）；返回 `null` 就当没读出来。`ctx.parse(text, 源名)` 是按画布已注册的格式解析。没声明的源（本地除外，本地由画布默认的解析器负责）库底不会出现导入框——拓展带来的格式只在这一个拓展里生效；
 - **节点库归声明它的那个源画**：声明了 `library` 的源，主菜单「节点库」下面是它 `menu()` 生成的行，
   子菜单是它 `content()` 生成的行；没声明的源（本地、后端）保持画布默认的包列表，一行都不会多；
 - `ctx` 给选行的料和拼行的件：`sources / packsOf(id) / readyOf(id) / sourceIcon(id, size) / tr /

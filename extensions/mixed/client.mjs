@@ -73,6 +73,13 @@ export function setup(api) {
     allowsMixed: true,
     /** A document here becomes runnable only once its nodes are all local. */
     runRequires: 'local',
+    /**
+     * Import belongs to the source: a file dropped into this library is read with whatever format
+     * the canvas knows, and becomes a sandbox document — saving it writes the sandbox copy.
+     */
+    importWorkflow(file, context) {
+      return { graph: context.parse(file.text, 'mixed') }
+    },
     async listWorkflows() {
       const payload = await call('/workflows')
       return Array.isArray(payload.workflows) ? payload.workflows : []
