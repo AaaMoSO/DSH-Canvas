@@ -24,7 +24,7 @@ async function call(pathname, init) {
 export function setup(api) {
   api.registerSource({
     id: 'mixed',
-    name: { zh: '混合源', en: 'Mixed' },
+    name: 'Mixed',
     order: 45,
     /** No node library: the nodes come from the libraries of the sources they belong to. */
     nodes: 'none',
