@@ -4581,7 +4581,11 @@ const thumbCache = new Map()
           && serviceStates[item.id]?.status === 'ready'
           && typeof item.listWorkflows === 'function')
         if (backend === undefined) {
-          if (sourceId !== undefined) setBackendLists((current) => ({ ...current, [sourceId]: [] }))
+          // Only a real backend has a list here; a registered source keeps its own, and an empty
+          // backend slot would shadow it.
+          if (sourceId !== undefined && sourceOfHome(sourceId) === null) {
+            setBackendLists((current) => ({ ...current, [sourceId]: [] }))
+          }
           return
         }
         try {
@@ -9058,7 +9062,9 @@ const thumbCache = new Map()
           .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
         const workflowsHere = source.id === 'local'
           ? workflows.length
-          : ((backendLists[source.id] ?? sourceLists[source.id] ?? []).length)
+          : (sourceOfHome(source.id) !== null
+            ? (sourceLists[source.id] ?? []).length
+            : (backendLists[source.id] ?? []).length)
         sourceRows.push(h('button', {
           key: 'source:' + source.id,
           type: 'button',
