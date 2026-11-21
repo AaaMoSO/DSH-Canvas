@@ -5033,6 +5033,8 @@ const thumbCache = new Map()
        */
       function canStartWorkflow(sourceId) {
         if (sourceId === 'local') return true
+        // A registered source keeps canvas documents of its own: a new one needs no service.
+        if (sourceOfHome(sourceId) !== null) return true
         if (isServiceReady(sourceId) !== true) return false
         const backend = backends.find((item) => item.id === sourceId)
         return backend !== undefined && typeof backend.newWorkflow === 'function'
@@ -5382,7 +5384,7 @@ const thumbCache = new Map()
         setNewWorkflowAsk(false)
         const source = activeSource
         let document = emptyDocument()
-        if (source !== 'local') {
+        if (source !== 'local' && sourceOfHome(source) === null) {
           const backend = backends.find((item) => item.id === source)
           if (backend === undefined || typeof backend.newWorkflow !== 'function') return
           let started
