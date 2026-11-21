@@ -560,6 +560,29 @@ const thumbCache = new Map()
       return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`
     }
 
+    /**
+     * The view that puts a graph in the middle of an area: the whole graph, shrunk when it does not
+     * fit and never enlarged, so a workflow is met at its own scale. A degenerate area has no
+     * centre, so nothing is returned.
+     */
+    function fitViewOf(graph, area) {
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
+      const width = num(area?.w, 0)
+      const height = num(area?.h, 0)
+      if (width <= 0 || height <= 0) return null
+      const bounds = boundsOf(nodes)
+      const pad = 64
+      const graphWidth = Math.max(1, bounds.maxX - bounds.minX)
+      const graphHeight = Math.max(1, bounds.maxY - bounds.minY)
+      const fit = Math.min((width - pad * 2) / graphWidth, (height - pad * 2) / graphHeight)
+      const k = clamp(fit, ZOOM_MIN, 1)
+      return {
+        k,
+        x: (width - graphWidth * k) / 2 - bounds.minX * k,
+        y: (height - graphHeight * k) / 2 - bounds.minY * k,
+      }
+    }
+
     function boundsOf(nodes) {
       if (nodes.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 }
       let minX = Infinity
@@ -3947,24 +3970,20 @@ const thumbCache = new Map()
         return best
       }
 
-      function fitView() {
-        const nodes = graphRef.current.nodes
-        const { w: width, h: height } = shellSize()
+      /**
+       * Show a graph in the middle of the shell: the whole of it, shrunk when it would not fit, and
+       * never enlarged. Opening a workflow goes through here, so a switch never inherits the pan
+       * and zoom the previous workflow was left at.
+       */
+      function focusGraph(graph) {
+        const nodes = Array.isArray(graph?.nodes) ? graph.nodes : []
         if (nodes.length === 0) {
           setView({ ...viewRef.current, x: 48, y: 48, k: 1 })
           return
         }
-        const bounds = boundsOf(nodes)
-        const pad = 64
-        const graphWidth = Math.max(1, bounds.maxX - bounds.minX)
-        const graphHeight = Math.max(1, bounds.maxY - bounds.minY)
-        const k = clamp(Math.min((width - pad * 2) / graphWidth, (height - pad * 2) / graphHeight), ZOOM_MIN, 1.4)
-        setView({
-          ...viewRef.current,
-          k,
-          x: (width - graphWidth * k) / 2 - bounds.minX * k,
-          y: (height - graphHeight * k) / 2 - bounds.minY * k,
-        })
+        const next = fitViewOf(graph, shellSize())
+        if (next === null) return
+        setView({ ...viewRef.current, ...next })
       }
 
       function zoomAt(factor, cx, cy) {
@@ -5081,6 +5100,8 @@ const thumbCache = new Map()
         if (remembered !== undefined) {
           pushHistory()
           updateGraph(remembered)
+          // A workflow opens in the middle of the window, at its own scale.
+          focusGraph(remembered)
           select(new Set())
           setCurrentWorkflow(name)
           // Going back to an edited workflow keeps it a draft; the baseline is whatever was saved.
@@ -5103,6 +5124,8 @@ const thumbCache = new Map()
             : {})
           pushHistory()
           updateGraph(next)
+          // A workflow opens in the middle of the window, at its own scale.
+          focusGraph(next)
           select(new Set())
           setCurrentWorkflow(name)
           const saved = { name, json: graphSignature(next) }
@@ -5190,7 +5213,7 @@ const thumbCache = new Map()
           const owner = backends.find((backend) => isServiceReady(backend.id) === true)
           if (owner !== undefined) void prepareBackend(owner)
         }
-        fitView()
+        focusGraph(next)
       }
 
       function onDragOver(event) {
