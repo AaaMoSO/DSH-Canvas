@@ -2286,6 +2286,14 @@ const thumbCache = new Map()
         objectFit: 'cover',
         display: 'block',
       },
+      // The icon column of a source row: fixed, so names line up whether or not there is a picture.
+      sourceIconSlot: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        flex: 'none',
+        marginRight: '6px',
+        color: 'var(--dsw-alias-label-secondary)',
+      },
       sourceCurrentName: {
         fontSize: '11px',
         overflow: 'hidden',
@@ -8703,6 +8711,30 @@ const thumbCache = new Map()
       // as far as the libraries it borrows; a click picks one and its packs wait in the band below.
       const borrowed = borrowedNodesOf(activeRegistered, sources)
 
+      /**
+       * The picture a source goes by: the account avatar for Local, the icon of the extension that
+       * owns it, and a plain dot for a source that brought none — so names always line up.
+       */
+      function sourceIcon(id, size) {
+        const box = { ...S.sourceCurrentIcon, width: size + 'px', height: size + 'px' }
+        if (id === 'local') return avatarGlyph(size, false)
+        const registered = extensionFeatures.sources.find((item) => item.id === id)
+        const extensionId = registered !== undefined && typeof registered.extension === 'string'
+          ? registered.extension
+          : id
+        const extension = extensions.find((item) => item.id === extensionId)
+        if (extension !== undefined && typeof extension.icon === 'string' && extension.icon !== '') {
+          return h('img', {
+            key: 'icon',
+            src: extensionIconUrl(extension),
+            alt: '',
+            draggable: false,
+            style: box,
+          })
+        }
+        return h('span', { key: 'dot', style: { ...box, borderRadius: '50%', background: 'currentColor', opacity: 0.5 } })
+      }
+
       /** One row of the menu's own column: a directory below, or the library unfolded in place. */
       const sectionRow = (section) => {
         const unfolded = section.inline === true
@@ -8740,20 +8772,7 @@ const thumbCache = new Map()
           // Which source is in use: its own icon, or the account avatar for Local.
           section.id === 'source'
             ? h('span', { key: 'current', style: S.sourceCurrent }, [
-                activeSource === 'local'
-                  ? avatarGlyph(15, false)
-                  : (() => {
-                      const extension = extensions.find((item) => item.id === activeSource)
-                      return extension !== undefined && typeof extension.icon === 'string' && extension.icon !== ''
-                        ? h('img', {
-                            key: 'icon',
-                            src: extensionIconUrl(extension),
-                            alt: '',
-                            draggable: false,
-                            style: S.sourceCurrentIcon,
-                          })
-                        : h('span', { key: 'dot', style: { ...S.sourceCurrentIcon, background: 'currentColor', opacity: 0.5 } })
-                    })(),
+                sourceIcon(activeSource, 15),
                 h('span', { key: 'name', style: S.sourceCurrentName },
                   (sources.find((item) => item.id === activeSource) ?? { name: activeSource }).name),
               ])
@@ -8867,6 +8886,7 @@ const thumbCache = new Map()
             },
             onClick: () => libraryClicked(id),
           }, [
+            h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(id, 14)),
             h('span', { key: 'name', style: S.typeName }, (ready ? '' : '○ ') + library.name),
             h('span', {
               key: 'count',
@@ -9244,6 +9264,7 @@ const thumbCache = new Map()
           style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
           onClick: () => selectSource(source.id),
         }, [
+          h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14)),
           h('span', { key: 'name', style: S.typeName }, source.name),
           h('span', {
             key: 'count',
