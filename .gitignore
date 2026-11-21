@@ -7,3 +7,9 @@ extensions/comfyui/settings.json
 extensions/comfyui/service.json
 .DS_Store
 Thumbs.db
+
+# The canvas' libraries belong to the user, not to the plugin: the workflows they save and the
+# packs they add. The packs that ship with the plugin stay tracked, so a clone still has a
+# node library; anything added beside them is ignored.
+workflows/
+packs/
