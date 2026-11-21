@@ -8674,12 +8674,15 @@ const thumbCache = new Map()
           order: typeof source.order === 'number' ? source.order : 50,
         })),
       ]
-      /** One row of the menu's own column: a directory below, or the library unfolded in place. */
+      // Everything below is decided by the active source's own declaration, never by a global
+      // switch: a source that declares nothing to borrow (Local, a backend) keeps the plain pack
+      // list, so no extension's menu can change the menu of a source it does not own.
       const activeRegistered = sourceOfHome(activeSource)
       // A source may keep no nodes of its own and borrow them instead. The menu then unfolds only
       // as far as the libraries it borrows; a click picks one and its packs wait in the band below.
       const borrowed = borrowedNodesOf(activeRegistered, sources)
 
+      /** One row of the menu's own column: a directory below, or the library unfolded in place. */
       const sectionRow = (section) => {
         const unfolded = section.inline === true
           ? (borrowed !== null ? nodesOpen === true : barSection === 'nodes')
