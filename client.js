@@ -4911,6 +4911,9 @@ const thumbCache = new Map()
       }
 
       function isServiceReady(backendId) {
+        // A source an extension registers needs no service: it is resident from the moment it is
+        // installed, like any other library, and its documents are simply there.
+        if (sourceOfHome(backendId) !== null) return true
         return serviceStateOf(backendId) === 'ready'
       }
 
