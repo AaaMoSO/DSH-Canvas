@@ -117,7 +117,11 @@ export function setup(api) {
 ```js
 api.registerSource({
   id, name,                    // 源的 id 同时是文档里的 home
-  nodes: 'none' | 'all' | [源 id], // 节点库从谁那里借：'all' 借其它所有源，数组点名几个源，'none' 不提供
+  library: {                   // 可选：这个源自己画节点库；不声明就用画布默认的包列表
+    count(ctx),                // 可选：源列表里报几个节点
+    menu(ctx, picked),         // 必填：主菜单「节点库」下面那几行
+    content(ctx, picked),      // 必填：子菜单里，选中某个库之后的内容
+  },
   allowsMixed: true,           // 该源的文档允许混合各源节点（本地的限制对它不生效）
   runRequires: 'local',        // 逻辑归属为 local 才允许运行
   order,                       // 在源列表里的位置
@@ -131,9 +135,12 @@ api.registerSource({
 约定：
 
 - 注册源是**常驻**的，没有服务可启动；它的库在装好拓展后就可用；
-- 节点库在**主菜单里只展开到源这一层**：一行一个可借的源，点一个才在下面的子菜单里列出它的包和节点；
-  未启动的后端源标一个 ○，选中后子菜单说明它没在跑；
-  这条只对**声明了 `nodes` 的那个源**生效——本地和别的后端源的菜单保持原样，拓展没声明就没有这一层；
+- **节点库归声明它的那个源画**：声明了 `library` 的源，主菜单「节点库」下面是它 `menu()` 生成的行，
+  子菜单是它 `content()` 生成的行；没声明的源（本地、后端）保持画布默认的包列表，一行都不会多；
+- `ctx` 给选行的料和拼行的件：`sources / packsOf(id) / readyOf(id) / sourceIcon(id, size) / tr /
+  picked / pick(id)`，行用 `pickRow(id, { label, ready, note }) / packRow(pack) / packOpen(pack) /
+  nodeRow(pack, def) / hint(text) / header(text)` 拼。节点行自带拖拽、悬停预览和展开状态，
+  拓展不用碰画布内部；
 - 文档的 `home`（事实归属）决定它存在哪里，逻辑归属（local / remote / mixed）由节点
   `origin` 现算，两者互不替代；
 - 存储由拓展自己负责，卸载拓展即随它一起消失——内置的 `mixed` 就把文档写在

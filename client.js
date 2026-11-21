@@ -1209,7 +1209,6 @@ const thumbCache = new Map()
       'workflow.discard': 'Discard it',
       'notice.newWorkflow': 'New workflow — name it to keep it',
       'notice.homeUnavailable': 'This workflow belongs to a source that is not available right now.',
-      'library.noNodes': 'This source keeps no nodes of its own. Switch to the source a node lives in and drag it into the workflow.',
       'workflow.reading.local': 'Ready',
       'workflow.reading.foreign': 'Not localized',
       'workflow.reading.missing': 'Definitions missing',
@@ -1412,7 +1411,6 @@ const thumbCache = new Map()
       'workflow.discard': '丢弃',
       'notice.newWorkflow': '已新建未命名工作流，命名保存后才会留下',
       'notice.homeUnavailable': '这个工作流属于一个当前不可用的源。',
-      'library.noNodes': '这个源不提供节点库。切到节点所属的那个源，把节点拖进工作流即可。',
       'workflow.reading.local': '可运行',
       'workflow.reading.foreign': '未本地化',
       'workflow.reading.missing': '定义缺失',
@@ -2712,7 +2710,7 @@ const thumbCache = new Map()
       const [barSection, setBarSection] = useStored('barSection', null)
       const [openPack, setOpenPack] = useStored('openPack', null)
       // The node library unfolds in the menu's own column instead of a band under it; inside the
-      // tree, `librarySourceOpen` is the borrowed library that is unfolded.
+      // tree, `librarySourceOpen` is the library the source's own rows picked.
       const [nodesOpen, setNodesOpen] = useStored('nodesOpen', false)
       const [librarySourceOpen, setLibrarySourceOpen] = useStored('librarySourceOpen', null)
       // While the band retracts it stays mounted, so the reverse animation has something to play.
@@ -8704,12 +8702,10 @@ const thumbCache = new Map()
         })),
       ]
       // Everything below is decided by the active source's own declaration, never by a global
-      // switch: a source that declares nothing to borrow (Local, a backend) keeps the plain pack
-      // list, so no extension's menu can change the menu of a source it does not own.
+      // switch: a source that declares no library (Local, a backend) keeps the plain pack list, so
+      // no extension's menu can change the menu of a source it does not own.
       const activeRegistered = sourceOfHome(activeSource)
-      // A source may keep no nodes of its own and borrow them instead. The menu then unfolds only
-      // as far as the libraries it borrows; a click picks one and its packs wait in the band below.
-      const borrowed = borrowedNodesOf(activeRegistered, sources)
+      const activeLibrary = libraryOf(activeRegistered)
 
       /**
        * The picture a source goes by: the account avatar for Local, the icon of the extension that
@@ -8735,15 +8731,99 @@ const thumbCache = new Map()
         return h('span', { key: 'dot', style: { ...box, borderRadius: '50%', background: 'currentColor', opacity: 0.5 } })
       }
 
+      /**
+       * The rows a source's own library is built from. The extension decides which rows exist and
+       * what they say; the canvas keeps the interaction — picking, unfolding, and dragging a node
+       * onto the sheet — so no extension has to reimplement it.
+       */
+      const libraryRows = {
+        hint: (text) => h('div', { key: 'hint:' + text, style: S.libraryHint }, text),
+        header: (text) => h('div', { key: 'header:' + text, style: S.packHeader }, text),
+        hintText: (text) => h('div', { key: 'hint:' + text, style: S.libraryHint }, text),
+        pickRow: (id, options) => {
+          const ready = options?.ready !== false
+          const picked = librarySourceOpen === id
+          const shown = barSection === 'nodes' && picked
+          return h('button', {
+            key: 'library:' + id,
+            type: 'button',
+            title: ready ? (options?.label ?? id) : tr('library.sourceOffline'),
+            style: {
+              ...S.typeRow,
+              opacity: ready ? 1 : 0.55,
+              ...(shown ? S.typeRowActive : null),
+            },
+            onClick: () => libraryClicked(id),
+          }, [
+            h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(id, 14)),
+            h('span', { key: 'name', style: S.typeName }, (ready ? '' : '○ ') + (options?.label ?? id)),
+            h('span', {
+              key: 'note',
+              style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
+            }, options?.note ?? ''),
+            h('span', { key: 'chevron', style: S.typeChevron }, shown ? '▾' : '▸'),
+          ])
+        },
+        packRow: (pack) => {
+          const expanded = openPack === pack.id
+          return h('button', {
+            key: 'pack:' + pack.id,
+            type: 'button',
+            title: pack.name,
+            style: S.typeRow,
+            onClick: () => setOpenPack(expanded ? null : pack.id),
+          }, [
+            h('span', { key: 'name', style: S.typeName }, pack.name),
+            h('span', { key: 'chevron', style: S.typeChevron }, expanded ? '▾' : '▸'),
+          ])
+        },
+        packOpen: (packOrId) => openPack === (typeof packOrId === 'string' ? packOrId : packOrId?.id),
+        nodeRow: (pack, def) => h('button', {
+          key: 'node:' + pack.id + ':' + def.type,
+          type: 'button',
+          title: def.type,
+          style: S.nodeRow,
+          onPointerDown: (event) => startNodeDrag(event, { def, pack }),
+          onPointerMove: moveNodeDrag,
+          onPointerUp: (event) => endNodeDrag(event, false),
+          onPointerCancel: (event) => endNodeDrag(event, true),
+          onPointerEnter: (event) => {
+            if (nodeDragRef.current === null) showNodePreview(event, def)
+          },
+          onPointerLeave: () => {
+            if (nodeDragRef.current === null) setNodePreview(null)
+          },
+        }, [
+          h('span', { key: 'name', style: S.nodeName }, [
+            h('span', { key: 'dot', style: S.nodeDot }),
+            h('span', { key: 'text' }, def.display_name || def.type),
+          ]),
+        ]),
+      }
+
+      /** What a source's own library is handed: the libraries it can offer, and the row kit. */
+      const libraryContext = {
+        React,
+        h,
+        tr,
+        sources,
+        packsOf: (id) => packs.filter((pack) => sourceOfPack(pack) === id && packVisible(pack)),
+        readyOf: (id) => libraryReady(id) === true,
+        sourceIcon,
+        picked: librarySourceOpen,
+        pick: (id) => libraryClicked(id),
+        ...libraryRows,
+      }
+
       /** One row of the menu's own column: a directory below, or the library unfolded in place. */
       const sectionRow = (section) => {
         // The chevron follows what is unfolded; the tint follows what owns the menu. A borrowing
         // source can leave its libraries unfolded while another listing is examined, and then only
         // that listing is lit — one row at the first level, never two.
-        const open = section.inline === true && borrowed !== null
+        const open = section.inline === true && activeLibrary !== null
           ? nodesOpen === true
           : barSection === section.id
-        const lit = section.inline === true && borrowed !== null
+        const lit = section.inline === true && activeLibrary !== null
           ? nodesOpen === true && (barSection === 'nodes' || barSection === null)
           : open
         return h('button', {
@@ -8754,7 +8834,7 @@ const thumbCache = new Map()
             if (section.inline === true) {
               // A borrowing source unfolds its libraries here; one with packs of its own opens the
               // band below straight away, because there is nothing to choose first.
-              if (borrowed !== null) {
+              if (activeLibrary !== null) {
                 if (nodesOpen === true) {
                   setNodesOpen(false)
                   if (barSection === 'nodes') closeBand()
@@ -8796,16 +8876,16 @@ const thumbCache = new Map()
       ]
 
       /**
-       * Which libraries a source's node library draws from. `null` means only its own; an array is
-       * the set it borrows from, which `nodes: 'all'` fills with every other library.
+       * The node library a source draws for itself, if it declares one. Everything about that menu is
+       * then the extension's: the canvas only mounts the rows it builds and keeps them wired, so a
+       * source that declares nothing keeps the plain pack list every source has.
        */
-      function borrowedNodesOf(source, list) {
+      function libraryOf(source) {
         if (source === null || source === undefined) return null
-        // A registered source keeps no packs of its own, so it is never one of its own libraries.
-        const others = list.filter((item) => item.id !== source.id).map((item) => item.id)
-        if (source.nodes === 'all') return others
-        if (Array.isArray(source.nodes)) return source.nodes.filter((id) => others.includes(id))
-        return []
+        const library = source.library
+        if (library === null || typeof library !== 'object') return null
+        if (typeof library.menu !== 'function' || typeof library.content !== 'function') return null
+        return library
       }
 
       /**
@@ -8818,125 +8898,52 @@ const thumbCache = new Map()
         return isServiceReady(source) === true
       }
 
-      /** Whether a borrowed library can offer nodes right now: the local one always can. */
+      /** Whether a library can offer nodes right now: the local one always can. */
       function libraryReady(id) {
         return id === 'local' || isServiceReady(id) === true
       }
 
       /**
        * One pack with its nodes, unfolded in place. The band under the menu holds these, so they are
-       * a flat list: the row above already says which library they belong to.
+       * a flat list.
        */
       function libraryPackRows(list) {
         const rows = []
         for (const pack of list) {
-          const expanded = openPack === pack.id
-          rows.push(h('button', {
-            key: 'pack:' + pack.id,
-            type: 'button',
-            title: pack.name,
-            style: S.typeRow,
-            onClick: () => setOpenPack(expanded ? null : pack.id),
-          }, [
-            h('span', { key: 'name', style: S.typeName }, pack.name),
-            h('span', { key: 'chevron', style: S.typeChevron }, expanded ? '▾' : '▸'),
-          ]))
-          if (expanded !== true) continue
-          if (typeof pack.error === 'string' && pack.error !== '') {
-            rows.push(h('div', { key: 'pack-error:' + pack.id, style: S.libraryHint }, pack.error))
-          }
-          for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) {
-            const entry = { def, pack }
-            rows.push(h('button', {
-              key: 'node:' + pack.id + ':' + def.type,
-              type: 'button',
-              title: def.type,
-              style: S.nodeRow,
-              onPointerDown: (event) => startNodeDrag(event, entry),
-              onPointerMove: moveNodeDrag,
-              onPointerUp: (event) => endNodeDrag(event, false),
-              onPointerCancel: (event) => endNodeDrag(event, true),
-              onPointerEnter: (event) => {
-                if (nodeDragRef.current === null) showNodePreview(event, def)
-              },
-              onPointerLeave: () => {
-                if (nodeDragRef.current === null) setNodePreview(null)
-              },
-            }, [
-              h('span', { key: 'name', style: S.nodeName }, [
-                h('span', { key: 'dot', style: S.nodeDot }),
-                h('span', { key: 'text' }, def.display_name || def.type),
-              ]),
-            ]))
-          }
+          rows.push(libraryRows.packRow(pack))
+          if (libraryRows.packOpen(pack) !== true) continue
+          if (typeof pack.error === 'string' && pack.error !== '') rows.push(libraryRows.hint(pack.error))
+          for (const def of Array.isArray(pack.nodes) ? pack.nodes : []) rows.push(libraryRows.nodeRow(pack, def))
         }
         return rows
       }
 
-      const treeRows = []
-      if (borrowed !== null) {
-        for (const id of borrowed) {
-          const library = sources.find((item) => item.id === id) ?? { id, name: id }
-          const ready = libraryReady(id)
-          // The tint marks the listing that is on screen and nothing else: with another one open the
-          // tree is still unfolded, but no row in it claims to be showing.
-          const shown = barSection === 'nodes' && librarySourceOpen === id
-          const list = packs.filter((pack) => sourceOfPack(pack) === id && packVisible(pack))
-          const nodeCount = list.reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
-          treeRows.push(h('button', {
-            key: 'library:' + id,
-            type: 'button',
-            title: ready ? library.name : tr('library.sourceOffline'),
-            style: {
-              ...S.typeRow,
-              opacity: ready ? 1 : 0.55,
-              ...(shown ? S.typeRowActive : null),
-            },
-            onClick: () => libraryClicked(id),
-          }, [
-            h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(id, 14)),
-            h('span', { key: 'name', style: S.typeName }, (ready ? '' : '○ ') + library.name),
-            h('span', {
-              key: 'count',
-              style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
-            }, tr('library.sourceNodes', { n: nodeCount })),
-            h('span', { key: 'chevron', style: S.typeChevron }, shown ? '▾' : '▸'),
-          ]))
-        }
-        if (borrowed.length === 0) {
-          treeRows.push(h('div', { key: 'pack-none', style: S.libraryHint }, tr('library.noNodes')))
-        }
-      }
-      // Only the libraries unfold in the menu itself.
-      const libraryEl = nodesOpen !== true || borrowed === null ? null : h('div', {
+      // A source that draws its own library fills the menu with the rows it built; the band below
+      // holds whatever it says belongs to the library that was picked.
+      const libraryEl = nodesOpen !== true || activeLibrary === null ? null : h('div', {
         key: 'node-library',
         style: S.libraryTree,
-      }, treeRows)
+      }, activeLibrary.menu(libraryContext, librarySourceOpen))
 
-      // The band below lists the packs of the library that was picked in the menu.
-      const libraryShown = borrowed === null ? activeSource : librarySourceOpen
+      // A source with packs of its own — Local, a backend — gets the canvas' plain list instead.
       const packRows = []
-      if (packsReady !== true) {
-        packRows.push(h('div', { key: 'pack-loading', style: S.libraryHint }, tr('library.loading')))
-      } else if (borrowed !== null && libraryShown === null) {
-        packRows.push(h('div', { key: 'pack-pick', style: S.libraryHint }, tr('library.pickSource')))
-      } else if (libraryShown !== null) {
-        if (borrowed !== null) {
-          const library = sources.find((item) => item.id === libraryShown) ?? { id: libraryShown, name: libraryShown }
-          packRows.push(h('div', { key: 'pack-library', style: S.packHeader }, library.name))
-        }
-        const list = packs.filter((pack) => sourceOfPack(pack) === libraryShown && packVisible(pack))
-        if (list.length === 0) {
-          packRows.push(h('div', {
-            key: 'pack-empty',
-            style: S.libraryHint,
-          }, libraryShown === 'local'
-            ? tr('library.empty')
-            : (libraryReady(libraryShown) === true ? tr('library.sourceEmpty') : tr('library.sourceOffline'))))
+      if (activeLibrary === null) {
+        if (packsReady !== true) {
+          packRows.push(libraryRows.hint(tr('library.loading')))
         } else {
-          packRows.push(...libraryPackRows(list))
+          const list = packs.filter((pack) => sourceOfPack(pack) === activeSource && packVisible(pack))
+          if (list.length === 0) {
+            packRows.push(libraryRows.hint(activeSource === 'local'
+              ? tr('library.empty')
+              : (libraryReady(activeSource) === true ? tr('library.sourceEmpty') : tr('library.sourceOffline'))))
+          } else {
+            packRows.push(...libraryPackRows(list))
+          }
         }
       }
+      const bandRows = activeLibrary === null
+        ? packRows
+        : [].concat(activeLibrary.content(libraryContext, librarySourceOpen))
 
       /** The one-word state a library row reports for a document it holds. */
       function readingCapsule(item) {
@@ -9254,12 +9261,12 @@ const thumbCache = new Map()
       const sourceRows = []
       for (const source of sources) {
         const active = source.id === activeSource
-        const owners = borrowedNodesOf(sourceOfHome(source.id), sources)
-        const nodes = packs
-          .filter((pack) => packVisible(pack) && (owners === null
-            ? sourceOfPack(pack) === source.id
-            : owners.includes(sourceOfPack(pack))))
-          .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
+        const ownLibrary = libraryOf(sourceOfHome(source.id))
+        const nodes = ownLibrary !== null
+          ? (typeof ownLibrary.count === 'function' ? ownLibrary.count(libraryContext) : 0)
+          : packs
+            .filter((pack) => packVisible(pack) && sourceOfPack(pack) === source.id)
+            .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
         const workflowsHere = source.id === 'local'
           ? workflows.length
           : (sourceOfHome(source.id) !== null
@@ -9272,7 +9279,11 @@ const thumbCache = new Map()
           style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
           onClick: () => selectSource(source.id),
         }, [
-          h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14)),
+          // Only a source an extension registered brings an icon of its own here; the built-in
+          // listing looks exactly as it always has.
+          sourceOfHome(source.id) !== null
+            ? h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14))
+            : null,
           h('span', { key: 'name', style: S.typeName }, source.name),
           h('span', {
             key: 'count',
@@ -9306,7 +9317,7 @@ const thumbCache = new Map()
       // The band below the menu carries the directory listings, and the packs of the library the
       // menu picked.
       const submenuRows = barSection === 'nodes'
-        ? packRows
+        ? bandRows
         : (barSection === 'workflows' ? workflowRows : sourceRows)
 
       /** The miniature itself: ports on both sides, widget bars underneath. */
