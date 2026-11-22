@@ -26,6 +26,13 @@ function stateOf(nodeId) {
   return fresh
 }
 
+/** The last segment of a path: what a record shows while it is not being edited. */
+function basename(path) {
+  const parts = String(path).split(/[\\/]/)
+  const last = parts[parts.length - 1]
+  return last === undefined || last === '' ? String(path) : last
+}
+
 function pathsOf(text) {
   return String(text ?? '')
     .split(/\r?\n/)
@@ -52,10 +59,30 @@ const buttonStyle = (active) => ({
   cursor: 'pointer',
 })
 
+/** Append the paths a drop produced, skipping the files already listed. */
+function append(paths, { setWidget, getWidget, notify }) {
+  const known = new Set(pathsOf(getWidget(FILES_WIDGET)))
+  const added = []
+  for (const entry of paths) {
+    if (typeof entry?.path !== 'string' || entry.path === '') continue
+    if (known.has(entry.path)) continue
+    known.add(entry.path)
+    added.push(entry.path)
+  }
+  if (added.length === 0) {
+    notify('这些文件已经在记录里了')
+    return
+  }
+  writePaths(setWidget, [...known])
+  notify('已加入 ' + added.length + ' 个文件')
+}
+
 export function setup(api) {
   api.registerNodeView({
     type: 'AgentFiles',
     minHeight: 186,
+    /** Called by the canvas when files are dropped on this node. */
+    onFiles: (paths, context) => append(paths, context),
     render({ React, node, helpers, setWidget, getWidget, notify }) {
       const h = React.createElement
       const state = stateOf(node.id)
@@ -154,7 +181,8 @@ export function setup(api) {
           },
         }, h('input', {
           key: 'path',
-          defaultValue: path,
+          // The list reads as file names; focusing a row turns it into the editable full path.
+          defaultValue: basename(path),
           readOnly: state.selecting === true,
           spellCheck: false,
           title: path,
@@ -172,9 +200,17 @@ export function setup(api) {
             cursor: state.selecting === true ? 'pointer' : 'text',
             textOverflow: 'ellipsis',
           },
+          onFocus: (event) => {
+            if (state.selecting === true) return
+            event.currentTarget.value = path
+            event.currentTarget.select()
+          },
           onBlur: (event) => {
             const next = String(event.currentTarget.value ?? '').trim()
-            if (next === path || next === '') return
+            if (next === path || next === '') {
+              event.currentTarget.value = basename(path)
+              return
+            }
             const updated = paths.slice()
             updated[index] = next
             writePaths(setWidget, updated)
@@ -183,7 +219,7 @@ export function setup(api) {
           onKeyDown: (event) => {
             if (event.key === 'Enter') event.currentTarget.blur()
             if (event.key === 'Escape') {
-              event.currentTarget.value = path
+              event.currentTarget.value = basename(path)
               event.currentTarget.blur()
             }
           },

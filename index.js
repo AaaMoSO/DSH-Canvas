@@ -1076,6 +1076,9 @@ function normalizeNode(item) {
       && typeof item.program.source === 'string' && item.program.source.trim() !== ''
       ? { program: { source: item.program.source } }
       : {}),
+    // A node may ask for more room than the default box; the canvas honours it when placing one.
+    ...(typeof item.width === 'number' && item.width >= 120 ? { width: Math.round(item.width) } : {}),
+    ...(typeof item.height === 'number' && item.height >= 60 ? { height: Math.round(item.height) } : {}),
     // Declared concurrency: an exclusive node claims its resource for a whole run.
     ...(item.concurrency === 'exclusive' || item.concurrency === 'shared'
       ? { concurrency: item.concurrency }

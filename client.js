@@ -2083,6 +2083,22 @@ const thumbCache = new Map()
       return typeof id === 'string' && /^zh/i.test(id)
     }
 
+    /**
+     * Whether this page reads as Chinese. The locale service is the first witness, but this shell
+     * can report en while its interface is Chinese, so the document's language decides too.
+     */
+    function prefersChinese() {
+      try {
+        const lang = typeof document === 'undefined' || document === null || document.documentElement === null
+          ? ''
+          : String(document.documentElement.lang ?? '')
+        if (isChineseId(lang) === true) return true
+      } catch {
+        // A missing document must not decide anything.
+      }
+      return isChineseId(uiLocaleId ?? browserLocale())
+    }
+
     function browserLocale() {
       if (typeof navigator !== 'undefined' && typeof navigator.language === 'string') {
         return navigator.language
@@ -2094,7 +2110,7 @@ const thumbCache = new Map()
     let uiLocaleId = null
 
     let translator = (key) => {
-      const dict = isChineseId(uiLocaleId ?? browserLocale()) ? ZH : EN
+      const dict = prefersChinese() ? ZH : EN
       return dict[key] ?? EN[key] ?? key
     }
 
@@ -4509,12 +4525,15 @@ const thumbCache = new Map()
         // The program is copied onto the node: from here on the workflow carries what it needs to
         // run, even if the pack is later moved, edited or removed. The definition still comes from
         // the pack, so a widget added later shows up on the next load.
+        // A node that declares a size gets it; otherwise the library default.
+        const width = typeof def.width === 'number' && def.width >= 120 ? def.width : NODE_W
+        const declaredHeight = typeof def.height === 'number' && def.height >= 60 ? def.height : 0
         const base = {
           id: uid('n'),
-          x: Math.round(at.x - NODE_W / 2),
+          x: Math.round(at.x - width / 2),
           y: Math.round(at.y - 14),
-          w: NODE_W,
-          h: 2 * BORDER + HEADER_H + rows * PORT_H + PAD_TOP + PAD_BOTTOM,
+          w: width,
+          h: Math.max(declaredHeight, 2 * BORDER + HEADER_H + rows * PORT_H + PAD_TOP + PAD_BOTTOM),
           title: def.display_name || def.type,
           type: def.type,
           ...(origin === undefined ? {} : { origin }),
@@ -6446,6 +6465,75 @@ const thumbCache = new Map()
         }
         const backend = backends.find((item) => item.id === sourceId)
         return backend !== undefined && typeof backend.importWorkflow === 'function' ? backend.importWorkflow : null
+      }
+
+      /** The top-most node whose box holds this graph point, if any. */
+      function nodeAtPoint(point) {
+        const nodes = graphRef.current.nodes
+        for (let index = nodes.length - 1; index >= 0; index -= 1) {
+          const node = nodes[index]
+          if (point.x < node.x || point.x > node.x + node.w) continue
+          if (point.y < node.y || point.y > node.y + nodeHeight(node)) continue
+          return node
+        }
+        return null
+      }
+
+      /** A file dragged over the panel: say it can be dropped, without hijacking other drags. */
+      function canvasDragOver(event) {
+        const types = Array.from(event.dataTransfer?.types ?? [])
+        if (types.includes('Files') !== true) return
+        event.preventDefault()
+        if (event.dataTransfer !== null && event.dataTransfer !== undefined) event.dataTransfer.dropEffect = 'copy'
+      }
+
+      /**
+       * A file dropped on the panel goes to the node under the pointer, if that node's view accepts
+       * files. The panel takes the drop because a drop on a node's inner element is not delivered
+       * reliably in this shell, while the panel's own surface always sees it.
+       */
+      function canvasDrop(event) {
+        const files = filesOfTransfer(event.dataTransfer)
+        if (files.length === 0) return
+        event.preventDefault()
+        const node = nodeAtPoint(toGraphPoint(event))
+        if (node === null) return
+        const view = nodeViewOf(node)
+        if (view === null || typeof view.onFiles !== 'function') return
+        const widgetIndex = (name) => widgetSpecsOf(node).findIndex((spec) => spec.name === name)
+        void (async () => {
+          try {
+            const paths = await hostPathsOf(files)
+            view.onFiles(paths, {
+              node,
+              notify: showNotice,
+              setWidget: (name, value) => {
+                const index = widgetIndex(name)
+                if (index >= 0) setWidgetValue(node.id, index, value)
+              },
+              getWidget: (name) => {
+                const index = widgetIndex(name)
+                return index < 0 || Array.isArray(node.widgets) !== true ? undefined : node.widgets[index]
+              },
+            })
+          } catch (error) {
+            showNotice('读取文件失败：' + (error instanceof Error ? error.message : String(error)))
+          }
+        })()
+      }
+
+      /** The files a drag carries: some platforms fill `files`, others only `items`. */
+      function filesOfTransfer(transfer) {
+        if (transfer === null || transfer === undefined) return []
+        const direct = Array.from(transfer.files ?? [])
+        if (direct.length > 0) return direct
+        const files = []
+        for (const item of Array.from(transfer.items ?? [])) {
+          if (item === null || item === undefined || item.kind !== 'file') continue
+          const file = typeof item.getAsFile === 'function' ? item.getAsFile() : null
+          if (file !== null) files.push(file)
+        }
+        return files
       }
 
       /** Ask for one workflow file: the browser hands over its text, never its path. */
@@ -11100,6 +11188,8 @@ const thumbCache = new Map()
         // One handler for the whole panel: keys pressed while the toolbar or the library has
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
+        onDragOver: canvasDragOver,
+        onDrop: canvasDrop,
       }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, settingsPickerEl, panelsEl, comboMenuEl])
 
       // The frame is what the host lays out. The page inside it becomes a fixed sheet while the
@@ -11198,7 +11288,7 @@ const thumbCache = new Map()
           translator = (key) => {
             const value = bound(key)
             if (typeof value === 'string' && value !== key) return value
-            const dict = isChineseId(activeLocaleId(locale)) ? ZH : EN
+            const dict = prefersChinese() ? ZH : EN
             return dict[key] ?? EN[key] ?? key
           }
           ctx.effect(() => locale.subscribe(() => {
