@@ -56,8 +56,22 @@ const executor = new Executor({
   // Extension packages may ship node programs too; bundled ones count as registered.
   extraDirs: async () => [...(await extensionDirs()).values()].map((entry) => entry.path),
 })
-// Extension host modules register their routes once per file version.
+// Extension host modules register their routes once per file version, and are told to close what
+// they opened before a new version replaces them.
 const extensionHosts = new Map()
+
+/** Drop one extension's host module, giving it the chance to clean up first. */
+function disposeExtensionHost(id) {
+  const cached = extensionHosts.get(id)
+  extensionHosts.delete(id)
+  if (cached === undefined || typeof cached.dispose !== 'function') return
+  try {
+    cached.dispose()
+  } catch (error) {
+    console.log('[node-canvas:' + id + '] dispose failed: '
+      + (error instanceof Error ? error.message : String(error)))
+  }
+}
 const MAX_PACK_BYTES = 4 * 1024 * 1024
 const MAX_RUN_BODY = 16 * 1024 * 1024
 
@@ -324,7 +338,7 @@ async function handle(req, res) {
         await writeFile(tmp, JSON.stringify(values, null, 2) + String.fromCharCode(10), 'utf8')
         await rename(tmp, file)
         // The extension's host module is cached by version: drop it so new settings are used.
-        extensionHosts.delete(id)
+        disposeExtensionHost(id)
         send(res, 200, { ok: true, values })
         return
       }
@@ -438,12 +452,18 @@ async function loadExtensionHost(extension) {
   }
   const cached = extensionHosts.get(extension.id)
   if (cached !== undefined && cached.version === version) return cached
+  // A stale module is disposed before the new one is imported; otherwise its timers, child
+  // processes and listeners outlive the code that owns them.
+  if (cached !== undefined) disposeExtensionHost(extension.id)
   const routes = []
   const module = await import(pathToFileURL(file).href + '?v=' + version)
+  let dispose = null
   if (typeof module.setup === 'function') {
-    module.setup({
+    const returned = module.setup({
       id: extension.id,
       name: extension.name,
+      // Bumped when the contract gains something an extension must know about.
+      apiVersion: 1,
       rootDir: extension.path,
       config: await readConfigFile(),
       route: (method, routePath, handler) => {
@@ -456,8 +476,12 @@ async function loadExtensionHost(extension) {
       },
       log: (message) => console.log('[node-canvas:' + extension.id + '] ' + message),
     })
+    if (typeof returned === 'function') dispose = returned
+    else if (returned !== null && typeof returned === 'object' && typeof returned.dispose === 'function') {
+      dispose = () => returned.dispose()
+    }
   }
-  const entry = { version, routes }
+  const entry = { version, routes, dispose }
   extensionHosts.set(extension.id, entry)
   return entry
 }

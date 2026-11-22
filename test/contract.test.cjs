@@ -109,4 +109,12 @@ const writeWorkflow = grabFunction(host, 'writeWorkflow')
 ok('a workflow is written to a staging name first', /\.new-/.test(writeWorkflow) && writeWorkflow.includes('writeFile(staged'))
 ok('...and renamed over the target', writeWorkflow.includes('rename(staged, target)'))
 
+// ---- an extension is told when the canvas is done with it ---------------------------------
+ok('the host passes an api version', host.includes('apiVersion: 1'))
+ok('the client passes one too', client.includes('apiVersion: 1'))
+ok('a replaced host module is disposed first', host.includes('disposeExtensionHost(extension.id)'))
+ok('a removed host module is disposed', host.includes('disposeExtensionHost(id)'))
+ok('a setup return value becomes a disposer', host.includes('dispose = returned') && client.includes('extensionDisposersRef.current.push(returned)'))
+ok('the client runs its disposers on unmount', client.includes('extensionDisposersRef.current = []'))
+
 report('contract')

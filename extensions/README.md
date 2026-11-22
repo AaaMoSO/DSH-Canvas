@@ -75,6 +75,15 @@ export function setup(api) {
 `widgetInputNames(node)`、`widgetNamesOf(node)`、`widgetValues(node)`。节点不再自带定义与程序，
 所以适配器读写控件值时要经由这几个函数，而不是直接读节点上的数组。
 
+## 生命周期
+
+`setup(api)` 可以返回一个清理函数（或 `{ dispose() }`）：画布卸载、拓展重载、或拓展被移除时调用它。
+定时器、子进程、事件监听都应该在那里关掉——**不要把清理留给模块级变量**。
+
+`host.mjs` 的模块按文件 mtime 缓存；新版本导入前会先调用旧版本的清理函数，`settings.json` 变化同理。
+
+`api.apiVersion` 是契约版本（当前 `1`）。通过它可以判断某个能力是否可用，而不是猜。
+
 约定：
 
 - 全部是**追加**，不替换核心行为；同类能力按加载顺序生效，先注册的先赢；

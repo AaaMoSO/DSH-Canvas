@@ -3330,9 +3330,11 @@ const thumbCache = new Map()
                 if (item !== null && typeof item === 'object' && check(item)) list.push({ ...item, extension: extension.id })
               }
               if (typeof module.setup === 'function') {
-                module.setup({
+                const returned = module.setup({
                   id: extension.id,
                   name: extension.name,
+                  // Bumped when the contract gains something an extension must know about.
+                  apiVersion: 1,
                   React,
                   registerWorkflowFormat: (format) => add(formats, format, (value) => typeof value.parse === 'function'),
                   registerNodeView: (view) => add(features.nodeViews, view, (value) => typeof value.type === 'string' && typeof value.render === 'function'),
@@ -3350,6 +3352,10 @@ const thumbCache = new Map()
                     && typeof value.listWorkflows === 'function'
                     && typeof value.writeWorkflow === 'function'),
                 })
+                if (typeof returned === 'function') extensionDisposersRef.current.push(returned)
+                else if (returned !== null && typeof returned === 'object' && typeof returned.dispose === 'function') {
+                  extensionDisposersRef.current.push(() => returned.dispose())
+                }
               } else if (module.adapter !== null && typeof module.adapter === 'object') {
                 // One-release compatibility with the first adapter-only shape.
                 add(formats, module.adapter, (value) => typeof value.parse === 'function')
@@ -3469,8 +3475,22 @@ const thumbCache = new Map()
         }
       }
 
+      const extensionDisposersRef = React.useRef([])
+
+      // A reloaded extension is told to close what it opened before the next version runs.
       React.useEffect(() => {
         void loadAdapters()
+        return () => {
+          const disposers = extensionDisposersRef.current
+          extensionDisposersRef.current = []
+          for (const dispose of disposers) {
+            try {
+              dispose()
+            } catch {
+              // One broken extension must not stop the others from cleaning up.
+            }
+          }
+        }
       }, [loadAdapters])
 
       // The list feeds both the puzzle menu and the pack loader, so it is read on mount.
