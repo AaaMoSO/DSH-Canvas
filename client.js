@@ -566,6 +566,34 @@ function RunControl(props) {
   ])
 }
 
+/**
+ * The source list in the band: which library the canvas is showing, and what each one offers.
+ * Presentation only — the numbers and the click both come from the canvas.
+ */
+function SourceList(props) {
+  return props.sources.map((source) => {
+    const active = source.id === props.activeSource
+    const counts = props.countsOf(source)
+    return h('button', {
+      key: 'source:' + source.id,
+      type: 'button',
+      title: source.name,
+      style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
+      onClick: () => props.onSelect(source.id),
+    }, [
+      // Every source wears its own picture: the account avatar for Local, the owning extension's
+      // icon otherwise.
+      h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14)),
+      h('span', { key: 'name', style: S.typeName }, source.name),
+      h('span', {
+        key: 'count',
+        style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
+      }, tr('source.counts', { nodes: counts.nodes, workflows: counts.workflows })),
+      h('span', { key: 'check', style: S.typeChevron }, active ? '✓' : ''),
+    ])
+  })
+}
+
 const NOTICE_MS = 2600
 
 /**
@@ -9704,39 +9732,26 @@ const thumbCache = new Map()
         }, Glyph('importWorkflow', 14))))
       }
 
-      const sourceRows = []
-      for (const source of sources) {
-        const active = source.id === activeSource
-        const ownNodes = menuItemOf(menuOwnerOf(source.id), 'nodes')
-        const nodes = ownNodes !== null
-          ? (typeof ownNodes.count === 'function' ? ownNodes.count(libraryContext) : 0)
-          : packs
-            .filter((pack) => packVisible(pack) && sourceOfPack(pack) === source.id)
-            .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
-        const workflowsHere = source.id === 'local'
-          ? workflows.length
-          : (sourceOfHome(source.id) !== null
-            ? (sourceLists[source.id] ?? []).length
-            : (backendLists[source.id] ?? []).length)
-        sourceRows.push(h('button', {
-          key: 'source:' + source.id,
-          type: 'button',
-          title: source.name,
-          style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
-          onClick: () => selectSource(source.id),
-        }, [
-          // Every source wears its own picture: the account avatar for Local, the owning
-          // extension's icon otherwise.
-          h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14)),
-          h('span', { key: 'name', style: S.typeName }, source.name),
-          h('span', {
-            key: 'count',
-            style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
-          }, tr('source.counts', { nodes, workflows: workflowsHere })),
-          h('span', { key: 'check', style: S.typeChevron }, active ? '✓' : ''),
-        ]))
-      }
-
+      const sourceRows = h(SourceList, {
+        key: 'source-list',
+        sources,
+        activeSource,
+        countsOf: (source) => {
+          const ownNodes = menuItemOf(menuOwnerOf(source.id), 'nodes')
+          const nodes = ownNodes !== null
+            ? (typeof ownNodes.count === 'function' ? ownNodes.count(libraryContext) : 0)
+            : packs
+              .filter((pack) => packVisible(pack) && sourceOfPack(pack) === source.id)
+              .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
+          const workflows = source.id === 'local'
+            ? workflows.length
+            : (sourceOfHome(source.id) !== null
+              ? (sourceLists[source.id] ?? []).length
+              : (backendLists[source.id] ?? []).length)
+          return { nodes, workflows }
+        },
+        onSelect: (id) => selectSource(id),
+      })
       // The band slides down out of the menu like a sash window: the slot is already at its final
       // size and the panel inside travels from above it into place, so the content moves with it
       // instead of being revealed line by line.

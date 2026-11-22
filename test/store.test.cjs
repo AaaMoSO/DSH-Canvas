@@ -60,4 +60,8 @@ ok('a changed startedAt is a change', sameServiceState(ready, { status: 'ready',
 ok('a new error is a change', sameServiceState(ready, { status: 'ready', startedAt: 5, error: 'boom' }) === false)
 ok('the poll uses it before emitting', client.includes('if (sameServiceState(services[id], value)) return'))
 
+// ---- the band's own lists are components, not inline markup --------------------------------
+ok('the source list is its own component', client.includes('function SourceList(props)'))
+ok('...and the panel only supplies numbers and the click', client.includes('countsOf: (source) =>'))
+
 report('store')
