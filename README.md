@@ -104,6 +104,9 @@ export async function run(inputs, ctx) {
   to list and show the files that node writes;
 - the library re-reads `packs/` every time its menu opens, so a pack you copy in works without a
   restart;
+- `config.json` may also set `maxParallel` (default 4, 1 = one at a time): independent
+  branches of a workflow run together, while a node marked `"concurrency": "exclusive"` still
+  runs alone — across runs and within one;
 - `config.json` may set `nodeTimeoutMs`: a node that runs longer fails its run with the node and
   the budget named, instead of holding the executor; 0 or absent keeps it unlimited.
 - a node whose program is missing still draws, and only fails when it runs.

@@ -91,6 +91,7 @@ export class Executor {
     this.inline = new Map()
     this.runs = new Map()
     this.locks = new Map()
+    this.inside = new Map()
     this.config = {}
     this.maxLogEntries = 400
     // Filled in by the plugin: where the canvas' own HTTP answers.
@@ -329,6 +330,28 @@ export class Executor {
     return lock.acquire(run.id, run.abort.signal)
   }
 
+  /**
+   * Queue behind the previous exclusive node of this resource in the same run. The run already
+   * holds the lease across runs; this keeps two of its own nodes from overlapping.
+   */
+  async enterExclusive(resource) {
+    const previous = this.inside.get(resource) ?? Promise.resolve()
+    let release = () => {}
+    const mine = new Promise((resolve) => {
+      release = resolve
+    })
+    this.inside.set(resource, previous.then(() => mine))
+    await previous
+    return release
+  }
+
+  /** How many nodes may run at once; 1 keeps the old one-at-a-time behaviour. */
+  parallelism() {
+    const raw = this.config.maxParallel
+    if (typeof raw !== 'number' || Number.isFinite(raw) !== true || raw < 1) return 4
+    return Math.min(Math.trunc(raw), 16)
+  }
+
   async execute(run, prompt) {
     // A scratch directory per run: anything a node writes there is invisible to every other
     // workflow and disappears when the run ends.
@@ -342,70 +365,83 @@ export class Executor {
       const order = executionOrder(prompt)
       this.note(run, { type: 'run-start', nodes: order.length, at: Date.now() })
       const values = new Map()
+      // What each node waits for. The order above already guarantees a node comes after its
+      // dependencies in the list, which keeps the start order stable when several are ready.
+      const dependencies = new Map()
       for (const id of order) {
-        if (run.abort.signal.aborted) throw new ExecutionError('cancelled')
-        const spec = prompt[id]
-        const inputs = {}
-        for (const [name, value] of Object.entries(spec.inputs ?? {})) {
-          if (isLink(value) !== true) {
-            inputs[name] = value
-            continue
-          }
-          const source = values.get(value[0])
-          if (source === undefined) {
-            throw new ExecutionError('node ' + id + ' reads ' + value[0] + ' before it has run')
-          }
-          if (value[1] >= source.length) {
-            throw new ExecutionError('node ' + id + ' reads slot ' + value[1] + ' of ' + value[0]
-              + ', which only returned ' + source.length)
-          }
-          inputs[name] = source[value[1]]
+        const set = new Set()
+        for (const value of Object.values(prompt[id].inputs ?? {})) {
+          if (isLink(value) === true) set.add(value[0])
         }
-        this.note(run, { type: 'node-start', node: id, classType: spec.class_type, at: Date.now() })
-        // What the canvas highlights: the node graph id when the caller supplied one, otherwise
-        // the prompt key it already knows.
-        run.current = {
-          node: typeof spec.canvasId === 'string' && spec.canvasId !== '' ? spec.canvasId : id,
-          classType: spec.class_type,
-          startedAt: Date.now(),
-        }
-        // A node that cannot run twice at once claims its resource for the whole run, so a
-        // second workflow queues instead of interleaving with it.
-        if (spec.concurrency === 'exclusive') {
-          const resource = typeof spec.resource === 'string' && spec.resource !== ''
-            ? spec.resource
-            : spec.class_type
-          const release = await this.acquire(resource, run)
-          if (release === null) throw new ExecutionError('cancelled')
-          run.finalizers.push(release)
-        }
-        const program = await this.program(spec.class_type, spec)
-        const context = {
-          nodeId: id,
-          /** Where the canvas' own HTTP lives, for a program that has to call back in. */
-          origin: this.origin ?? '',
-          runId: run.id,
-          workflow: run.workflow,
-          signal: run.abort.signal,
-          config: this.config,
-          /** Scratch directory private to this run; removed when the run ends. */
-          workspace: run.workspace,
-          log: (message) => this.note(run, { type: 'log', node: id, message: String(message), at: Date.now() }),
-          /** Exclusive use of a shared resource until this run ends (re-entrant per run). */
-          lock: (name) => this.acquire(name, run),
-          onRunEnd: (release) => {
-            if (typeof release === 'function') run.finalizers.push(release)
-          },
-        }
-        const ceiling = typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
-          ? Math.min(Math.max(Math.trunc(this.config.nodeTimeoutMs), 1), 3_600_000)
-          : 0
-        const returned = await runWithTimeout(program.run(inputs, context), ceiling, id)
-        const outputs = Array.isArray(returned) === true ? returned : [returned]
-        values.set(id, outputs)
-        run.current = null
-        this.note(run, { type: 'node-done', node: id, outputs: summarize(outputs), at: Date.now() })
+        dependencies.set(id, set)
       }
+      const limit = this.parallelism()
+      const waiting = order.slice()
+      const tasks = new Map()
+      const failures = []
+      const abortPromise = new Promise((resolve) => {
+        if (run.abort.signal.aborted === true) {
+          resolve(undefined)
+          return
+        }
+        run.abort.signal.addEventListener('abort', () => resolve(undefined), { once: true })
+      })
+
+      const startNode = (id) => {
+        const task = this.runNode(run, prompt, id, values).then(
+          () => {
+            tasks.delete(id)
+            return null
+          },
+          (error) => {
+            tasks.delete(id)
+            return error
+          },
+        )
+        tasks.set(id, task)
+      }
+
+      while (waiting.length > 0 || tasks.size > 0) {
+        if (run.abort.signal.aborted === true && failures.length === 0) {
+          failures.push(new ExecutionError('cancelled'))
+        }
+        // Independent branches go together; nothing new starts once something failed.
+        if (failures.length === 0) {
+          let index = 0
+          while (index < waiting.length && tasks.size < limit) {
+            const id = waiting[index]
+            let ready = true
+            for (const dependency of dependencies.get(id)) {
+              if (values.has(dependency) !== true) {
+                ready = false
+                break
+              }
+            }
+            if (ready !== true) {
+              index += 1
+              continue
+            }
+            waiting.splice(index, 1)
+            startNode(id)
+          }
+        }
+        if (tasks.size === 0) break
+        // Wake on the first node that settles, or as soon as the run is cancelled: a program that
+        // ignores the signal must not make cancelling wait for it.
+        const settled = await Promise.race([...tasks.values(), abortPromise])
+        if (settled !== undefined && settled !== null) failures.push(settled)
+        if (run.abort.signal.aborted === true) {
+          // Leave the in-flight nodes to finish on their own; their results are not used.
+          tasks.clear()
+          break
+        }
+      }
+      // Leaving the loop on an abort must still end the run as cancelled.
+      if (run.abort.signal.aborted === true && failures.length === 0) {
+        failures.push(new ExecutionError('cancelled'))
+      }
+      if (failures.length > 0) throw failures[0]
+      run.current = null
       run.status = 'done'
       run.finishedAt = Date.now()
       this.note(run, { type: 'run-done', at: Date.now() })
@@ -423,6 +459,7 @@ export class Executor {
       run.finishedAt = Date.now()
       this.note(run, { type: 'run-error', message: run.error, at: Date.now() })
     } finally {
+      run.current = null
       // Whatever the outcome, hand the shared resources to the next queued run.
       for (const release of run.finalizers) {
         try {
@@ -434,6 +471,82 @@ export class Executor {
       run.finalizers.length = 0
       await rm(run.workspace, { recursive: true, force: true }).catch(() => {})
     }
+  }
+
+  /** One node: resolve its inputs, take its lease, run its program, record what it returned. */
+  async runNode(run, prompt, id, values) {
+    const spec = prompt[id]
+    const inputs = {}
+    for (const [name, value] of Object.entries(spec.inputs ?? {})) {
+      if (isLink(value) !== true) {
+        inputs[name] = value
+        continue
+      }
+      const source = values.get(value[0])
+      if (source === undefined) {
+        throw new ExecutionError('node ' + id + ' reads ' + value[0] + ' before it has run')
+      }
+      if (value[1] >= source.length) {
+        throw new ExecutionError('node ' + id + ' reads slot ' + value[1] + ' of ' + value[0]
+          + ', which only returned ' + source.length)
+      }
+      inputs[name] = source[value[1]]
+    }
+    this.note(run, { type: 'node-start', node: id, classType: spec.class_type, at: Date.now() })
+    // What the canvas highlights: the node graph id when the caller supplied one, otherwise
+    // the prompt key it already knows. With several nodes running this is the latest to start.
+    run.current = {
+      node: typeof spec.canvasId === 'string' && spec.canvasId !== '' ? spec.canvasId : id,
+      classType: spec.class_type,
+      startedAt: Date.now(),
+    }
+    // A node that cannot run twice at once claims its resource for the whole run, so a
+    // second workflow queues instead of interleaving with it.
+    let leaveExclusive = null
+    if (spec.concurrency === 'exclusive') {
+      const resource = typeof spec.resource === 'string' && spec.resource !== ''
+        ? spec.resource
+        : spec.class_type
+      const release = await this.acquire(resource, run)
+      if (release === null) throw new ExecutionError('cancelled')
+      run.finalizers.push(release)
+      leaveExclusive = await this.enterExclusive(resource)
+    }
+    try {
+      const outputs = await this.runProgram(run, spec, id, inputs)
+      values.set(id, outputs)
+      this.note(run, { type: 'node-done', node: id, outputs: summarize(outputs), at: Date.now() })
+      return outputs
+    } finally {
+      if (leaveExclusive !== null) leaveExclusive()
+    }
+  }
+
+  /** The program call itself, once the node holds whatever it needs. */
+  async runProgram(run, spec, id, inputs) {
+    const program = await this.program(spec.class_type, spec)
+    const context = {
+      nodeId: id,
+      /** Where the canvas' own HTTP lives, for a program that has to call back in. */
+      origin: this.origin ?? '',
+      runId: run.id,
+      workflow: run.workflow,
+      signal: run.abort.signal,
+      config: this.config,
+      /** Scratch directory private to this run; removed when the run ends. */
+      workspace: run.workspace,
+      log: (message) => this.note(run, { type: 'log', node: id, message: String(message), at: Date.now() }),
+      /** Exclusive use of a shared resource until this run ends (re-entrant per run). */
+      lock: (name) => this.acquire(name, run),
+      onRunEnd: (release) => {
+        if (typeof release === 'function') run.finalizers.push(release)
+      },
+    }
+    const ceiling = typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
+      ? Math.min(Math.max(Math.trunc(this.config.nodeTimeoutMs), 1), 3_600_000)
+      : 0
+    const returned = await runWithTimeout(program.run(inputs, context), ceiling, id)
+    return Array.isArray(returned) === true ? returned : [returned]
   }
 }
 
