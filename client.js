@@ -594,6 +594,353 @@ function SourceList(props) {
   })
 }
 
+/**
+ * The workflow list of the band: one row per workflow of the active source, the line that explains
+ * an empty list, and the two dashed slots at the bottom. It builds markup only; every action and
+ * every value comes from the canvas, which keeps owning the state.
+ */
+function WorkflowList(props) {
+  const {
+    activeSource,
+    currentWorkflow,
+    currentHome,
+    pendingSource,
+    newWorkflowAsk,
+    setNewWorkflowAsk,
+    canStartWorkflow,
+    importerOf,
+    pickWorkflowFile,
+    startPendingWorkflow,
+    openPendingWorkflow,
+    discardPendingWorkflow,
+    openBackendWorkflow,
+    deleteWorkflow,
+    renameWorkflow,
+    setDialog,
+    setRunHover,
+    scheduleRunHide,
+    cancelRunHide,
+    readingCapsule,
+    workflowRunState,
+    isServiceReady,
+    pageRef,
+    openMenu,
+    workflows,
+    workflowsReady,
+    sourceLists,
+    backendLists,
+    activeRegistered,
+  } = props
+      const rows = []
+      // The workflow the plus started: it is in the list before it is on disk.
+      if (pendingSource !== null && activeSource === pendingSource) {
+        rows.push(h('button', {
+          key: 'workflow-pending',
+          type: 'button',
+          title: tr('workflow.unnamed'),
+          style: currentWorkflow === null
+            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
+            : { ...S.nodeRow, ...S.workflowRow },
+          onClick: () => openPendingWorkflow(),
+          onPointerEnter: (event) => {
+            const page = pageRef.current
+            if (page === null) return
+            const rect = event.currentTarget.getBoundingClientRect()
+            const pageRect = page.getBoundingClientRect()
+            cancelRunHide()
+            setRunHover({
+              name: UNNAMED_KEY,
+              pending: true,
+              top: Math.round(rect.top - pageRect.top),
+              height: Math.round(rect.height),
+            })
+          },
+          onPointerLeave: scheduleRunHide,
+          onContextMenu: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openMenu(event, [{ label: tr('workflow.discard'), run: discardPendingWorkflow }])
+          },
+        }, [
+          h('span', {
+            key: 'dot',
+            style: { ...S.workflowDot, background: 'var(--dsw-alias-state-warn-primary)' },
+          }),
+          h('span', { key: 'text', style: S.nodeName }, tr('workflow.unnamed')),
+          h('span', {
+            key: 'state',
+            style: {
+              ...S.workflowState,
+              background: 'color-mix(in srgb, var(--dsw-alias-label-tertiary) 18%, var(--dsw-alias-bg-base))',
+              color: 'var(--dsw-alias-label-secondary)',
+            },
+          }, tr('workflow.unsaved')),
+        ]))
+      }
+      for (const item of (activeSource === 'local' ? workflows : [])) {
+        const active = item.name === currentWorkflow
+        const state = workflowRunState(item.name)
+        rows.push(h('button', {
+          key: 'workflow:' + item.name,
+          type: 'button',
+          title: item.name,
+          style: active
+            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
+            : { ...S.nodeRow, ...S.workflowRow },
+          onClick: () => {
+            void openWorkflow(item.name)
+          },
+          onPointerEnter: (event) => {
+            const page = pageRef.current
+            if (page === null) return
+            const rect = event.currentTarget.getBoundingClientRect()
+            const pageRect = page.getBoundingClientRect()
+            cancelRunHide()
+            setRunHover({
+              name: item.name,
+              home: 'local',
+              top: Math.round(rect.top - pageRect.top),
+              height: Math.round(rect.height),
+            })
+          },
+          onPointerLeave: scheduleRunHide,
+          onContextMenu: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openMenu(event, [
+              {
+                label: tr('menu.renameWorkflow'),
+                run: () => setDialog({ mode: 'rename', origin: item.name, value: item.name, error: null }),
+              },
+              { separator: true },
+              {
+                label: tr('menu.deleteWorkflow'),
+                run: () => setDialog({ mode: 'delete', value: item.name, error: null }),
+              },
+            ])
+          },
+        }, [
+          h('span', {
+            key: 'dot',
+            style: state === 'running'
+              ? { ...S.workflowDot, background: 'var(--dsw-alias-state-success-primary)' }
+              : state === 'error'
+                ? { ...S.workflowDot, background: 'var(--dsw-alias-state-error-primary)' }
+                : S.workflowDot,
+          }),
+          h('span', { key: 'text', style: S.nodeName }, item.name),
+          // This row's own run, described where the row is.
+          state === 'running' || state === 'error'
+            ? h('span', {
+                key: 'state',
+                style: state === 'running'
+                  ? {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-success-primary)',
+                    }
+                  : {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-error-primary)',
+                    },
+              }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
+            : null,
+        ]))
+      }
+      // A registered source's own library: its documents, each saying what it is made of, so the
+      // run button never has to guess and the rows can be read without opening them.
+      if (activeRegistered !== null) {
+        for (const item of (sourceLists[activeSource] ?? [])) {
+          const active = item.name === currentWorkflow && currentHome === activeSource
+          rows.push(h('button', {
+            key: 'source-workflow:' + item.name,
+            type: 'button',
+            title: item.name,
+            style: active
+              ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
+              : { ...S.nodeRow, ...S.workflowRow },
+            onClick: () => {
+              void openWorkflow(item.name, activeSource)
+            },
+            onPointerEnter: (event) => {
+              const page = pageRef.current
+              if (page === null) return
+              const rect = event.currentTarget.getBoundingClientRect()
+              const pageRect = page.getBoundingClientRect()
+              cancelRunHide()
+              setRunHover({
+                name: item.name,
+                home: activeSource,
+                reading: readingOf(item),
+                top: Math.round(rect.top - pageRect.top),
+                height: Math.round(rect.height),
+              })
+            },
+            onPointerLeave: scheduleRunHide,
+            onContextMenu: (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              openMenu(event, [
+                {
+                  label: tr('menu.renameWorkflow'),
+                  run: () => setDialog({ mode: 'rename', source: activeSource, origin: item.name, value: item.name, error: null }),
+                },
+                { separator: true },
+                {
+                  label: tr('menu.deleteWorkflow'),
+                  run: () => setDialog({ mode: 'delete', source: activeSource, value: item.name, error: null }),
+                },
+              ])
+            },
+          }, [
+            h('span', { key: 'dot', style: S.workflowDot }),
+            h('span', { key: 'text', style: S.nodeName }, item.name),
+            readingCapsule(item),
+          ]))
+        }
+      }
+      // A backend's workflows are just its source's workflows: same rows, no heading, no colour.
+      const remoteNames = backendLists[activeSource] ?? []
+      for (const name of remoteNames) {
+        const active = name === currentWorkflow
+        const state = workflowRunState(name)
+        rows.push(h('button', {
+          key: 'backend-workflow:' + name,
+          type: 'button',
+          title: name,
+          style: active
+            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
+            : { ...S.nodeRow, ...S.workflowRow },
+          onClick: () => {
+            void openBackendWorkflow(name)
+          },
+          onPointerEnter: (event) => {
+            const page = pageRef.current
+            if (page === null) return
+            const rect = event.currentTarget.getBoundingClientRect()
+            const pageRect = page.getBoundingClientRect()
+            cancelRunHide()
+            setRunHover({
+              name,
+              top: Math.round(rect.top - pageRect.top),
+              height: Math.round(rect.height),
+            })
+          },
+          onPointerLeave: scheduleRunHide,
+          onContextMenu: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openMenu(event, [
+              {
+                label: tr('menu.renameWorkflow'),
+                run: () => setDialog({ mode: 'rename', source: activeSource, origin: name, value: name, error: null }),
+              },
+              { separator: true },
+              {
+                label: tr('menu.deleteWorkflow'),
+                run: () => setDialog({ mode: 'delete', source: activeSource, value: name, error: null }),
+              },
+            ])
+          },
+        }, [
+          h('span', {
+            key: 'dot',
+            style: state === 'running'
+              ? { ...S.workflowDot, background: 'var(--dsw-alias-state-success-primary)' }
+              : state === 'error'
+                ? { ...S.workflowDot, background: 'var(--dsw-alias-state-error-primary)' }
+                : S.workflowDot,
+          }),
+          h('span', { key: 'text', style: S.nodeName }, name),
+          // One capsule per workflow, describing that workflow's own run.
+          state === 'running' || state === 'error'
+            ? h('span', {
+                key: 'state',
+                style: state === 'running'
+                  ? {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-success-primary)',
+                    }
+                  : {
+                      ...S.workflowState,
+                      background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, var(--dsw-alias-bg-base))',
+                      color: 'var(--dsw-alias-state-error-primary)',
+                    },
+              }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
+            : null,
+        ]))
+      }
+      // Where the lines that are not list rows begin: a source composing its own panel needs them.
+      const hintAt = rows.length
+      if (activeSource === 'local' && workflowsReady !== true) {
+        rows.push(h('div', { key: 'workflow-loading', style: S.libraryHint }, tr('library.loading')))
+      } else if (rows.length === 0) {
+        const hint = activeSource === 'local'
+          ? tr('library.workflows.empty')
+          : (isServiceReady(activeSource) === true ? tr('library.workflows.sourceEmpty') : tr('library.sourceOffline'))
+        rows.push(h('div', { key: 'workflow-empty', style: S.libraryHint }, hint))
+      }
+      const slotAt = rows.length
+      // The bottom of the list: a dashed slot that starts a new workflow. Its plus becomes a
+      // confirm/cancel pair, so a stray click never leaves an empty workflow behind.
+      if (canStartWorkflow(activeSource) === true) {
+        rows.push(h('div', { key: 'workflow-new', style: S.workflowNew }, newWorkflowAsk !== true
+          ? h('button', {
+              key: 'plus',
+              type: 'button',
+              title: tr('workflow.new'),
+              'aria-label': tr('workflow.new'),
+              style: S.workflowNewButton,
+              onClick: () => setNewWorkflowAsk(true),
+            }, Glyph('plus', 14))
+          : [
+              h('button', {
+                key: 'confirm',
+                type: 'button',
+                title: tr('workflow.create'),
+                'aria-label': tr('workflow.create'),
+                style: {
+                  ...S.workflowAsk,
+                  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent)',
+                  color: 'var(--dsw-alias-state-success-primary)',
+                },
+                onClick: () => {
+                  void startPendingWorkflow()
+                },
+              }, Glyph('check', 13)),
+              h('button', {
+                key: 'cancel',
+                type: 'button',
+                title: tr('dialog.cancel'),
+                'aria-label': tr('dialog.cancel'),
+                style: {
+                  ...S.workflowAsk,
+                  background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent)',
+                  color: 'var(--dsw-alias-state-error-primary)',
+                },
+                onClick: () => setNewWorkflowAsk(false),
+              }, Glyph('close', 12)),
+            ]))
+      }
+      // Under the plus: the same dashed slot, for a file instead of an empty canvas. It exists only
+      // where the source knows what to do with a file, which is what keeps every import the
+      // property of the source that owns it.
+      if (importerOf(activeSource) !== null) {
+        rows.push(h('div', { key: 'workflow-import', style: S.workflowNew }, h('button', {
+          key: 'import',
+          type: 'button',
+          title: tr('workflow.import'),
+          'aria-label': tr('workflow.import'),
+          style: S.workflowNewButton,
+          onClick: () => pickWorkflowFile(activeSource),
+        }, Glyph('importWorkflow', 14))))
+      }
+
+  return { rows, hintAt, slotAt }
+}
+
 const NOTICE_MS = 2600
 
 /**
@@ -9425,312 +9772,40 @@ const thumbCache = new Map()
             : reading === 'unknown' ? tr('workflow.reading.unknown') : tr('workflow.reading.foreign'))
       }
 
-      const workflowRows = []
-      // The workflow the plus started: it is in the list before it is on disk.
-      if (pendingSource !== null && activeSource === pendingSource) {
-        workflowRows.push(h('button', {
-          key: 'workflow-pending',
-          type: 'button',
-          title: tr('workflow.unnamed'),
-          style: currentWorkflow === null
-            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
-            : { ...S.nodeRow, ...S.workflowRow },
-          onClick: () => openPendingWorkflow(),
-          onPointerEnter: (event) => {
-            const page = pageRef.current
-            if (page === null) return
-            const rect = event.currentTarget.getBoundingClientRect()
-            const pageRect = page.getBoundingClientRect()
-            cancelRunHide()
-            setRunHover({
-              name: UNNAMED_KEY,
-              pending: true,
-              top: Math.round(rect.top - pageRect.top),
-              height: Math.round(rect.height),
-            })
-          },
-          onPointerLeave: scheduleRunHide,
-          onContextMenu: (event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            openMenu(event, [{ label: tr('workflow.discard'), run: discardPendingWorkflow }])
-          },
-        }, [
-          h('span', {
-            key: 'dot',
-            style: { ...S.workflowDot, background: 'var(--dsw-alias-state-warn-primary)' },
-          }),
-          h('span', { key: 'text', style: S.nodeName }, tr('workflow.unnamed')),
-          h('span', {
-            key: 'state',
-            style: {
-              ...S.workflowState,
-              background: 'color-mix(in srgb, var(--dsw-alias-label-tertiary) 18%, var(--dsw-alias-bg-base))',
-              color: 'var(--dsw-alias-label-secondary)',
-            },
-          }, tr('workflow.unsaved')),
-        ]))
-      }
-      for (const item of (activeSource === 'local' ? workflows : [])) {
-        const active = item.name === currentWorkflow
-        const state = workflowRunState(item.name)
-        workflowRows.push(h('button', {
-          key: 'workflow:' + item.name,
-          type: 'button',
-          title: item.name,
-          style: active
-            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
-            : { ...S.nodeRow, ...S.workflowRow },
-          onClick: () => {
-            void openWorkflow(item.name)
-          },
-          onPointerEnter: (event) => {
-            const page = pageRef.current
-            if (page === null) return
-            const rect = event.currentTarget.getBoundingClientRect()
-            const pageRect = page.getBoundingClientRect()
-            cancelRunHide()
-            setRunHover({
-              name: item.name,
-              home: 'local',
-              top: Math.round(rect.top - pageRect.top),
-              height: Math.round(rect.height),
-            })
-          },
-          onPointerLeave: scheduleRunHide,
-          onContextMenu: (event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            openMenu(event, [
-              {
-                label: tr('menu.renameWorkflow'),
-                run: () => setDialog({ mode: 'rename', origin: item.name, value: item.name, error: null }),
-              },
-              { separator: true },
-              {
-                label: tr('menu.deleteWorkflow'),
-                run: () => setDialog({ mode: 'delete', value: item.name, error: null }),
-              },
-            ])
-          },
-        }, [
-          h('span', {
-            key: 'dot',
-            style: state === 'running'
-              ? { ...S.workflowDot, background: 'var(--dsw-alias-state-success-primary)' }
-              : state === 'error'
-                ? { ...S.workflowDot, background: 'var(--dsw-alias-state-error-primary)' }
-                : S.workflowDot,
-          }),
-          h('span', { key: 'text', style: S.nodeName }, item.name),
-          // This row's own run, described where the row is.
-          state === 'running' || state === 'error'
-            ? h('span', {
-                key: 'state',
-                style: state === 'running'
-                  ? {
-                      ...S.workflowState,
-                      background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, var(--dsw-alias-bg-base))',
-                      color: 'var(--dsw-alias-state-success-primary)',
-                    }
-                  : {
-                      ...S.workflowState,
-                      background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, var(--dsw-alias-bg-base))',
-                      color: 'var(--dsw-alias-state-error-primary)',
-                    },
-              }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
-            : null,
-        ]))
-      }
-      // A registered source's own library: its documents, each saying what it is made of, so the
-      // run button never has to guess and the rows can be read without opening them.
-      if (activeRegistered !== null) {
-        for (const item of (sourceLists[activeSource] ?? [])) {
-          const active = item.name === currentWorkflow && currentHome === activeSource
-          workflowRows.push(h('button', {
-            key: 'source-workflow:' + item.name,
-            type: 'button',
-            title: item.name,
-            style: active
-              ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
-              : { ...S.nodeRow, ...S.workflowRow },
-            onClick: () => {
-              void openWorkflow(item.name, activeSource)
-            },
-            onPointerEnter: (event) => {
-              const page = pageRef.current
-              if (page === null) return
-              const rect = event.currentTarget.getBoundingClientRect()
-              const pageRect = page.getBoundingClientRect()
-              cancelRunHide()
-              setRunHover({
-                name: item.name,
-                home: activeSource,
-                reading: readingOf(item),
-                top: Math.round(rect.top - pageRect.top),
-                height: Math.round(rect.height),
-              })
-            },
-            onPointerLeave: scheduleRunHide,
-            onContextMenu: (event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              openMenu(event, [
-                {
-                  label: tr('menu.renameWorkflow'),
-                  run: () => setDialog({ mode: 'rename', source: activeSource, origin: item.name, value: item.name, error: null }),
-                },
-                { separator: true },
-                {
-                  label: tr('menu.deleteWorkflow'),
-                  run: () => setDialog({ mode: 'delete', source: activeSource, value: item.name, error: null }),
-                },
-              ])
-            },
-          }, [
-            h('span', { key: 'dot', style: S.workflowDot }),
-            h('span', { key: 'text', style: S.nodeName }, item.name),
-            readingCapsule(item),
-          ]))
-        }
-      }
-      // A backend's workflows are just its source's workflows: same rows, no heading, no colour.
-      const remoteNames = backendLists[activeSource] ?? []
-      for (const name of remoteNames) {
-        const active = name === currentWorkflow
-        const state = workflowRunState(name)
-        workflowRows.push(h('button', {
-          key: 'backend-workflow:' + name,
-          type: 'button',
-          title: name,
-          style: active
-            ? { ...S.nodeRow, ...S.workflowRow, ...S.workflowRowActive }
-            : { ...S.nodeRow, ...S.workflowRow },
-          onClick: () => {
-            void openBackendWorkflow(name)
-          },
-          onPointerEnter: (event) => {
-            const page = pageRef.current
-            if (page === null) return
-            const rect = event.currentTarget.getBoundingClientRect()
-            const pageRect = page.getBoundingClientRect()
-            cancelRunHide()
-            setRunHover({
-              name,
-              top: Math.round(rect.top - pageRect.top),
-              height: Math.round(rect.height),
-            })
-          },
-          onPointerLeave: scheduleRunHide,
-          onContextMenu: (event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            openMenu(event, [
-              {
-                label: tr('menu.renameWorkflow'),
-                run: () => setDialog({ mode: 'rename', source: activeSource, origin: name, value: name, error: null }),
-              },
-              { separator: true },
-              {
-                label: tr('menu.deleteWorkflow'),
-                run: () => setDialog({ mode: 'delete', source: activeSource, value: name, error: null }),
-              },
-            ])
-          },
-        }, [
-          h('span', {
-            key: 'dot',
-            style: state === 'running'
-              ? { ...S.workflowDot, background: 'var(--dsw-alias-state-success-primary)' }
-              : state === 'error'
-                ? { ...S.workflowDot, background: 'var(--dsw-alias-state-error-primary)' }
-                : S.workflowDot,
-          }),
-          h('span', { key: 'text', style: S.nodeName }, name),
-          // One capsule per workflow, describing that workflow's own run.
-          state === 'running' || state === 'error'
-            ? h('span', {
-                key: 'state',
-                style: state === 'running'
-                  ? {
-                      ...S.workflowState,
-                      background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, var(--dsw-alias-bg-base))',
-                      color: 'var(--dsw-alias-state-success-primary)',
-                    }
-                  : {
-                      ...S.workflowState,
-                      background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, var(--dsw-alias-bg-base))',
-                      color: 'var(--dsw-alias-state-error-primary)',
-                    },
-              }, state === 'running' ? tr('workflow.running') : tr('workflow.failed'))
-            : null,
-        ]))
-      }
-      // Where the lines that are not list rows begin: a source composing its own panel needs them.
-      const workflowHintAt = workflowRows.length
-      if (activeSource === 'local' && workflowsReady !== true) {
-        workflowRows.push(h('div', { key: 'workflow-loading', style: S.libraryHint }, tr('library.loading')))
-      } else if (workflowRows.length === 0) {
-        const hint = activeSource === 'local'
-          ? tr('library.workflows.empty')
-          : (isServiceReady(activeSource) === true ? tr('library.workflows.sourceEmpty') : tr('library.sourceOffline'))
-        workflowRows.push(h('div', { key: 'workflow-empty', style: S.libraryHint }, hint))
-      }
-      const workflowSlotAt = workflowRows.length
-      // The bottom of the list: a dashed slot that starts a new workflow. Its plus becomes a
-      // confirm/cancel pair, so a stray click never leaves an empty workflow behind.
-      if (canStartWorkflow(activeSource) === true) {
-        workflowRows.push(h('div', { key: 'workflow-new', style: S.workflowNew }, newWorkflowAsk !== true
-          ? h('button', {
-              key: 'plus',
-              type: 'button',
-              title: tr('workflow.new'),
-              'aria-label': tr('workflow.new'),
-              style: S.workflowNewButton,
-              onClick: () => setNewWorkflowAsk(true),
-            }, Glyph('plus', 14))
-          : [
-              h('button', {
-                key: 'confirm',
-                type: 'button',
-                title: tr('workflow.create'),
-                'aria-label': tr('workflow.create'),
-                style: {
-                  ...S.workflowAsk,
-                  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent)',
-                  color: 'var(--dsw-alias-state-success-primary)',
-                },
-                onClick: () => {
-                  void startPendingWorkflow()
-                },
-              }, Glyph('check', 13)),
-              h('button', {
-                key: 'cancel',
-                type: 'button',
-                title: tr('dialog.cancel'),
-                'aria-label': tr('dialog.cancel'),
-                style: {
-                  ...S.workflowAsk,
-                  background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent)',
-                  color: 'var(--dsw-alias-state-error-primary)',
-                },
-                onClick: () => setNewWorkflowAsk(false),
-              }, Glyph('close', 12)),
-            ]))
-      }
-      // Under the plus: the same dashed slot, for a file instead of an empty canvas. It exists only
-      // where the source knows what to do with a file, which is what keeps every import the
-      // property of the source that owns it.
-      if (importerOf(activeSource) !== null) {
-        workflowRows.push(h('div', { key: 'workflow-import', style: S.workflowNew }, h('button', {
-          key: 'import',
-          type: 'button',
-          title: tr('workflow.import'),
-          'aria-label': tr('workflow.import'),
-          style: S.workflowNewButton,
-          onClick: () => pickWorkflowFile(activeSource),
-        }, Glyph('importWorkflow', 14))))
-      }
+      const workflowParts = WorkflowList({
+        activeSource,
+        currentWorkflow,
+        currentHome,
+        pendingSource,
+        newWorkflowAsk,
+        setNewWorkflowAsk,
+        canStartWorkflow,
+        importerOf,
+        pickWorkflowFile,
+        startPendingWorkflow,
+        openPendingWorkflow,
+        discardPendingWorkflow,
+        openBackendWorkflow,
+        deleteWorkflow,
+        renameWorkflow,
+        setDialog,
+        setRunHover,
+        scheduleRunHide,
+        cancelRunHide,
+        readingCapsule,
+        workflowRunState,
+        isServiceReady,
+        pageRef,
+        openMenu,
+        workflows,
+        workflowsReady,
+        sourceLists,
+        backendLists,
+        activeRegistered,
+      })
+      const workflowRows = workflowParts.rows
+      const workflowHintAt = workflowParts.hintAt
+      const workflowSlotAt = workflowParts.slotAt
 
       const sourceRows = h(SourceList, {
         key: 'source-list',
@@ -11093,7 +11168,9 @@ const thumbCache = new Map()
     }
 
     return {
-      inject: ['slots'],
+      // Locale is declared so the canvas applies after the dictionary service exists: without it
+      // the plugin can come up before its translations are registered and speak English.
+      inject: ['slots', 'locale'],
       apply(ctx) {
         const runs = getRunController()
         runs.start()
