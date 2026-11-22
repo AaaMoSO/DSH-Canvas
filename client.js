@@ -340,6 +340,7 @@ function createRunController() {
 function createCanvasStore() {
   const values = new Map()
   const listeners = new Set()
+  const keyListeners = new Map()
   let version = 0
 
   return {
@@ -356,12 +357,30 @@ function createCanvasStore() {
       if (Object.is(value, current)) return
       values.set(key, value)
       version += 1
-      for (const listener of [...listeners]) {
-        try {
-          listener(version)
-        } catch {
-          // A broken subscriber must not stop the others.
+      const notify = (group) => {
+        for (const listener of [...group]) {
+          try {
+            listener(version)
+          } catch {
+            // A broken subscriber must not stop the others.
+          }
         }
+      }
+      notify(listeners)
+      const forKey = keyListeners.get(key)
+      if (forKey !== undefined) notify(forKey)
+    },
+    /** Watch one key only: a value that changes often does not have to redraw everything. */
+    subscribeKey(key, listener) {
+      let group = keyListeners.get(key)
+      if (group === undefined) {
+        group = new Set()
+        keyListeners.set(key, group)
+      }
+      group.add(listener)
+      return () => {
+        group.delete(listener)
+        if (group.size === 0) keyListeners.delete(key)
       }
     },
     subscribe(listener) {
@@ -390,6 +409,28 @@ function useStored(key, initial) {
   React.useEffect(() => store.subscribe(() => bump()), [store])
   const setValue = React.useCallback((next) => store.set(key, next), [store, key])
   return [store.ensure(key, initial), setValue]
+}
+
+/** The same value, but this component is woken only when that one key changes. */
+function useStoredValue(key, initial) {
+  const store = getCanvasStore()
+  const [, bump] = React.useReducer((value) => value + 1, 0)
+  React.useEffect(() => store.subscribeKey(key, () => bump()), [store, key])
+  const setValue = React.useCallback((next) => store.set(key, next), [store, key])
+  return [store.ensure(key, initial), setValue]
+}
+
+/** Writing a value without listening to it: a producer does not need to re-render on every write. */
+function useStoredSetter(key) {
+  const store = getCanvasStore()
+  return React.useCallback((next) => store.set(key, next), [store, key])
+}
+
+/** The floating notice: it changes far more often than the canvas behind it, so it redraws alone. */
+function NoticeBanner(props) {
+  const [notice] = useStoredValue('notice', null)
+  if (props?.hidden === true || notice === null) return null
+  return h('div', { key: 'notice', style: S.notice }, notice)
 }
 
 let runController = null
@@ -2711,7 +2752,7 @@ const thumbCache = new Map()
       // The node being dragged out of the library; the miniature follows the cursor instead.
       const [nodeDrag, setNodeDrag] = React.useState(null)
       const [props, setProps] = useStored('props', null)
-      const [notice, setNotice] = useStored('notice', null)
+      const setNotice = useStoredSetter('notice')
       const [temp, setTemp] = React.useState(null)
       const [marquee, setMarquee] = React.useState(null)
       const marqueeRef = React.useRef(null)
@@ -8620,9 +8661,7 @@ const thumbCache = new Map()
           ]))
         : null
 
-      const noticeEl = notice === null || slide !== null
-        ? null
-        : h('div', { key: 'notice', style: S.notice }, notice)
+      const noticeEl = h(NoticeBanner, { key: 'notice', hidden: slide !== null })
 
       // The graph lives in this sheet; it is translated opposite to the door so the nodes keep
       // their screen position while the chrome slides.
