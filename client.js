@@ -5819,6 +5819,61 @@ const thumbCache = new Map()
         return backend !== undefined && typeof backend.importWorkflow === 'function' ? backend.importWorkflow : null
       }
 
+      /** The top-most node whose box holds this graph point, if any. */
+      function nodeAtPoint(point) {
+        const nodes = graphRef.current.nodes
+        for (let index = nodes.length - 1; index >= 0; index -= 1) {
+          const node = nodes[index]
+          if (point.x < node.x || point.x > node.x + node.w) continue
+          if (point.y < node.y || point.y > node.y + nodeHeight(node)) continue
+          return node
+        }
+        return null
+      }
+
+      /** A file dragged over the panel: say it can be dropped, without hijacking other drags. */
+      function canvasDragOver(event) {
+        const types = Array.from(event.dataTransfer?.types ?? [])
+        if (types.includes('Files') !== true) return
+        event.preventDefault()
+        if (event.dataTransfer !== null && event.dataTransfer !== undefined) event.dataTransfer.dropEffect = 'copy'
+      }
+
+      /**
+       * A file dropped on the panel goes to whatever node is under the pointer, if that node's view
+       * accepts files. This lives here because a drop on a node's inner element is not delivered
+       * reliably, while the panel's own surface always sees it.
+       */
+      function canvasDrop(event) {
+        const files = filesOfTransfer(event.dataTransfer)
+        if (files.length === 0) return
+        event.preventDefault()
+        const node = nodeAtPoint(toGraphPoint(event))
+        if (node === null) return
+        const view = nodeViewOf(node)
+        if (view === null || typeof view.onFiles !== 'function') return
+        const widgetIndex = (name) => widgetSpecsOf(node).findIndex((spec) => spec.name === name)
+        void (async () => {
+          try {
+            const paths = await hostPathsOf(files)
+            view.onFiles(paths, {
+              node,
+              notify: showNotice,
+              setWidget: (name, value) => {
+                const index = widgetIndex(name)
+                if (index >= 0) setWidgetValue(node.id, index, value)
+              },
+              getWidget: (name) => {
+                const index = widgetIndex(name)
+                return index < 0 || Array.isArray(node.widgets) !== true ? undefined : node.widgets[index]
+              },
+            })
+          } catch (error) {
+            showNotice('读取文件失败：' + (error instanceof Error ? error.message : String(error)))
+          }
+        })()
+      }
+
       /** Ask for one workflow file: the browser hands over its text, never its path. */
       function pickWorkflowFile(sourceId) {
         const importer = importerOf(sourceId)
@@ -10853,6 +10908,8 @@ const thumbCache = new Map()
         // One handler for the whole panel: keys pressed while the toolbar or the library has
         // focus must still reach the canvas, which a shell-only handler would miss.
         onKeyDown,
+        onDragOver: canvasDragOver,
+        onDrop: canvasDrop,
       }, [bandStyle, toolbar, shell, barMenuEl, barSubmenuEl, resizeWidthEl, resizeSplitEl, runButtonEl, nodePreviewEl, nodeGhostEl, dialogEl, viewerEl, extensionMenuEl, extensionDialogEl, extensionHoverEl, settingsEl, settingsPickerEl, panelsEl, comboMenuEl])
 
       // The frame is what the host lays out. The page inside it becomes a fixed sheet while the
