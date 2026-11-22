@@ -426,6 +426,67 @@ function useStoredSetter(key) {
   return React.useCallback((next) => store.set(key, next), [store, key])
 }
 
+      /** The miniature itself: ports on both sides, widget bars underneath. */
+      function previewRows(def) {
+        const inputs = Array.isArray(def.inputs) ? def.inputs : []
+        const outputs = Array.isArray(def.outputs) ? def.outputs : []
+        const rows = []
+        const portCount = Math.min(Math.max(inputs.length, outputs.length), 8)
+        for (let index = 0; index < portCount; index += 1) {
+          const input = inputs[index]
+          const output = outputs[index]
+          rows.push(h('div', { key: 'port:' + index, style: S.previewRow }, [
+            input === undefined ? null : h('span', { key: 'in', style: S.previewPort }, [
+              h('span', { key: 'dot', style: { ...S.previewDot, background: typeColor(input.type) } }),
+              h('span', { key: 'text', style: S.previewPortText }, input.name),
+            ]),
+            output === undefined ? null : h('span', { key: 'out', style: S.previewPortOut }, [
+              h('span', { key: 'text', style: S.previewPortText }, output.name),
+              h('span', { key: 'dot', style: { ...S.previewDot, background: typeColor(output.type) } }),
+            ]),
+          ]))
+        }
+        const widgets = inputs.filter((input) => input.widget === true).slice(0, 6)
+        for (const widget of widgets) {
+          rows.push(h('div', { key: 'widget:' + widget.name, style: S.previewWidgetRow }, [
+            h('span', { key: 'bar', style: S.previewWidgetBar }),
+            h('span', { key: 'text', style: S.previewPortText }, widget.name),
+          ]))
+        }
+        if (rows.length === 0) {
+          rows.push(h('div', { key: 'empty', style: S.previewEmpty }, tr('library.noPorts')))
+        }
+        return rows
+      }
+
+/**
+ * The hover card of a library node. It reads the preview itself, so moving the pointer across rows
+ * redraws the card alone instead of the whole canvas.
+ */
+function NodePreviewCard(props) {
+  const [preview] = useStoredValue('nodePreview', null)
+  if (preview === null || props?.hidden === true) return null
+  return h('div', {
+    key: 'node-preview',
+    style: {
+      position: 'absolute',
+      left: preview.x + 'px',
+      top: preview.y + 'px',
+      width: PREVIEW_W + 'px',
+      zIndex: 26,
+      pointerEvents: 'none',
+      background: 'var(--dsw-alias-bg-layer-1)',
+      border: '1px solid var(--dsw-alias-border-l2)',
+      borderRadius: '8px',
+      boxShadow: '0 10px 26px rgba(0, 0, 0, 0.28)',
+      overflow: 'hidden',
+    },
+  }, [
+    h('div', { key: 'head', style: S.previewHead }, preview.def.display_name || preview.def.type),
+    h('div', { key: 'body', style: S.previewBody }, previewRows(preview.def)),
+  ])
+}
+
 const NOTICE_MS = 2600
 
 /**
@@ -2766,7 +2827,8 @@ const thumbCache = new Map()
       // While the band retracts it stays mounted, so the reverse animation has something to play.
       const [bandClosing, setBandClosing] = React.useState(false)
       // The node a library row is pointing at; shown as a miniature beside the band.
-      const [nodePreview, setNodePreview] = React.useState(null)
+      // The card owns the preview; the canvas only points it at a node.
+      const setNodePreview = useStoredSetter('nodePreview')
       // Open combo list for a widget: `{ nodeId, index, options, current, left, top, width }`.
       const [comboMenu, setComboMenu] = React.useState(null)
       // The node being dragged out of the library; the miniature follows the cursor instead.
@@ -9590,39 +9652,6 @@ const thumbCache = new Map()
           ? [].concat(bandItem.panel(libraryContext, librarySourceOpen))
           : (barSection === 'nodes' ? packRows : (barSection === 'workflows' ? workflowRows : sourceRows)))
 
-      /** The miniature itself: ports on both sides, widget bars underneath. */
-      function previewRows(def) {
-        const inputs = Array.isArray(def.inputs) ? def.inputs : []
-        const outputs = Array.isArray(def.outputs) ? def.outputs : []
-        const rows = []
-        const portCount = Math.min(Math.max(inputs.length, outputs.length), 8)
-        for (let index = 0; index < portCount; index += 1) {
-          const input = inputs[index]
-          const output = outputs[index]
-          rows.push(h('div', { key: 'port:' + index, style: S.previewRow }, [
-            input === undefined ? null : h('span', { key: 'in', style: S.previewPort }, [
-              h('span', { key: 'dot', style: { ...S.previewDot, background: typeColor(input.type) } }),
-              h('span', { key: 'text', style: S.previewPortText }, input.name),
-            ]),
-            output === undefined ? null : h('span', { key: 'out', style: S.previewPortOut }, [
-              h('span', { key: 'text', style: S.previewPortText }, output.name),
-              h('span', { key: 'dot', style: { ...S.previewDot, background: typeColor(output.type) } }),
-            ]),
-          ]))
-        }
-        const widgets = inputs.filter((input) => input.widget === true).slice(0, 6)
-        for (const widget of widgets) {
-          rows.push(h('div', { key: 'widget:' + widget.name, style: S.previewWidgetRow }, [
-            h('span', { key: 'bar', style: S.previewWidgetBar }),
-            h('span', { key: 'text', style: S.previewPortText }, widget.name),
-          ]))
-        }
-        if (rows.length === 0) {
-          rows.push(h('div', { key: 'empty', style: S.previewEmpty }, tr('library.noPorts')))
-        }
-        return rows
-      }
-
       // The menu's column: the source row, then every item of the active source, with the rows an
       // item unfolds itself rendered directly under that item.
       const menuRows = [sourceRow]
@@ -9833,27 +9862,10 @@ const thumbCache = new Map()
                 }, Glyph('file', 12)),
           ])
 
-      const nodePreviewEl = nodePreview === null || barMenu === null || barMenu.open !== true || barSection === null
-        ? null
-        : h('div', {
-            key: 'node-preview',
-            style: {
-              position: 'absolute',
-              left: nodePreview.x + 'px',
-              top: nodePreview.y + 'px',
-              width: PREVIEW_W + 'px',
-              zIndex: 26,
-              pointerEvents: 'none',
-              background: 'var(--dsw-alias-bg-layer-1)',
-              border: '1px solid var(--dsw-alias-border-l2)',
-              borderRadius: '8px',
-              boxShadow: '0 10px 26px rgba(0, 0, 0, 0.28)',
-              overflow: 'hidden',
-            },
-          }, [
-            h('div', { key: 'head', style: S.previewHead }, nodePreview.def.display_name || nodePreview.def.type),
-            h('div', { key: 'body', style: S.previewBody }, previewRows(nodePreview.def)),
-          ])
+      const nodePreviewEl = h(NodePreviewCard, {
+        key: 'node-preview',
+        hidden: barMenu === null || barMenu.open !== true || barSection === null,
+      })
 
       // Inside the library the cursor carries the compact miniature; over the canvas it
       // carries the life-size phantom instead, so the drop position is never a surprise.

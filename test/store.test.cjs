@@ -42,6 +42,9 @@ ok('useStoredValue subscribes to one key', client.includes('function useStoredVa
 ok('...through subscribeKey', client.includes('store.subscribeKey(key'))
 ok('useStoredSetter writes without listening', client.includes('function useStoredSetter'))
 ok('the notice is rendered by its own component', client.includes('function NoticeBanner'))
+ok('the node preview is rendered by its own component', client.includes('function NodePreviewCard'))
+ok('...and draws from the shared preview value', client.includes("useStoredValue('nodePreview'"))
+ok('the panel only writes the preview', client.includes("useStoredSetter('nodePreview')"))
 ok('the panel only writes the notice', client.includes('useStoredSetter(\'notice\')'))
 
 report('store')
