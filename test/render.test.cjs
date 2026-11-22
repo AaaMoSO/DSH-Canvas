@@ -97,7 +97,28 @@ new Function(
 )
 const plugin = windowStub.__def.factory((n) => (n === 'react' ? React : {}))
 plugin.apply(ctx)
-const tree = Panel()
+// React would call the panel's child components while rendering them. The harness only builds the
+// elements, so run the ones that can be run outside React: a list component that reaches for a
+// helper left behind in the panel throws here instead of on screen.
+let ranComponents = 0
+function hydrate(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map(hydrate)
+  const props = node.props ?? {}
+  if (typeof node.type === 'function') {
+    const source = String(node.type)
+    // Hook users need a real renderer, and a class component is not ours to instantiate here.
+    if (!source.startsWith('class ') && !source.includes('useStored') && !source.includes('React.use')) {
+      ranComponents += 1
+      return hydrate(node.type(props))
+    }
+  }
+  // This stub keeps children beside props, the way the canvas' own tree is built here.
+  const children = node.children !== undefined ? node.children : props.children
+  if (children === undefined) return node
+  return { ...node, children: hydrate(children) }
+}
+const tree = hydrate(Panel())
 const found = []
 const all = []
 const walk = (node) => {
@@ -115,6 +136,10 @@ walk(tree)
 const minimapDiv = all.find((s) => s.cursor === 'crosshair')
 const pageStyle = all.find((s) => s.position === 'fixed')
 const menuVars = found.find((s) => '--nc-menu-w' in s)
+if (ranComponents === 0) {
+  console.log('FAIL no child component was rendered by the harness')
+  process.exit(1)
+}
 if (minimapDiv === undefined || pageStyle === undefined || menuVars === undefined) {
   console.log('FAIL the panel did not render its canvas: minimap/minimap vars missing')
   process.exit(1)

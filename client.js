@@ -9973,12 +9973,14 @@ const thumbCache = new Map()
             : packs
               .filter((pack) => packVisible(pack) && sourceOfPack(pack) === source.id)
               .reduce((sum, pack) => sum + (Array.isArray(pack.nodes) ? pack.nodes.length : 0), 0)
-          const workflows = source.id === 'local'
+          // Named apart from the state it counts: a local const called `workflows` here would
+          // read itself while initialising (and throw before it ever counted anything).
+          const workflowCount = source.id === 'local'
             ? workflows.length
             : (sourceOfHome(source.id) !== null
               ? (sourceLists[source.id] ?? []).length
               : (backendLists[source.id] ?? []).length)
-          return { nodes, workflows }
+          return { nodes, workflows: workflowCount }
         },
         onSelect: (id) => selectSource(id),
         iconOf: (source) => sourceIcon(source.id, 14),
