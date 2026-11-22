@@ -397,7 +397,10 @@ export class Executor {
             if (typeof release === 'function') run.finalizers.push(release)
           },
         }
-        const returned = await program.run(inputs, context)
+        const ceiling = typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
+          ? Math.min(Math.max(Math.trunc(this.config.nodeTimeoutMs), 1), 3_600_000)
+          : 0
+        const returned = await runWithTimeout(program.run(inputs, context), ceiling, id)
         const outputs = Array.isArray(returned) === true ? returned : [returned]
         values.set(id, outputs)
         run.current = null
@@ -432,6 +435,30 @@ export class Executor {
       await rm(run.workspace, { recursive: true, force: true }).catch(() => {})
     }
   }
+}
+
+/**
+ * Run a program with a ceiling. The program itself cannot be stopped (it is plain JavaScript), so
+ * the run reports the failure and lets its finalizers clean up; a stuck node no longer holds the
+ * whole workflow hostage.
+ */
+function runWithTimeout(promise, ms, id) {
+  if (ms <= 0) return promise
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new ExecutionError('node ' + id + ' timed out after ' + ms + 'ms'))
+    }, ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
 }
 
 /** Depth-first topological order over the links, with cycle detection. */
