@@ -3455,6 +3455,11 @@ const thumbCache = new Map()
               const index = widgetSpecsOf(node).findIndex((spec) => spec.name === name)
               if (index >= 0) setWidgetValue(node.id, index, value)
             },
+            /** The control's current value, so a view can present it its own way. */
+            getWidget: (name) => {
+              const index = widgetSpecsOf(node).findIndex((spec) => spec.name === name)
+              return index < 0 || Array.isArray(node.widgets) !== true ? undefined : node.widgets[index]
+            },
             notify: showNotice,
           })
         } catch (error) {
