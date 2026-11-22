@@ -45,6 +45,9 @@ ok('the notice is rendered by its own component', client.includes('function Noti
 ok('the node preview is rendered by its own component', client.includes('function NodePreviewCard'))
 ok('...and draws from the shared preview value', client.includes("useStoredValue('nodePreview'"))
 ok('the panel only writes the preview', client.includes("useStoredSetter('nodePreview')"))
+ok('the run control is rendered by its own component', client.includes('function RunControl(props)'))
+ok('...and reads the hover itself', client.includes("useStoredValue('runHover'"))
+ok('the panel only writes the hover', client.includes("useStoredSetter('runHover')"))
 ok('the panel only writes the notice', client.includes('useStoredSetter(\'notice\')'))
 
 report('store')

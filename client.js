@@ -487,6 +487,74 @@ function NodePreviewCard(props) {
   ])
 }
 
+/**
+ * The floating run control of the hovered workflow row. It reads the hover itself, so moving the
+ * pointer down the list redraws one small button instead of the canvas.
+ */
+function RunControl(props) {
+  const [hover] = useStoredValue('runHover', null)
+  if (hover === null || props?.hidden === true || props?.section !== 'workflows') return null
+  const running = props.runStateOf(hover.name) === 'running'
+  const remote = props.isRemote(hover.name)
+  const stop = (event) => event.stopPropagation()
+  return h('div', {
+    key: 'workflow-run',
+    style: {
+      position: 'absolute',
+      left: props.width,
+      top: hover.top + 'px',
+      height: hover.height + 'px',
+      display: 'flex',
+      alignItems: 'center',
+      paddingLeft: '4px',
+      gap: '4px',
+      zIndex: 27,
+    },
+    onPointerEnter: props.onEnter,
+    onPointerLeave: props.onLeave,
+  }, [
+    h('button', {
+      key: 'control',
+      type: 'button',
+      title: running ? tr('workflow.stop') : tr('workflow.run'),
+      'aria-label': running ? tr('workflow.stop') : tr('workflow.run'),
+      style: S.runButton,
+      onPointerDown: stop,
+      onClick: (event) => {
+        event.stopPropagation()
+        props.onControl(hover, remote)
+      },
+    }, Glyph(running ? 'pause' : 'play', 12)),
+    hover.home === 'mixed' && hover.reading === 'local'
+      ? h('button', {
+          key: 'transfer-out',
+          type: 'button',
+          title: tr('workflow.transferOut'),
+          'aria-label': tr('workflow.transferOut'),
+          style: S.runButton,
+          onPointerDown: stop,
+          onClick: (event) => {
+            event.stopPropagation()
+            props.onTransferOut(hover.name)
+          },
+        }, Glyph('exportWorkflow', 12))
+      : hover.pending === true || hover.home === undefined || hover.home === 'mixed'
+        ? null
+        : h('button', {
+            key: 'transfer-in',
+            type: 'button',
+            title: tr('workflow.transferIn'),
+            'aria-label': tr('workflow.transferIn'),
+            style: S.runButton,
+            onPointerDown: stop,
+            onClick: (event) => {
+              event.stopPropagation()
+              props.onTransferIn(hover)
+            },
+          }, Glyph('file', 12)),
+  ])
+}
+
 const NOTICE_MS = 2600
 
 /**
@@ -2921,7 +2989,8 @@ const thumbCache = new Map()
       // Naming dialog for "save" (when unnamed) and "save as": `{ mode, value, error }`.
       const [dialog, setDialog] = useStored('dialog', null)
       // The workflow row the pointer is on; its run control floats beside the menu.
-      const [runHover, setRunHover] = React.useState(null)
+      // The control below listens to this; the canvas only reports which row the pointer is on.
+      const setRunHover = useStoredSetter('runHover')
       // Full-resolution viewer: `{ root, name }` while it is open.
       const [previewViewer, setPreviewViewer] = useStored('previewViewer', null)
       // Bumped when a preview thumbnail finishes decoding, so the tile can swap it in.
@@ -9832,72 +9901,27 @@ const thumbCache = new Map()
 
       // The run control sits outside the panel, in line with the hovered row. Its wrapper starts
       // exactly at the panel edge, so travelling right from the row never crosses dead space.
-      const runHoverRemote = runHover !== null
-        && (backendLists[activeSource] ?? []).includes(runHover.name)
-      const runButtonEl = runHover === null || barMenu === null || barMenu.open !== true
-        || barSection !== 'workflows'
-        ? null
-        : h('div', {
-            key: 'workflow-run',
-            style: {
-              position: 'absolute',
-              left: menuDrawnWidth,
-              top: runHover.top + 'px',
-              height: runHover.height + 'px',
-              display: 'flex',
-              alignItems: 'center',
-              paddingLeft: '4px',
-              gap: '4px',
-              zIndex: 27,
-            },
-            onPointerEnter: cancelRunHide,
-            onPointerLeave: scheduleRunHide,
-          }, [h('button', {
-            key: 'control',
-            type: 'button',
-            title: workflowRunState(runHover.name) === 'running' ? tr('workflow.stop') : tr('workflow.run'),
-            'aria-label': workflowRunState(runHover.name) === 'running' ? tr('workflow.stop') : tr('workflow.run'),
-            style: S.runButton,
-            onPointerDown: (event) => event.stopPropagation(),
-            onClick: (event) => {
-              event.stopPropagation()
-              // An unnamed workflow has nothing to run: the click becomes the prompt to name it.
-              if (runHover.pending === true) {
-                askToSavePending()
-                return
-              }
-              const home = runHover.home === undefined ? 'local' : runHover.home
-              void (runHoverRemote ? runBackendWorkflow(runHover.name) : runWorkflow(runHover.name, home))
-            },
-          }, Glyph(workflowRunState(runHover.name) === 'running' ? 'pause' : 'play', 12)),
-          runHover.home === 'mixed' && runHover.reading === 'local'
-            ? h('button', {
-                key: 'transfer-out',
-                type: 'button',
-                title: tr('workflow.transferOut'),
-                'aria-label': tr('workflow.transferOut'),
-                style: S.runButton,
-                onPointerDown: (event) => event.stopPropagation(),
-                onClick: (event) => {
-                  event.stopPropagation()
-                  setDialog({ mode: 'transferOut', value: runHover.name, error: null })
-                },
-              }, Glyph('exportWorkflow', 12))
-            : runHover.pending === true || runHover.home === undefined || runHover.home === 'mixed'
-              ? null
-              : h('button', {
-                  key: 'transfer-in',
-                  type: 'button',
-                  title: tr('workflow.transferIn'),
-                  'aria-label': tr('workflow.transferIn'),
-                  style: S.runButton,
-                  onPointerDown: (event) => event.stopPropagation(),
-                  onClick: (event) => {
-                    event.stopPropagation()
-                    setDialog({ mode: 'transferIn', source: runHover.home, value: runHover.name, error: null })
-                  },
-                }, Glyph('file', 12)),
-          ])
+      const runButtonEl = h(RunControl, {
+        key: 'workflow-run',
+        hidden: barMenu === null || barMenu.open !== true,
+        section: barSection,
+        width: menuDrawnWidth,
+        runStateOf: workflowRunState,
+        isRemote: (name) => (backendLists[activeSource] ?? []).includes(name),
+        onControl: (hover, remote) => {
+          // An unnamed workflow has nothing to run: the click becomes the prompt to name it.
+          if (hover.pending === true) {
+            askToSavePending()
+            return
+          }
+          const home = hover.home === undefined ? 'local' : hover.home
+          void (remote ? runBackendWorkflow(hover.name) : runWorkflow(hover.name, home))
+        },
+        onTransferOut: (name) => setDialog({ mode: 'transferOut', value: name, error: null }),
+        onTransferIn: (hover) => setDialog({ mode: 'transferIn', source: hover.home, value: hover.name, error: null }),
+        onEnter: cancelRunHide,
+        onLeave: scheduleRunHide,
+      })
 
       const nodePreviewEl = h(NodePreviewCard, {
         key: 'node-preview',
