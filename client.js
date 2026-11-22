@@ -426,9 +426,29 @@ function useStoredSetter(key) {
   return React.useCallback((next) => store.set(key, next), [store, key])
 }
 
-/** The floating notice: it changes far more often than the canvas behind it, so it redraws alone. */
+const NOTICE_MS = 2600
+
+/**
+ * The floating notice: it changes far more often than the canvas behind it, so it renders alone and
+ * owns its own lifetime. The canvas only ever writes the value.
+ */
 function NoticeBanner(props) {
-  const [notice] = useStoredValue('notice', null)
+  const [notice, setNotice] = useStoredValue('notice', null)
+  const timerRef = React.useRef(0)
+  React.useEffect(() => {
+    if (notice === null) return undefined
+    if (timerRef.current !== 0) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      timerRef.current = 0
+      setNotice(null)
+    }, NOTICE_MS)
+    return () => {
+      if (timerRef.current !== 0) {
+        clearTimeout(timerRef.current)
+        timerRef.current = 0
+      }
+    }
+  }, [notice, setNotice])
   if (props?.hidden === true || notice === null) return null
   return h('div', { key: 'notice', style: S.notice }, notice)
 }
@@ -2929,7 +2949,6 @@ const thumbCache = new Map()
       const phantomRef = React.useRef(null)
       const nodeDragRef = React.useRef(null)
       const propsDirtyRef = React.useRef(false)
-      const noticeTimerRef = React.useRef(0)
 
       const graphRef = React.useRef(graph)
       const viewRef = React.useRef(view)
@@ -3132,7 +3151,6 @@ const thumbCache = new Map()
       React.useEffect(() => {
         shellRef.current?.focus({ preventScroll: true })
         return () => {
-          if (noticeTimerRef.current !== 0) clearTimeout(noticeTimerRef.current)
           if (barMenuTimerRef.current !== 0) clearTimeout(barMenuTimerRef.current)
           if (bandTimerRef.current !== 0) clearTimeout(bandTimerRef.current)
           if (settleFrameRef.current !== 0) cancelAnimationFrame(settleFrameRef.current)
@@ -3293,21 +3311,6 @@ const thumbCache = new Map()
           setExtensionDialog((current) => (current === null ? current : { ...current, busy: false }))
         }
       }, [])
-
-      // A notice restored after a remount gets its full time again.
-      React.useEffect(() => {
-        if (notice === null || noticeTimerRef.current !== 0) return undefined
-        noticeTimerRef.current = setTimeout(() => {
-          noticeTimerRef.current = 0
-          setNotice(null)
-        }, 2600)
-        return () => {
-          if (noticeTimerRef.current !== 0) {
-            clearTimeout(noticeTimerRef.current)
-            noticeTimerRef.current = 0
-          }
-        }
-      }, [notice])
 
       // The signed-in DSH account supplies the avatar; signed out simply leaves the ring empty.
       React.useEffect(() => {
@@ -3685,12 +3688,8 @@ const thumbCache = new Map()
       }
 
       function showNotice(text) {
+        // The banner times itself out; the canvas only hands it the text.
         setNotice(text)
-        if (noticeTimerRef.current !== 0) clearTimeout(noticeTimerRef.current)
-        noticeTimerRef.current = setTimeout(() => {
-          noticeTimerRef.current = 0
-          setNotice(null)
-        }, 2600)
       }
 
       function selectionIds() {
