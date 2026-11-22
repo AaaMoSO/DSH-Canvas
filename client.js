@@ -581,9 +581,7 @@ function SourceList(props) {
       style: active ? { ...S.typeRow, ...S.typeRowActive } : S.typeRow,
       onClick: () => props.onSelect(source.id),
     }, [
-      // Every source wears its own picture: the account avatar for Local, the owning extension's
-      // icon otherwise.
-      h('span', { key: 'icon', style: S.sourceIconSlot }, sourceIcon(source.id, 14)),
+      h('span', { key: 'icon', style: S.sourceIconSlot }, props.iconOf(source)),
       h('span', { key: 'name', style: S.typeName }, source.name),
       h('span', {
         key: 'count',
@@ -9983,6 +9981,7 @@ const thumbCache = new Map()
           return { nodes, workflows }
         },
         onSelect: (id) => selectSource(id),
+        iconOf: (source) => sourceIcon(source.id, 14),
       })
       // The band slides down out of the menu like a sash window: the slot is already at its final
       // size and the panel inside travels from above it into place, so the content moves with it

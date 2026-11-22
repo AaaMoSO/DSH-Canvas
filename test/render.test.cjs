@@ -74,6 +74,10 @@ const patches = [
     'const [slide, setSlide] = React.useState({ page: 180, content: 0, animate: false })'],
   ['const [door, setDoor] = React.useState(null)',
     'const [door, setDoor] = React.useState({ left: 0, top: 40, width: 1200, height: 860, flush: true })'],
+  // Draw the band with the source list in it: a row component reaching for a helper that stayed
+  // behind in the panel must fail here, not on screen.
+  ["const [barSection, setBarSection] = useStored('barSection', null)",
+    "const [barSection, setBarSection] = ['source', () => {}]"],
   // The slot is wrapped in an error boundary; the harness renders the canvas itself.
   ['        }, CanvasPanel))', '        }, Panel))'],
 ]
