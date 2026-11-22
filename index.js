@@ -75,6 +75,13 @@ let pluginCtx = null
 
 export function apply(ctx) {
   pluginCtx = ctx
+  // Node programs get the canvas' own origin. The desktop Host binds a random port, so a program
+  // that guessed one would be wrong.
+  try {
+    executor.origin = ctx.webServer.getOrigin()
+  } catch {
+    executor.origin = ''
+  }
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: PREFIX,

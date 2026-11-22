@@ -4609,6 +4609,11 @@ const thumbCache = new Map()
           const exclusive = entry !== undefined && entry.def.concurrency === 'exclusive'
           prompt[ids.get(node.id)] = {
             class_type: node.type.trim(),
+            // Execution identity: the pack this node came from. Two packs may share a type name,
+            // and the program belongs to the one the node was dragged out of.
+            ...(entry === undefined || entry.pack === undefined || typeof entry.pack.id !== 'string'
+              ? {}
+              : { pack: entry.pack.id }),
             // The canvas id travels with the prompt, so a live run can say which node it is on.
             canvasId: node.id,
             inputs,

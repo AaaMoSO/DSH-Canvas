@@ -93,6 +93,8 @@ export class Executor {
     this.locks = new Map()
     this.config = {}
     this.maxLogEntries = 400
+    // Filled in by the plugin: where the canvas' own HTTP answers.
+    this.origin = ''
   }
 
   /** Machine settings for node programs: `node-canvas/config.json`, re-read on every run. */
@@ -152,6 +154,12 @@ export class Executor {
       await this.collect(path.join(dir, 'nodes'), path.basename(dir), found)
     }
     this.programs = found
+    // The same type may live in two packs; the pack is part of the identity and the type alone is
+    // only a fallback. Built here so a lookup never rescans the map.
+    this.byType = new Map()
+    for (const entry of found.values()) {
+      if (this.byType.has(entry.type) !== true) this.byType.set(entry.type, entry)
+    }
   }
 
   async collect(dir, pack, found) {
@@ -174,15 +182,15 @@ export class Executor {
       }
       // The version breaks the ESM module cache, so editing a program takes effect on the
       // next run instead of after a Host restart.
-      found.set(type, { file, pack, version })
+      found.set((pack ?? '') + '\u0000' + type, { file, pack: pack ?? null, type, version })
     }
   }
 
   /** Types that have a program on disk, with the pack that provides each. */
   async listPrograms() {
     await this.refresh()
-    return [...this.programs.entries()]
-      .map(([type, entry]) => ({ type, pack: entry.pack }))
+    return [...this.programs.values()]
+      .map((entry) => ({ type: entry.type, pack: entry.pack }))
       .sort((left, right) => left.type.localeCompare(right.type))
   }
 
@@ -193,12 +201,15 @@ export class Executor {
     if (inline !== undefined && typeof inline.source === 'string' && inline.source.trim() !== '') {
       return this.inlineProgram(inline.source)
     }
-    const cached = this.programs.get(type)
-    if (cached === undefined) await this.refresh()
-    const entry = this.programs.get(type)
-    if (entry === undefined || typeof type !== 'string') {
-      throw new ExecutionError('no node program for ' + String(type))
+    if (typeof type !== 'string') throw new ExecutionError('no node program for ' + String(type))
+    const pack = typeof spec?.pack === 'string' && spec.pack !== '' ? spec.pack : null
+    const find = () => this.programs.get((pack ?? '') + '\u0000' + type) ?? this.byType.get(type)
+    let entry = find()
+    if (entry === undefined) {
+      await this.refresh()
+      entry = find()
     }
+    if (entry === undefined) throw new ExecutionError('no node program for ' + String(type))
     if (entry.module !== undefined) return entry.module
     const module = await import(pathToFileURL(entry.file).href + '?v=' + entry.version)
     if (typeof module.run !== 'function') {
@@ -371,6 +382,8 @@ export class Executor {
         const program = await this.program(spec.class_type, spec)
         const context = {
           nodeId: id,
+          /** Where the canvas' own HTTP lives, for a program that has to call back in. */
+          origin: this.origin ?? '',
           runId: run.id,
           workflow: run.workflow,
           signal: run.abort.signal,
