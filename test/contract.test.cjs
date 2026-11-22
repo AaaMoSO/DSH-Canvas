@@ -123,7 +123,11 @@ ok('...and the slot registers the wrapper', client.includes('}, CanvasPanel))'))
 ok('the crash card offers a reload', client.includes("location.reload()"))
 
 // ---- a view's own controls keep their clicks ----------------------------------------------
-ok('a node view control is not swallowed by the node drag',
-  client.includes("event.target.closest('button, input, textarea, select, a"))
+ok('the view area is marked for the pointer handlers', client.includes("'data-nc-view': '1'"))
+ok('a press inside a view is left to the view', client.includes('function pressInView(event)'))
+ok('the shell does not capture a press that started in a view',
+  client.includes('if (pressInView(event)) return'))
+ok('the node does not start a gesture from a view either',
+  /pressInView\(event\)\) return\n        event\.stopPropagation\(\)/.test(client))
 
 report('contract')

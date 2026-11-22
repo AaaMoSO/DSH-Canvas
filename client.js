@@ -6617,7 +6617,20 @@ const thumbCache = new Map()
         shellRef.current?.focus({ preventScroll: true })
       }
 
+      /**
+       * True when the press started inside a node view. The canvas captures the pointer on press,
+       * which makes the following click belong to the capture target; a view's buttons and inputs
+       * would never see it. Such presses are left entirely to the view.
+       */
+      function pressInView(event) {
+        if (typeof Element === 'undefined') return false
+        const target = event.target
+        if (target instanceof Element !== true) return false
+        return target.closest('[data-nc-view]') !== null
+      }
+
       function onShellPointerDown(event) {
+        if (pressInView(event)) return
         if (event.button === 2) {
           // Right button: a click still opens the menu, but a press that moves turns into a
           // marquee, so the gesture is decided on move, not here.
@@ -7156,12 +7169,8 @@ const thumbCache = new Map()
 
       function onNodePointerDown(event, node) {
         if (event.button !== 0) return
-        // A node view's own controls keep their clicks. Capturing the pointer on the node would
-        // deliver the click to the node instead, so a view's buttons and inputs would never fire.
-        if (typeof Element !== 'undefined' && event.target instanceof Element
-          && event.target.closest('button, input, textarea, select, a, [contenteditable="true"]') !== null) {
-          return
-        }
+        // A view owns its area: no node gesture, no pointer capture.
+        if (pressInView(event)) return
         event.stopPropagation()
         setMenu(null)
         focusShell()
@@ -8608,6 +8617,9 @@ const thumbCache = new Map()
           ? null
           : h('div', {
               key: 'ext-view',
+              // Everything inside this area belongs to the view: presses there are not gestures of
+              // the canvas, and the view's own controls keep their clicks.
+              'data-nc-view': '1',
               style: {
                 position: 'absolute',
                 left: '15px',
