@@ -130,4 +130,16 @@ ok('the shell does not capture a press that started in a view',
 ok('the node does not start a gesture from a view either',
   /pressInView\(event\)\) return\n        event\.stopPropagation\(\)/.test(client))
 
+// ---- the kernel owns a general settings section, with the language in it -----------------
+ok('a general section exists before the extensions', client.includes("const CORE_SECTION = 'core'")
+  && client.includes('return [coreSection(), ...own]'))
+ok('...and it does not ask the host for values', client.includes('if (section === null || section.core === true) return undefined'))
+ok('it offers a language choice', client.includes("h('option', { key: 'zh', value: 'zh-CN' }")
+  && client.includes("h('option', { key: 'en', value: 'en' }"))
+ok('the choice is remembered', client.includes("const LANGUAGE_KEY = 'dsh.node-canvas.language'"))
+ok('an explicit choice wins over the app locale', client.includes("if (languageOverride === 'zh-CN') return true"))
+ok('the choice bypasses the locale service binding',
+  client.includes("if (languageOverride !== '') {") && client.includes('const chosen = languageOverride'))
+ok('extension-declared labels follow the choice too', client.includes('const chinese = prefersChinese()'))
+
 report('contract')

@@ -1724,6 +1724,12 @@ const thumbCache = new Map()
       'extensions.title': 'Add an extension package',
       'extensions.hint': 'Drop an extension folder here, or paste the path of a folder that contains pack.json or nodes/.',
       'settings.open': 'Extension settings',
+      'settings.general': 'General',
+      'settings.language': 'Language',
+      'settings.languageAuto': 'Follow the app',
+      'settings.languageZh': '中文',
+      'settings.languageEn': 'English',
+      'settings.languageHint': 'Affects the canvas window only; nodes and extensions keep their own text.',
       'settings.title': 'Settings',
       'settings.close': 'Close',
       'settings.empty': 'No extension here needs a setting yet.',
@@ -1926,6 +1932,12 @@ const thumbCache = new Map()
       'extensions.title': '添加拓展包',
       'extensions.hint': '把拓展包文件夹拖到下面，或粘贴一个包含 pack.json / nodes/ 的文件夹路径。',
       'settings.open': '拓展设置',
+      'settings.general': '通用',
+      'settings.language': '界面语言',
+      'settings.languageAuto': '跟随应用',
+      'settings.languageZh': '中文',
+      'settings.languageEn': 'English',
+      'settings.languageHint': '只影响画布窗口自身；节点与拓展的文案由各自提供。',
       'settings.title': '设置',
       'settings.close': '关闭',
       'settings.empty': '这里的拓展暂时还不需要设置。',
@@ -2083,11 +2095,35 @@ const thumbCache = new Map()
       return typeof id === 'string' && /^zh/i.test(id)
     }
 
+    const LANGUAGE_KEY = 'dsh.node-canvas.language'
+    // '' follows the app; 'zh-CN' and 'en' are explicit choices made in the general settings.
+    let languageOverride = ''
+    try {
+      const saved = typeof localStorage === 'undefined' ? null : localStorage.getItem(LANGUAGE_KEY)
+      if (saved === 'zh-CN' || saved === 'en') languageOverride = saved
+    } catch {
+      // A storage that refuses to read only costs the preference.
+    }
+
+    /** Remember the chosen language for this page and the next one. */
+    function setLanguageOverride(next) {
+      languageOverride = next === 'zh-CN' || next === 'en' ? next : ''
+      try {
+        if (typeof localStorage === 'undefined') return
+        if (languageOverride === '') localStorage.removeItem(LANGUAGE_KEY)
+        else localStorage.setItem(LANGUAGE_KEY, languageOverride)
+      } catch {
+        // The choice still applies to this page.
+      }
+    }
+
     /**
      * Whether this page reads as Chinese. The locale service is the first witness, but this shell
      * can report en while its interface is Chinese, so the document's language decides too.
      */
     function prefersChinese() {
+      if (languageOverride === 'zh-CN') return true
+      if (languageOverride === 'en') return false
       try {
         const lang = typeof document === 'undefined' || document === null || document.documentElement === null
           ? ''
@@ -5414,15 +5450,30 @@ const thumbCache = new Map()
       function settingsText(value) {
         if (typeof value === 'string') return value
         if (value !== null && typeof value === 'object') {
-          const chinese = isChineseId(uiLocaleId ?? browserLocale())
+          const chinese = prefersChinese()
           return String(value[chinese ? 'zh' : 'en'] ?? value.en ?? value.zh ?? '')
         }
         return ''
       }
 
-      /** Extensions that declared settings fields in their own manifest. */
+      const CORE_SECTION = 'core'
+
+      /** The kernel's own settings: they exist whether or not any extension does. */
+      function coreSection() {
+        return {
+          id: CORE_SECTION,
+          core: true,
+          name: tr('settings.general'),
+          icon: null,
+          settings: [],
+        }
+      }
+
+      /** The kernel's section first, then the extensions that declared settings fields. */
       function settingsSections() {
-        return (Array.isArray(extensions) ? extensions : []).filter((extension) => Array.isArray(extension.settings) && extension.settings.length > 0)
+        const own = (Array.isArray(extensions) ? extensions : [])
+          .filter((extension) => Array.isArray(extension.settings) && extension.settings.length > 0)
+        return [coreSection(), ...own]
       }
 
       function settingsSection(id) {
@@ -5446,7 +5497,7 @@ const thumbCache = new Map()
       React.useEffect(() => {
         if (settingsDialog === null) return undefined
         const section = settingsSection(settingsDialog.id)
-        if (section === null) return undefined
+        if (section === null || section.core === true) return undefined
         let cancelled = false
         setSettingsBusy(true)
         fetch('/node-canvas/extensions/settings?id=' + encodeURIComponent(section.id), { cache: 'no-store' })
@@ -10997,7 +11048,8 @@ const thumbCache = new Map()
                       },
                     }, [
                       item.icon === null || item.icon === undefined
-                        ? h('span', { key: 'icon', style: S.settingsIndexIcon }, Glyph('puzzle', 13))
+                        ? h('span', { key: 'icon', style: S.settingsIndexIcon },
+                            Glyph(item.core === true ? 'gear' : 'puzzle', 13))
                         : h('img', {
                             key: 'icon',
                             src: extensionIconUrl(item),
@@ -11013,7 +11065,32 @@ const thumbCache = new Map()
                   })),
               h('div', { key: 'panel', style: S.settingsPanel }, settingsSectionItem === null
                 ? h('div', { key: 'empty', style: { ...S.settingsHint, padding: '12px' } }, tr('settings.empty'))
-                : [
+                : settingsSectionItem.core === true
+                  ? [
+                      h('div', { key: 'section-title', style: S.settingsSectionTitle }, settingsSectionItem.name),
+                      h('div', { key: 'fields', style: S.settingsBody }, [
+                        h('label', { key: 'field:language', style: S.settingsField }, [
+                          h('span', { key: 'label', style: S.settingsFieldLabel }, tr('settings.language')),
+                          h('select', {
+                            key: 'input',
+                            value: languageOverride === '' ? 'auto' : languageOverride,
+                            style: S.settingsInput,
+                            onChange: (event) => {
+                              const value = event.currentTarget.value
+                              setLanguageOverride(value === 'auto' ? '' : value)
+                              // Redraw the window, including its own labels, in the new language.
+                              setSettingsDialog({ id: CORE_SECTION })
+                            },
+                          }, [
+                            h('option', { key: 'auto', value: 'auto' }, tr('settings.languageAuto')),
+                            h('option', { key: 'zh', value: 'zh-CN' }, tr('settings.languageZh')),
+                            h('option', { key: 'en', value: 'en' }, tr('settings.languageEn')),
+                          ]),
+                        ]),
+                        h('div', { key: 'hint', style: S.settingsHint }, tr('settings.languageHint')),
+                      ]),
+                    ]
+                  : [
                     h('div', { key: 'section-title', style: S.settingsSectionTitle }, settingsSectionItem.name ?? settingsSectionItem.id),
                     h('div', { key: 'fields', style: S.settingsBody }, settingsSectionItem.settings.map((field) => h('label', {
                       key: 'field:' + field.key,
@@ -11084,22 +11161,26 @@ const thumbCache = new Map()
                           style: { padding: '0 12px 8px', fontSize: '11px', color: 'var(--dsw-alias-state-error-primary)' },
                         }, settingsError),
                     h('div', { key: 'footer', style: S.settingsFooter }, [
-                      h('span', { key: 'stored', style: S.settingsHint }, tr('settings.stored')),
+                      settingsSectionItem.core === true
+                        ? null
+                        : h('span', { key: 'stored', style: S.settingsHint }, tr('settings.stored')),
                       h('button', {
                         key: 'cancel',
                         type: 'button',
                         style: S.dialogButton,
                         onClick: closeSettings,
                       }, tr('settings.cancel')),
-                      h('button', {
-                        key: 'save',
-                        type: 'button',
-                        disabled: settingsBusy,
-                        style: { ...S.dialogButton, ...S.dialogButtonPrimary, opacity: settingsBusy ? 0.6 : 1 },
-                        onClick: () => {
-                          void saveSettings()
-                        },
-                      }, settingsBusy ? tr('settings.saving') : tr('settings.save')),
+                      settingsSectionItem.core === true
+                        ? null
+                        : h('button', {
+                            key: 'save',
+                            type: 'button',
+                            disabled: settingsBusy,
+                            style: { ...S.dialogButton, ...S.dialogButtonPrimary, opacity: settingsBusy ? 0.6 : 1 },
+                            onClick: () => {
+                              void saveSettings()
+                            },
+                          }, settingsBusy ? tr('settings.saving') : tr('settings.save')),
                     ]),
                   ]),
             ]),
@@ -11304,6 +11385,11 @@ const thumbCache = new Map()
           const bound = locale.bind(NS)
           uiLocaleId = activeLocaleId(locale)
           translator = (key) => {
+            // A language picked in the general settings wins over the app's own binding.
+            if (languageOverride !== '') {
+              const chosen = languageOverride === 'zh-CN' ? ZH : EN
+              return chosen[key] ?? EN[key] ?? key
+            }
             const value = bound(key)
             if (typeof value === 'string' && value !== key) return value
             const dict = prefersChinese() ? ZH : EN
