@@ -450,20 +450,37 @@ export function executionOrder(prompt) {
     }
     dependencies.set(id, set)
   }
+  // An explicit stack, not recursion: a long chain of nodes would overflow the call stack, and a
+  // workflow is exactly the shape that grows one.
   const done = new Set()
-  const visiting = new Set()
+  const onStack = new Set()
   const order = []
-  const visit = (id) => {
-    if (done.has(id) === true) return
-    if (visiting.has(id) === true) throw new ExecutionError('cycle through node ' + id)
-    if (prompt[id] === undefined) throw new ExecutionError('link points at unknown node ' + id)
-    visiting.add(id)
-    for (const dependency of dependencies.get(id)) visit(dependency)
-    visiting.delete(id)
-    done.add(id)
-    order.push(id)
+  for (const root of ids) {
+    if (done.has(root) === true) continue
+    const stack = [{ id: root, deps: null, index: 0 }]
+    onStack.add(root)
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1]
+      if (frame.deps === null) {
+        if (prompt[frame.id] === undefined) throw new ExecutionError('link points at unknown node ' + frame.id)
+        frame.deps = [...dependencies.get(frame.id)]
+      }
+      if (frame.index < frame.deps.length) {
+        const next = frame.deps[frame.index]
+        frame.index += 1
+        if (done.has(next) === true) continue
+        if (onStack.has(next) === true) throw new ExecutionError('cycle through node ' + next)
+        stack.push({ id: next, deps: null, index: 0 })
+        onStack.add(next)
+        continue
+      }
+      stack.pop()
+      onStack.delete(frame.id)
+      if (done.has(frame.id) === true) continue
+      done.add(frame.id)
+      order.push(frame.id)
+    }
   }
-  for (const id of ids) visit(id)
   return order
 }
 
