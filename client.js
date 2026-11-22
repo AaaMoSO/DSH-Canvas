@@ -2606,6 +2606,43 @@ const thumbCache = new Map()
       resizeCornerSW: { position: 'absolute', left: '-3px', bottom: '-3px', width: '13px', height: '13px', cursor: 'nesw-resize', zIndex: 2 },
       resizeCornerNW: { position: 'absolute', left: '-3px', top: '-3px', width: '13px', height: '13px', cursor: 'nwse-resize', zIndex: 2 },
       resizeCornerNE: { position: 'absolute', right: '-3px', top: '-3px', width: '13px', height: '13px', cursor: 'nesw-resize', zIndex: 2 },
+      // A crashed panel has to say what happened: a blank frame is indistinguishable from a bug in
+      // the host, and it hides the console from everyone.
+      crash: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        margin: '12px',
+        padding: '14px',
+        font: 'inherit',
+        color: 'var(--dsw-alias-label-primary)',
+        background: 'var(--dsw-alias-bg-base)',
+        border: '1px solid var(--dsw-alias-state-error-primary)',
+        borderRadius: '10px',
+      },
+      crashTitle: {
+        fontSize: '13px',
+        fontWeight: 600,
+        color: 'var(--dsw-alias-state-error-primary)',
+      },
+      crashBody: {
+        fontSize: '11px',
+        lineHeight: '17px',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      },
+      crashButton: {
+        alignSelf: 'flex-start',
+        height: '24px',
+        padding: '0 10px',
+        font: 'inherit',
+        fontSize: '11px',
+        background: 'transparent',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        borderRadius: '6px',
+        color: 'var(--dsw-alias-label-primary)',
+        cursor: 'pointer',
+      },
       notice: {
         position: 'absolute',
         left: '50%',
@@ -10960,6 +10997,51 @@ const thumbCache = new Map()
       return browserLocale()
     }
 
+    /**
+     * The canvas is one component; if it throws, the slot below it goes blank and the cause is
+     * invisible. This turns that into a readable card with a reload button.
+     */
+    class PanelBoundary extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: null }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error }
+      }
+
+      componentDidCatch(error, info) {
+        try {
+          console.error('[node-canvas] the panel crashed', error, info)
+        } catch {
+          // Logging must not throw a second time.
+        }
+      }
+
+      render() {
+        if (this.state.error === null) return this.props.children
+        const message = this.state.error instanceof Error
+          ? this.state.error.message
+          : String(this.state.error)
+        return h('div', { style: S.crash }, [
+          h('div', { key: 'title', style: S.crashTitle }, 'DSH Canvas 出错啦'),
+          h('div', { key: 'body', style: S.crashBody }, message),
+          h('button', {
+            key: 'reload',
+            type: 'button',
+            style: S.crashButton,
+            onClick: () => location.reload(),
+          }, '重新加载'),
+        ])
+      }
+    }
+
+    /** The slot component: the boundary outside, the canvas inside. */
+    function CanvasPanel(props) {
+      return h(PanelBoundary, null, h(Panel, props))
+    }
+
     return {
       inject: ['slots'],
       apply(ctx) {
@@ -11008,7 +11090,7 @@ const thumbCache = new Map()
         ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main',
           key: NS,
-        }, Panel))
+        }, CanvasPanel))
       },
     }
   },

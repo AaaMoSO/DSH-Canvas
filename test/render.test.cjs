@@ -35,7 +35,18 @@ const windowStub = {
   getComputedStyle: () => ({ getPropertyValue: () => '' }),
   __ModuleLoader__: { load(def) { windowStub.__def = def } },
 }
+class Component {
+  constructor(props) {
+    this.props = props
+    this.state = {}
+  }
+
+  setState(patch) {
+    this.state = { ...this.state, ...(typeof patch === 'function' ? patch(this.state) : patch) }
+  }
+}
 const React = {
+  Component,
   createElement: (type, props, ...children) => ({
     type, props: props || {}, key: props ? props.key : undefined,
     children: children.length === 0 ? undefined : children.length === 1 ? children[0] : children,
@@ -63,6 +74,8 @@ const patches = [
     'const [slide, setSlide] = React.useState({ page: 180, content: 0, animate: false })'],
   ['const [door, setDoor] = React.useState(null)',
     'const [door, setDoor] = React.useState({ left: 0, top: 40, width: 1200, height: 860, flush: true })'],
+  // The slot is wrapped in an error boundary; the harness renders the canvas itself.
+  ['        }, CanvasPanel))', '        }, Panel))'],
 ]
 for (const [from, to] of patches) {
   if (!src.includes(from)) throw new Error('patch anchor missing: ' + from.slice(0, 40))

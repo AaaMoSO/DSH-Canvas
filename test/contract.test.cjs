@@ -117,4 +117,9 @@ ok('a removed host module is disposed', host.includes('disposeExtensionHost(id)'
 ok('a setup return value becomes a disposer', host.includes('dispose = returned') && client.includes('extensionDisposersRef.current.push(returned)'))
 ok('the client runs its disposers on unmount', client.includes('extensionDisposersRef.current = []'))
 
+// ---- a crashed panel explains itself instead of going blank -------------------------------
+ok('the canvas is wrapped in an error boundary', client.includes('class PanelBoundary extends React.Component'))
+ok('...and the slot registers the wrapper', client.includes('}, CanvasPanel))'))
+ok('the crash card offers a reload', client.includes("location.reload()"))
+
 report('contract')
