@@ -582,10 +582,22 @@ function SourceList(props) {
       onClick: () => props.onSelect(source.id),
     }, [
       h('span', { key: 'icon', style: S.sourceIconSlot }, props.iconOf(source)),
-      h('span', { key: 'name', style: S.typeName }, source.name),
+      // The name keeps its line; the counts give way first, so a narrow menu still reads cleanly.
+      h('span', {
+        key: 'name',
+        style: { ...S.typeName, whiteSpace: 'nowrap', marginRight: '6px' },
+      }, source.name),
       h('span', {
         key: 'count',
-        style: { ...S.libraryHint, padding: 0, marginLeft: 'auto', whiteSpace: 'nowrap' },
+        style: {
+          ...S.libraryHint,
+          padding: 0,
+          marginLeft: 'auto',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          minWidth: 0,
+        },
       }, tr('source.counts', { nodes: counts.nodes, workflows: counts.workflows })),
       h('span', { key: 'check', style: S.typeChevron }, active ? '✓' : ''),
     ])
