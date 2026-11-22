@@ -7156,6 +7156,12 @@ const thumbCache = new Map()
 
       function onNodePointerDown(event, node) {
         if (event.button !== 0) return
+        // A node view's own controls keep their clicks. Capturing the pointer on the node would
+        // deliver the click to the node instead, so a view's buttons and inputs would never fire.
+        if (typeof Element !== 'undefined' && event.target instanceof Element
+          && event.target.closest('button, input, textarea, select, a, [contenteditable="true"]') !== null) {
+          return
+        }
         event.stopPropagation()
         setMenu(null)
         focusShell()

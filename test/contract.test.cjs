@@ -122,4 +122,8 @@ ok('the canvas is wrapped in an error boundary', client.includes('class PanelBou
 ok('...and the slot registers the wrapper', client.includes('}, CanvasPanel))'))
 ok('the crash card offers a reload', client.includes("location.reload()"))
 
+// ---- a view's own controls keep their clicks ----------------------------------------------
+ok('a node view control is not swallowed by the node drag',
+  client.includes("event.target.closest('button, input, textarea, select, a"))
+
 report('contract')
