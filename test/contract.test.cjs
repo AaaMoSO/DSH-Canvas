@@ -142,4 +142,59 @@ ok('the choice bypasses the locale service binding',
   client.includes("if (languageOverride !== '') {") && client.includes('const chosen = languageOverride'))
 ok('extension-declared labels follow the choice too', client.includes('const chinese = prefersChinese()'))
 
+// ---- a component that moved out of the canvas must be handed everything it calls ----------
+function bodyOf(source, header) {
+  const start = source.indexOf(header)
+  if (start < 0) throw new Error('no ' + header)
+  let depth = 0
+  let index = source.indexOf('{', start)
+  for (let cursor = index; cursor < source.length; cursor += 1) {
+    if (source[cursor] === '{') depth += 1
+    else if (source[cursor] === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(index, cursor + 1)
+    }
+  }
+  throw new Error('unbalanced ' + header)
+}
+
+/** Code only: the prose in these files is full of words followed by parentheses. */
+function stripComments(code) {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``')
+}
+
+function missingProps(source, header) {
+  const body = stripComments(bodyOf(source, header))
+  const local = new Set()
+  for (const match of body.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) local.add(match[1])
+  for (const match of body.matchAll(/function\s+([A-Za-z_$][\w$]*)/g)) local.add(match[1])
+  const provided = new Set(['props', 'React', 'h', 'tr', 'S', 'Glyph', 'UNNAMED_KEY'])
+  const destructure = /const\s*\{([\s\S]*?)\}\s*=\s*props/.exec(body)
+  if (destructure !== null) {
+    for (const name of destructure[1].split(',')) {
+      const clean = name.trim()
+      if (clean !== '') provided.add(clean)
+    }
+  }
+  const keywords = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function',
+    'of', 'in', 'instanceof', 'new', 'await', 'yield', 'else', 'do', 'case', 'delete', 'throw',
+    'String', 'Number', 'Math', 'JSON', 'Object', 'Array', 'Boolean', 'parseInt', 'isNaN', 'void'])
+  const missing = new Set()
+  for (const match of body.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const name = match[1]
+    if (provided.has(name) || local.has(name) || keywords.has(name)) continue
+    missing.add(name)
+  }
+  return [...missing].sort()
+}
+
+eq('the source list is handed every helper it calls', missingProps(client, 'function SourceList(props)'), [])
+eq('the workflow list is handed every helper it calls',
+  missingProps(client, 'function WorkflowList(props)'), [])
+
 report('contract')

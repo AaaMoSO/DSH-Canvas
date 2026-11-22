@@ -640,6 +640,8 @@ function WorkflowList(props) {
     sourceLists,
     backendLists,
     activeRegistered,
+    openWorkflow,
+    readingOf,
   } = props
       const rows = []
       // The workflow the plus started: it is in the list before it is on disk.
@@ -9969,6 +9971,8 @@ const thumbCache = new Map()
         sourceLists,
         backendLists,
         activeRegistered,
+        openWorkflow,
+        readingOf,
       })
       const workflowRows = workflowParts.rows
       const workflowHintAt = workflowParts.hintAt
