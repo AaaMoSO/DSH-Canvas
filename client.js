@@ -20,6 +20,15 @@ const RUNS_POLL_MS = 2500
 const REMOTE_POLL_MS = 800
 const SERVICE_POLL_MS = 1500
 
+/** The same service state, field by field: a poll that learned nothing must not redraw. */
+function sameServiceState(left, right) {
+  if (left === right) return true
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false
+  return left.status === right.status
+    && (left.startedAt ?? 0) === (right.startedAt ?? 0)
+    && (left.error ?? '') === (right.error ?? '')
+}
+
 /**
  * The run domain, owned outside the panel.
  *
@@ -55,6 +64,8 @@ function createRunController() {
   }
 
   function setService(id, value) {
+    // Polling runs on a timer; reporting the same state again would redraw the panel for nothing.
+    if (sameServiceState(services[id], value)) return
     updateServices((current) => ({ ...current, [id]: value }))
   }
 

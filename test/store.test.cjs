@@ -50,4 +50,14 @@ ok('...and reads the hover itself', client.includes("useStoredValue('runHover'")
 ok('the panel only writes the hover', client.includes("useStoredSetter('runHover')"))
 ok('the panel only writes the notice', client.includes('useStoredSetter(\'notice\')'))
 
+// ---- a poll that learned nothing must not wake the panel ------------------------------------
+const sameServiceState = new Function(grabFunction(client, 'sameServiceState') + '\nreturn sameServiceState')()
+const ready = { status: 'ready', startedAt: 5 }
+ok('the same service state compares equal', sameServiceState(ready, { status: 'ready', startedAt: 5 }) === true)
+ok('...even without the optional fields', sameServiceState({ status: 'idle' }, { status: 'idle', startedAt: 0 }) === true)
+ok('a changed status is a change', sameServiceState(ready, { status: 'idle', startedAt: 5 }) === false)
+ok('a changed startedAt is a change', sameServiceState(ready, { status: 'ready', startedAt: 6 }) === false)
+ok('a new error is a change', sameServiceState(ready, { status: 'ready', startedAt: 5, error: 'boom' }) === false)
+ok('the poll uses it before emitting', client.includes('if (sameServiceState(services[id], value)) return'))
+
 report('store')
