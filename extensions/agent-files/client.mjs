@@ -53,29 +53,9 @@ const buttonStyle = (active) => ({
 })
 
 export function setup(api) {
-  /** Append the paths a drop produced. The canvas routes the drop; this only writes the list. */
-  function append(paths, { setWidget, getWidget, notify }) {
-    const known = new Set(pathsOf(getWidget(FILES_WIDGET)))
-    const added = []
-    for (const entry of paths) {
-      if (typeof entry?.path !== 'string' || entry.path === '') continue
-      if (known.has(entry.path)) continue
-      known.add(entry.path)
-      added.push(entry.path)
-    }
-    if (added.length === 0) {
-      notify('这些文件已经在记录里了')
-      return
-    }
-    writePaths(setWidget, [...known])
-    notify('已加入 ' + added.length + ' 个文件')
-  }
-
   api.registerNodeView({
     type: 'AgentFiles',
     minHeight: 186,
-    /** Called by the canvas when files are dropped on this node. */
-    onFiles: (paths, context) => append(paths, context),
     render({ React, node, helpers, setWidget, getWidget, notify }) {
       const h = React.createElement
       const state = stateOf(node.id)
