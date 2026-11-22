@@ -733,6 +733,7 @@ const thumbCache = new Map()
         ...(typeof spec.max === 'number' ? { max: spec.max } : {}),
         ...(typeof spec.precision === 'number' ? { precision: spec.precision } : {}),
         ...(spec.multiline === true ? { multiline: true } : {}),
+        ...(spec.hidden === true ? { hidden: true } : {}),
         ...(typeof spec.folder === 'string' ? { folder: spec.folder } : {}),
         ...(modelsRoot === '' ? {} : { modelsRoot }),
       }
@@ -3373,6 +3374,20 @@ const thumbCache = new Map()
       }, [])
 
       /** The slice of the canvas an extension may touch, passed to its callbacks. */
+      /** The files a drag carries: some platforms fill `files`, others only `items`. */
+      function filesOfTransfer(transfer) {
+        if (transfer === null || transfer === undefined) return []
+        const direct = Array.from(transfer.files ?? [])
+        if (direct.length > 0) return direct
+        const files = []
+        for (const item of Array.from(transfer.items ?? [])) {
+          if (item === null || item === undefined || item.kind !== 'file') continue
+          const file = typeof item.getAsFile === 'function' ? item.getAsFile() : null
+          if (file !== null) files.push(file)
+        }
+        return files
+      }
+
       /**
        * Turn dropped files into host paths. Electron already tells us where they came from; a plain
        * browser does not, so the file is handed to the Host, which stores it and answers with its
@@ -3409,10 +3424,11 @@ const thumbCache = new Map()
           pushHistory,
           updateGraph,
           tr,
+          /** The same conversion for a list of files, whatever delivered them. */
+          hostPaths: (files) => hostPathsOf(Array.from(files ?? [])),
           /** The host paths of the files dropped in one event, in the order they were dropped. */
           droppedFiles: (event) => hostPathsOf(
-            event === null || event === undefined ? []
-              : Array.from(event.dataTransfer?.files ?? []),
+            event === null || event === undefined ? [] : filesOfTransfer(event.dataTransfer),
           ),
           setWidget: (name, value) => {
             if (node === undefined) return
@@ -7825,17 +7841,21 @@ const thumbCache = new Map()
         const editingTitle = phantom !== true && editing !== null && editing.kind === 'title' && editing.nodeId === node.id
         const sockets = socketInputsOf(node)
         const widgetSpecs = widgetSpecsOf(node)
+        const drawnWidgets = widgetSpecs.filter((spec) => spec.hidden !== true)
         const portRows = Math.max(sockets.length, node.outputs.length)
         const skin = nodeSkin(node)
         const sourceLabel = sourceLabelOf(node)
         const preview = previewOf(node)
         // An extension may add an extra area below the controls for node types it knows.
         const view = preview === null && phantom !== true ? nodeViewOf(node) : null
-        const fixedWidgets = widgetSpecs.filter((spec) => spec.multiline !== true).length
-        const multilineWidgets = widgetSpecs.length - fixedWidgets
+        const fixedWidgets = drawnWidgets.filter((spec) => spec.multiline !== true).length
+        const multilineWidgets = drawnWidgets.length - fixedWidgets
         // An image preview reserves a four-row minimum, then takes whatever space is left.
         const previewMin = preview === null ? 0 : 4 * PORT_H
-        const viewMin = view === null ? 0 : 2 * PORT_H
+        // A view may need more room than two port rows; it says how much when it registers.
+        const viewMin = view === null
+          ? 0
+          : (typeof view.minHeight === 'number' && view.minHeight > 0 ? view.minHeight : 2 * PORT_H)
         const tailMin = Math.max(previewMin, viewMin)
         const minBody = portRows * PORT_H + fixedWidgets * PORT_H + multilineWidgets * 60 + tailMin
         const contentHeight = 2 * BORDER + HEADER_H + Math.max(minBody, PORT_H) + PAD_TOP + PAD_BOTTOM
@@ -7846,7 +7866,7 @@ const thumbCache = new Map()
           ? Math.max(60, Math.floor(leftover / multilineWidgets))
           : PORT_H
         let cursor = portRows * PORT_H
-        const widgetEls = widgetSpecs.map((spec) => {
+        const widgetEls = drawnWidgets.map((spec) => {
           const rowHeight = spec.multiline === true ? multilineHeight : PORT_H
           const element = renderWidgetRow(node, spec, cursor, rowHeight, skin)
           cursor += rowHeight

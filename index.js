@@ -1013,6 +1013,8 @@ function normalizeNode(item) {
       ...(typeof input.max === 'number' ? { max: input.max } : {}),
       ...(typeof input.precision === 'number' ? { precision: input.precision } : {}),
       ...(input.multiline === true ? { multiline: true } : {}),
+      // Kept but not drawn: the node view shows it its own way.
+      ...(input.hidden === true ? { hidden: true } : {}),
       ...(typeof input.folder === 'string' && input.folder !== '' ? { folder: input.folder } : {}),
       ...(input.isOptional === true ? { optional: true } : {}),
     })
