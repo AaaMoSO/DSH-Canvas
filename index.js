@@ -1272,7 +1272,12 @@ async function writeWorkflow(name, graph, home) {
     home: typeof home === 'string' && home !== '' ? home : 'local',
     graph,
   }
-  await writeFile(path.join(WORKFLOWS_DIR, name + '.json'), JSON.stringify(document, null, 2), 'utf8')
+  const target = path.join(WORKFLOWS_DIR, name + '.json')
+  // Written beside the target and renamed over it, so a crash, a full disk or a second window can
+  // never leave half a document where a workflow used to be.
+  const staged = target + '.new-' + process.pid + '-' + Date.now()
+  await writeFile(staged, JSON.stringify(document, null, 2), 'utf8')
+  await rename(staged, target)
 }
 
 /** Remove a saved workflow; false when there was nothing to remove. */

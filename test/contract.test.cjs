@@ -1,7 +1,7 @@
 // The contracts other code (and every extension) builds on. Each case takes the real declaration
 // out of the shipped source, so a renamed field or a dropped argument fails here instead of in a
 // user's panel.
-const { client, executor, grabFunction, buildFunction, ok, eq, report } = require('./harness.cjs')
+const { client, host, executor, grabFunction, buildFunction, ok, eq, report } = require('./harness.cjs')
 
 // ---- a source's menu: which object owns it, which items it declares --------------------------
 const menuKit = new Function(
@@ -98,5 +98,15 @@ const programContext = executor.slice(executor.indexOf('const context = {'), exe
 for (const name of ['nodeId', 'origin', 'runId', 'workflow', 'signal', 'config', 'workspace', 'log', 'lock']) {
   ok('a node program is handed ' + name, programContext.includes(name + ':'))
 }
+
+// ---- a created node carries its program, so the workflow is self-contained ------------------
+const nodeForType = grabFunction(client, 'nodeForType')
+ok('a created node copies the program source it was defined with', nodeForType.includes('program: { source: def.program.source }'))
+ok('...but keeps the definition in the pack', nodeForType.includes('hydrateNode'))
+
+// ---- a workflow write replaces the file, never truncates it --------------------------------
+const writeWorkflow = grabFunction(host, 'writeWorkflow')
+ok('a workflow is written to a staging name first', /\.new-/.test(writeWorkflow) && writeWorkflow.includes('writeFile(staged'))
+ok('...and renamed over the target', writeWorkflow.includes('rename(staged, target)'))
 
 report('contract')

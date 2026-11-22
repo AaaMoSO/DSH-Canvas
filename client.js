@@ -3892,7 +3892,9 @@ const thumbCache = new Map()
         )
         // The library the node was dragged from is the answer, recorded at creation.
         const origin = originOfPack(pack)
-        // Nothing about the node is copied: the definition (and its program) stays in the pack.
+        // The program is copied onto the node: from here on the workflow carries what it needs to
+        // run, even if the pack is later moved, edited or removed. The definition still comes from
+        // the pack, so a widget added later shows up on the next load.
         const base = {
           id: uid('n'),
           x: Math.round(at.x - NODE_W / 2),
@@ -3904,6 +3906,9 @@ const thumbCache = new Map()
           ...(origin === undefined ? {} : { origin }),
           mode: 0,
           widgetStore: {},
+          ...(typeof def.program?.source === 'string' && def.program.source.trim() !== ''
+            ? { program: { source: def.program.source } }
+            : {}),
           color: null,
           inputs: [],
           outputs: [],
