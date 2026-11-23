@@ -1092,12 +1092,14 @@ function sourceModuleSpecifiers(source) {
 
   const fromLiteral = (index) => literals[Number(index)] ?? ''
   const hits = []
+  // Static import/export forms need no whitespace: `import{x}from'./x'` and `export*from'./x'`
+  // are legal, so the parenthesis-free forms cannot require a space after the keyword. `[^;]*?`
+  // also lets a form spread over several lines. `(?![.\w$])` keeps `import.meta` out.
   const patterns = [
     /(?<![.\w$])import\s*\(\s*\u0001(\d+)\u0001\s*\)/g,
     /(?<![.\w$])import\s*\u0001(\d+)\u0001/g,
-    /(?<![.\w$])import\s[^;\n]*?\bfrom\s*\u0001(\d+)\u0001/g,
-    /(?<![.\w$])export\s[^;\n]*?\bfrom\s*\u0001(\d+)\u0001/g,
-    /(?<![.\w$])require\s*\(\s*\u0001(\d+)\u0001\s*\)/g,
+    /(?<![.\w$])import(?![.\w$])[^;]*?\bfrom\s*\u0001(\d+)\u0001/g,
+    /(?<![.\w$])export(?![.\w$])[^;]*?\bfrom\s*\u0001(\d+)\u0001/g,
   ]
   for (const pattern of patterns) {
     for (const match of skeleton.matchAll(pattern)) hits.push({ at: match.index, value: fromLiteral(match[1]) })
@@ -1113,7 +1115,12 @@ function sourceModuleSpecifiers(source) {
   }
   let unresolved = false
   if (/(?<![.\w$])import\s*\(\s*(?!\u0001)/.test(skeleton) === true) unresolved = true
-  if (/(?<![.\w$])require\s*\(\s*(?!\u0001)/.test(skeleton) === true) unresolved = true
+  // The pinned copy is an ES module loaded from a data: URL: it has no CommonJS `require`, and
+  // `createRequire(import.meta.url)` cannot accept a data: URL either. Neither can be verified.
+  if (/(?<![.\w$])require\s*\(/.test(skeleton) === true) unresolved = true
+  if (/(?<![.\w$])createRequire\s*\(/.test(skeleton) === true) unresolved = true
+  // A relative resolve depends on a directory the pinned copy does not have.
+  if (/(?<![.\w$])import\s*\.\s*meta\s*\.\s*resolve\b/.test(skeleton) === true) unresolved = true
   return { specifiers, unresolved }
 }
 
@@ -1729,21 +1736,30 @@ const thumbCache = new Map()
      * The links a refreshed node keeps: one that points at a port the new definition no longer has
      * cannot survive, and the count says how many were removed.
      */
-    function linksAfterRefresh(links, nodeId, inputs, outputs) {
-      const inputIds = new Set(inputs.map((port) => port.id))
-      const outputIds = new Set(outputs.map((port) => port.id))
+    function linksAfterRefresh(links, nodeId, inputs, outputs, previous) {
+      const inputTypes = new Map(inputs.map((port) => [port.id, port.type]))
+      const outputTypes = new Map(outputs.map((port) => [port.id, port.type]))
+      const beforeInputs = new Map((previous?.inputs ?? []).map((port) => [port.id, port.type]))
+      const beforeOutputs = new Map((previous?.outputs ?? []).map((port) => [port.id, port.type]))
       let dropped = 0
       const kept = links.filter((link) => {
         const fromHere = link.from[0] === nodeId
         const toHere = link.to[0] === nodeId
         if (fromHere !== true && toHere !== true) return true
-        if (fromHere === true && outputIds.has(link.from[1]) !== true) {
-          dropped += 1
-          return false
+        if (fromHere === true) {
+          const type = outputTypes.get(link.from[1])
+          // Gone, or the same id now speaks a different type: the old wire may no longer be valid.
+          if (type === undefined || (beforeOutputs.has(link.from[1]) && beforeOutputs.get(link.from[1]) !== type)) {
+            dropped += 1
+            return false
+          }
         }
-        if (toHere === true && inputIds.has(link.to[1]) !== true) {
-          dropped += 1
-          return false
+        if (toHere === true) {
+          const type = inputTypes.get(link.to[1])
+          if (type === undefined || (beforeInputs.has(link.to[1]) && beforeInputs.get(link.to[1]) !== type)) {
+            dropped += 1
+            return false
+          }
         }
         return true
       })
@@ -1759,7 +1775,7 @@ const thumbCache = new Map()
     function refreshNodeDefinition(node, entry) {
       const candidate = { ...node }
       for (const key of ['program', 'pinned', 'widgetSpecs', 'widgets', 'widgetInputs',
-        'inputs', 'outputs', 'missing', 'preview']) {
+        'inputs', 'outputs', 'missing', 'preview', 'concurrency', 'resource']) {
         delete candidate[key]
       }
       return hydrateNode(candidate, () => entry)
@@ -7634,7 +7650,7 @@ const thumbCache = new Map()
         }
         const next = refreshNodeDefinition(node, entry)
         const graph = graphRef.current
-        const { links, dropped } = linksAfterRefresh(graph.links, node.id, next.inputs, next.outputs)
+        const { links, dropped } = linksAfterRefresh(graph.links, node.id, next.inputs, next.outputs, node)
         pushHistory()
         updateGraph({
           nodes: graph.nodes.map((item) => (item.id === node.id ? next : item)),

@@ -109,10 +109,15 @@ ok('a dynamic import stops pinning',
   sourceIsSelfContained("const mod = await import('./helper.mjs')\n" + standalone) === false)
 ok('a re-export stops pinning',
   sourceIsSelfContained("export { helper } from './helper.mjs'\n" + standalone) === false)
-ok('requiring a node: builtin is still self-contained',
-  sourceIsSelfContained("const fs = require('node:fs')\n" + standalone) === true)
-ok('requiring a package stops pinning',
+// The pinned copy is an ES module from a data: URL: it has no require, whatever the specifier.
+ok('a raw require always stops pinning',
+  sourceIsSelfContained("const fs = require('node:fs')\n" + standalone) === false)
+ok('...even when it points at a package',
   sourceIsSelfContained("const fs = require('some-package')\n" + standalone) === false)
+ok('...and createRequire cannot fix that on a data: URL',
+  sourceIsSelfContained("import { createRequire } from 'node:module'\nconst req = createRequire(import.meta.url)\n" + standalone) === false)
+ok('import.meta.resolve is not verifiable either',
+  sourceIsSelfContained("const p = import.meta.resolve('./x.mjs')\n" + standalone) === false)
 ok('the word import in a string or comment does not stop pinning',
   sourceIsSelfContained("// import './x' in a comment\nconst hint = 'import(\'y\')'\n" + standalone) === true)
 ok('import.meta does not stop pinning',
@@ -125,6 +130,21 @@ ok('an import inside a template interpolation stops pinning',
   sourceIsSelfContained('const v = `${await import("./helper.mjs")}`\n' + standalone) === false)
 ok('a dynamic import of a variable cannot be verified',
   sourceIsSelfContained('const m = await import(name)\n' + standalone) === false)
+for (const tight of [
+  "import{x}from'./x.mjs'",
+  "export{x}from'./x.mjs'",
+  "import*as x from'./x.mjs'",
+  "export*from'./x.mjs'",
+  "import'./x.mjs'",
+  "import {/*c*/ x} from './x.mjs'",
+  "import {\n  x\n} from './x.mjs'",
+]) {
+  ok('a static form with no spaces is still read: ' + tight.replace(/\n/g, ' '),
+    sourceModuleSpecifiers(tight).specifiers.includes('./x.mjs') === true)
+}
+ok('...and the tight forms stop pinning',
+  sourceIsSelfContained("import{x}from'./x.mjs'\n" + standalone) === false)
+
 eq('specifiers are reported for the caller',
   sourceModuleSpecifiers("import a from 'node:path'\nimport './b.mjs'\nexport { c } from './c.mjs'\n").specifiers,
   ['node:path', './b.mjs', './c.mjs'])
@@ -212,6 +232,35 @@ eq('...and keeps the visible title, geometry and mode',
 ok('...while pinning the current program', refreshed.pinned === true
   && refreshed.program.source.includes('"new"'))
 
+const withExecution = refreshNodeDefinition({
+  ...evolvingNode,
+  concurrency: 'exclusive',
+  resource: 'old-gpu',
+}, {
+  pack: { id: 'p', modelsRoot: '' },
+  def: {
+    type: 'Evolving',
+    concurrency: 'shared',
+    resource: 'new-cpu',
+    program: { source: 'export async function run() { return ["new"] }' },
+    inputs: [],
+    outputs: [],
+  },
+})
+eq('a refresh takes the definition\'s concurrency and resource',
+  [withExecution.concurrency, withExecution.resource], ['shared', 'new-cpu'])
+
+const withoutExecution = refreshNodeDefinition({
+  ...evolvingNode,
+  concurrency: 'exclusive',
+  resource: 'old-gpu',
+}, {
+  pack: { id: 'p', modelsRoot: '' },
+  def: { type: 'Evolving', inputs: [], outputs: [] },
+})
+eq('...and clears them when the definition has none',
+  [withoutExecution.concurrency, withoutExecution.resource], [undefined, undefined])
+
 const links = [
   { id: 'l1', from: ['n9', 'o:old'], to: ['other', 'i:x'] },
   { id: 'l2', from: ['feed', 'o:y'], to: ['n9', 'i:alpha'] },
@@ -221,5 +270,15 @@ const links = [
 const pruned = linksAfterRefresh(links, 'n9', refreshed.inputs, refreshed.outputs)
 eq('a link to a port the pack dropped is removed', pruned.links.map((link) => link.id), ['l2', 'l3', 'l4'])
 eq('...and it is counted', pruned.dropped, 1)
+
+const retyped = linksAfterRefresh(
+  [{ id: 'l5', from: ['feed', 'o:y'], to: ['n9', 'i:alpha'] }],
+  'n9',
+  [{ id: 'i:alpha', name: 'alpha', type: 'INT' }],
+  [],
+  { inputs: [{ id: 'i:alpha', name: 'alpha', type: 'STRING' }], outputs: [] },
+)
+eq('a link whose port kept its id but changed type is removed', retyped.links, [])
+eq('...and counted', retyped.dropped, 1)
 
 report('workflow')
