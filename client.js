@@ -1516,6 +1516,25 @@ const thumbCache = new Map()
       return types.get(String(node.type === undefined || node.type === null ? '' : node.type).trim())
     }
 
+    /**
+     * The widget names a type declares, for a caller that only knows the type — an import adapter
+     * reading a file whose nodes have no origin yet. When several libraries declare the same type
+     * the local one wins, then the first origin by name, so the answer is deterministic.
+     */
+    function widgetNamesForType(type, libraries) {
+      const name = typeof type === 'string' ? type.trim() : ''
+      if (name === '') return []
+      const origins = originsOfType(name, libraries)
+      if (origins.length === 0) return []
+      const origin = origins.find((item) => originKind(item) === ORIGIN_LOCAL) ?? origins[0]
+      const types = libraries.get(origin)
+      const entry = types === undefined ? undefined : types.get(name)
+      if (entry === undefined) return []
+      return (Array.isArray(entry.def.inputs) ? entry.def.inputs : [])
+        .filter((spec) => spec !== null && typeof spec === 'object' && spec.widget === true)
+        .map((spec) => spec.name)
+    }
+
     /** Every origin that declares a type; only used to stamp files written before the field. */
     function originsOfType(type, libraries) {
       const found = []
@@ -1661,6 +1680,17 @@ const thumbCache = new Map()
      */
     function valuesFor(store, specs) {
       const next = { ...store }
+      // An import that could not resolve control names stored its values positionally as
+      // widget_0, widget_1, …. Once the definition is known they are mapped onto its widgets, so
+      // a file saved by that import opens with its values instead of empty controls.
+      for (const key of Object.keys(next)) {
+        const match = /^widget_(\d+)$/.exec(key)
+        if (match === null) continue
+        const spec = specs[Number(match[1])]
+        if (spec === undefined) continue
+        if (Object.prototype.hasOwnProperty.call(next, spec.name) !== true) next[spec.name] = next[key]
+        delete next[key]
+      }
       for (const spec of specs) {
         if (Object.prototype.hasOwnProperty.call(next, spec.name) !== true && spec.default !== undefined) {
           next[spec.name] = spec.default
@@ -4500,7 +4530,13 @@ const thumbCache = new Map()
           presetByBody: (value) => COLOR_PRESETS.find((preset) => String(preset.body).toLowerCase() === String(value).toLowerCase()) ?? null,
           widgetInputNames,
           // Widget values are stored by name now; an adapter needs them in definition order.
-          widgetNamesOf: (node) => widgetSpecsOf(node).map((spec) => spec.name),
+          // A node parsed from a file has no origin yet, so the definition lookup cannot answer;
+          // fall back to the type so imported values land on the right names.
+          widgetNamesOf: (node) => {
+            const names = widgetSpecsOf(node).map((spec) => spec.name)
+            const hasOrigin = typeof node?.origin === 'string' && node.origin !== ''
+            return hasOrigin === true || names.length > 0 ? names : widgetNamesForType(node?.type, libraries)
+          },
           widgetValues: (node) => widgetSpecsOf(node)
             .map((spec) => (Array.isArray(node.widgets) ? node.widgets[spec.index] : undefined)),
         }

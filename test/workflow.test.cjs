@@ -59,6 +59,13 @@ const sourceModuleSpecifiers = buildFunction(client, 'sourceModuleSpecifiers', {
 const sourceIsSelfContained = buildFunction(client, 'sourceIsSelfContained', { sourceModuleSpecifiers })
 const usableInlineProgram = buildFunction(client, 'usableInlineProgram', { sourceIsSelfContained })
 const valuesFor = buildFunction(client, 'valuesFor', {})
+const originsOfType = buildFunction(client, 'originsOfType', {})
+const originKind = buildFunction(client, 'originKind', { ORIGIN_LOCAL: 'local', ORIGIN_REMOTE: 'remote' })
+const widgetNamesForType = buildFunction(client, 'widgetNamesForType', {
+  originsOfType,
+  originKind,
+  ORIGIN_LOCAL: 'local',
+})
 const hydrateNode = buildFunction(client, 'hydrateNode', {
   sourceIsSelfContained,
   sourceModuleSpecifiers,
@@ -197,8 +204,56 @@ const fresh = hydrateNode(
     },
   }),
 )
+// ---- adapter import names -----------------------------------------------------------------
+const packDef = (type, widgets) => ({
+  def: { type, inputs: widgets.map((name) => ({ name, type: 'STRING', widget: true })) },
+  pack: { id: 'x' },
+})
+const localLibs = new Map([['local:comfyui-sdcpp', new Map([
+  ['SDCppLoadModel', packDef('SDCppLoadModel', ['recipe', 'diffusion_model'])],
+])]])
+eq('a type resolves its widget names without an origin',
+  widgetNamesForType('SDCppLoadModel', localLibs), ['recipe', 'diffusion_model'])
+eq('...an unknown type has none', widgetNamesForType('Missing', localLibs), [])
+eq('...and an empty type has none', widgetNamesForType('  ', localLibs), [])
+
+const bothLibs = new Map([
+  ['remote:comfyui', new Map([['Twin', packDef('Twin', ['fromRemote']) ]])],
+  ['local:other', new Map([['Twin', packDef('Twin', ['fromLocal']) ]])],
+])
+eq('when two libraries declare a type the local one answers',
+  widgetNamesForType('Twin', bothLibs), ['fromLocal'])
+
 eq('a new node starts from the definition default', fresh.widgets, [2.5])
 eq('...and stores it under the widget name', fresh.widgetStore, { sleep: 2.5 })
+
+// An import that could not resolve names stored its values positionally.
+const positional = hydrateNode(
+  {
+    id: 'n6', type: 'Positional', x: 0, y: 0, w: 190, h: 80, mode: 0,
+    widgetStore: { widget_0: 'hello', widget_1: 5, keep: 'mine' },
+    inputs: [], outputs: [],
+  },
+  () => ({
+    pack: { id: 'p', modelsRoot: '' },
+    def: {
+      type: 'Positional',
+      inputs: [
+        { name: 'text', type: 'STRING', widget: true },
+        { name: 'count', type: 'INT', widget: true, default: 1 },
+        { name: 'keep', type: 'STRING', widget: true },
+      ],
+      outputs: [],
+      program: { source: 'export async function run() { return [] }' },
+    },
+  }),
+)
+eq('positional values land on the definition widgets', positional.widgets, ['hello', 5, 'mine'])
+eq('...and are stored by name',
+  Object.fromEntries(Object.entries(positional.widgetStore).sort()),
+  { count: 5, keep: 'mine', text: 'hello' })
+ok('...with the positional keys gone',
+  Object.keys(positional.widgetStore).every((key) => /^widget_\d+$/.test(key) !== true))
 
 eq('a program that imports is not pinned', hydratedImporting.pinned, undefined)
 ﻿// An inline copy written by an older build (or a hand edit) is audited when the file is opened.

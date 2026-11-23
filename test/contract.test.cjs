@@ -249,4 +249,9 @@ ok('specs carry the definition default', client.includes('spec.default === undef
 ok('...and hydration writes it into the store', client.includes('function valuesFor(store, specs)'))
 ok('the module defines the json helper it uses', client.includes('function json(value)'))
 
+// ---- an import resolves control names before the nodes have an origin --------------------
+ok('a type resolves its widget names for an adapter', client.includes('function widgetNamesForType('))
+ok('...and the adapter context falls back to it', client.includes('widgetNamesForType(node?.type, libraries)'))
+ok('positional import values are repaired on load', client.includes("const match = /^widget_(\\d+)$/.exec(key)"))
+
 report('contract')

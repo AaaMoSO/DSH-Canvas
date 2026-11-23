@@ -1,6 +1,6 @@
 {
   "name": "@local/node-canvas",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "description": "An infinite node canvas in the sidebar: create nodes, wire ports, arrange a graph.",
   "type": "module",

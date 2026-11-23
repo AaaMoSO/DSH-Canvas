@@ -164,9 +164,23 @@
   缺省参考值按 0 等。
 - 没有改动任何现有工作流（`workflows/` 是用户数据，保持当前状态）。
 
+## 第十五轮（ComfyUI 导入的控件名）
+
+- 现象：导入 ComfyUI 工作流后，部分参数有值、部分置空（例如 SDCppLoadModel 的 recipe/placement/
+  vision_encoder 正常，diffusion_model/text_encoder/vae_name 为空）。
+- 原因：适配器把 `widgets_values` 的位置值对到控件名，用的是 `widgetNamesOf`；而定义查找只按
+  `node.origin`，导入那一刻节点还没盖 origin，于是名字解析为 []，值被存成 `widget_0…`，hydrate
+  时因名字不匹配全部丢弃。恰好有默认值的控件显示默认值，没有默认值的显示 `—`。
+- 修复一：适配器上下文在节点没有 origin 时按类型解析控件名（同名类型优先 local，其余按 origin 排序，
+  结果确定），新导入的值落到正确名字上。
+- 修复二：hydrate 发现 `widget_0…` 这类位置键时，按定义顺序映射到真实控件名（不覆盖已有的同名值），
+  并删除位置键；已被旧导入保存的工作流打开即恢复，右键「从节点库刷新」也会触发同样的修复。
+- 验证：用真实 ComfyUI 工作流 `sd.cpp 文生图.json` 端到端模拟导入 + hydrate，SDCppLoadModel 的
+  六个值与 VAELoader 的 vae 路径全部到位；新增 7 项测试（类型解析、local 优先、位置键修复）。
+
 ## 验证
 
-`npm test`（或 `node test/run.cjs`）：**20 个文件、378 项检查**，全部通过。
+`npm test`（或 `node test/run.cjs`）：**20 个文件、385 项检查**，全部通过。
 
 - 命名 pack 缺失必须报错；固定程序在 pack 消失后仍能生成 prompt；固定节点保存并恢复控件 schema、
   值、并发属性与资源名。
