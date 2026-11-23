@@ -87,9 +87,13 @@ export function setup(api) {
       const h = React.createElement
       const state = stateOf(node.id)
       const paths = pathsOf(typeof getWidget === 'function' ? getWidget(FILES_WIDGET) : '')
+      // The canvas only redraws for its own state; this view's state lives in a module map, so it
+      // must ask explicitly — otherwise the button highlight and row selection never appear.
+      const redraw = typeof helpers.redraw === 'function' ? helpers.redraw : () => {}
       const select = (index) => {
         state.selected = index
         notify('已选中第 ' + (index + 1) + ' 条，可以点「删除」')
+        redraw()
       }
 
       /** Append whatever arrived, skipping paths already recorded. */
@@ -267,6 +271,7 @@ export function setup(api) {
             state.selecting = state.selecting !== true
             state.selected = null
             notify(state.selecting ? '选择模式：点一行即选中' : '已退出选择模式')
+            redraw()
           },
         }, '选择'),
         h('button', {
@@ -283,6 +288,7 @@ export function setup(api) {
             writePaths(setWidget, updated)
             state.selected = null
             notify('已删除一条')
+            redraw()
           },
         }, '删除'),
         h('button', {
@@ -294,6 +300,7 @@ export function setup(api) {
             writePaths(setWidget, [])
             state.selected = null
             notify('已清空')
+            redraw()
           },
         }, '清空'),
       ])

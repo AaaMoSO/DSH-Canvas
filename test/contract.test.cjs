@@ -230,4 +230,11 @@ ok('opening a file counts the copies it must drop', client.includes('pendingPinn
 ok('...and the panel says so once', client.includes("tr('notice.programsRejected'"))
 ok('bracket access on import.meta is treated as unverifiable', client.includes('metaBrackets > plainUrlBrackets'))
 
+// ---- a node view can ask for its own redraw ---------------------------------------------
+ok('views receive a redraw helper', client.includes('redraw: redrawView'))
+ok('...backed by a canvas state bump', client.includes('const redrawView = React.useCallback'))
+ok('a view that changes its own state calls it', require('node:fs').readFileSync(
+  require('node:path').join(__dirname, '..', 'extensions/agent-files/client.mjs'), 'utf8')
+  .includes('helpers.redraw'))
+
 report('contract')

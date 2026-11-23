@@ -73,7 +73,10 @@ export function setup(api) {
 左侧留出的位置渲染你的卡片（`extension` 里带 `name / description / icon / present` 等字段）。
 同类只取优先级最高的一份。
 
-`helpers` 提供：`graph / selection / notify / pushHistory / updateGraph / tr / setWidget`。
+`helpers` 提供：`graph / selection / notify / redraw / pushHistory / updateGraph / tr / setWidget`。
+
+`redraw()` 只在节点视图里用到：视图不是 React 组件，自己的瞬态状态（按钮高亮、行选中）改完后
+必须显式调用它，画布才会重绘；提示条之类的其他状态更新不会再顺带重绘视图。
 
 工作流格式适配器还会收到：`nodeHeight(node)`、`presetOf(color)`、`presetByBody(bgcolor)`、
 `widgetInputNames(node)`、`widgetNamesOf(node)`、`widgetValues(node)`。节点不再自带定义与程序，
@@ -100,7 +103,8 @@ export function setup(api) {
 `api.apiVersion` 是契约版本（当前 `1`）。通过它可以判断某个能力是否可用，而不是猜。
 
 节点视图可以声明 `width` / `height` 请求更大的节点盒子。`onFiles(paths, context)` 接收一次
-文件拖放已经转换好的宿主绝对路径；它不是 React 组件，不能使用 hook。
+文件拖放已经转换好的宿主绝对路径；它不是 React 组件，不能使用 hook。视图若把状态放在
+模块级表里（这是推荐做法，因为视图没有实例），每次修改后要调用 `helpers.redraw()`。
 
 可执行节点被拖入画布时，程序源码和控件 schema 会固定在该节点上；之后 pack 更新不会把新控件
 和旧程序拼在一起。固定后的程序从 `data:` URL 导入，没有目录可以解析，所以能否固定由**模块

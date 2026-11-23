@@ -3866,6 +3866,11 @@ const thumbCache = new Map()
       const [props, setProps] = useStored('props', null)
       const setNotice = useStoredSetter('notice')
       const [temp, setTemp] = React.useState(null)
+      // Views keep transient state outside React; this is how they ask for a redraw.
+      const [viewTick, setViewTick] = React.useState(0)
+      const redrawView = React.useCallback(() => setViewTick((value) => value + 1), [])
+      void viewTick
+
       const [marquee, setMarquee] = React.useState(null)
       const marqueeRef = React.useRef(null)
       const [hoverPort, setHoverPort] = React.useState(null)
@@ -4585,6 +4590,8 @@ const thumbCache = new Map()
           selection: selectionRef.current,
           React,
           notify: showNotice,
+          /** Ask the canvas to draw again after a view changed its own transient state. */
+          redraw: redrawView,
           pushHistory,
           updateGraph,
           tr,
