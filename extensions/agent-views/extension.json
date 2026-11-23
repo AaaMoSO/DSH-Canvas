@@ -1,0 +1,8 @@
+{
+  "id": "agent-views",
+  "name": "Agent 节点视图",
+  "version": "1.0.0",
+  "description": "文件存放区、回复呈现区、数字透传三个节点的界面：拖入文件记路径，显示回复正文与透传数字。",
+  "icon": "./icon.svg",
+  "client": "./client.mjs"
+}

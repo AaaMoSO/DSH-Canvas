@@ -1,7 +1,0 @@
-{
-  "id": "agent-number",
-  "name": "Agent number",
-  "version": "1.0.0",
-  "description": "数字透传节点的显示：把这一轮收到的数字显示在节点里。",
-  "client": "./client.mjs"
-}

@@ -1,4 +1,16 @@
 /**
+ * Agent 相关节点的界面，集中在一个拓展里：
+ *
+ * - 文件存放区（AgentFiles）：拖文件进来，得到宿主绝对路径记录；
+ * - 回复呈现区（AgentReply）：显示这一轮 api调用节点收到的正文，可滚动、可复制；
+ * - 数字透传（NumberPass）：显示这一轮收到的数字。
+ *
+ * 三个视图都是画布渲染时直接调用的普通函数，不用 hook；数据来自运行状态
+ * （helpers.run() / helpers.runInput(name)）和控件本身，视图只负责画。
+ * 合成一个拓展是为了少占一个插件位置：三个视图共享同一份注册。
+ */
+
+/**
  * 文件存放区：左边投放区，右边路径记录。
  *
  * - 拖文件到左边 → 转成宿主绝对路径 → 追加进记录（去重）；
@@ -77,7 +89,7 @@ function append(paths, { setWidget, getWidget, notify }) {
   notify('已加入 ' + added.length + ' 个文件')
 }
 
-export function setup(api) {
+function registerFileView(api) {
   api.registerNodeView({
     type: 'AgentFiles',
     minHeight: 186,
@@ -327,4 +339,215 @@ export function setup(api) {
       }, [list, buttons, status])])
     },
   })
+}
+
+
+/**
+ * 回复呈现区：把 api调用节点这一轮收到的正文显示在节点里。
+ *
+ * 节点视图不是 React 组件，不能使用 hook；它也从不在组件里保存数据。正文来自运行状态：
+ * 宿主为每次运行记录了每个节点收到的输入（`run.inputs`），画布把它作为 `helpers.run()` /
+ * `helpers.runInput('text')` 交给视图。运行状态一变，画布重渲染，视图自然刷新。
+ */
+
+function registerReplyView(api) {
+  api.registerNodeView({
+    type: 'AgentReply',
+    minHeight: 152,
+    render({ React, node, helpers, notify }) {
+      const h = React.createElement
+      const run = typeof helpers.run === 'function' ? helpers.run() : null
+      const text = typeof helpers.runInput === 'function' ? helpers.runInput('text') : undefined
+      const shown = typeof text === 'string' ? text : ''
+      const status = run === null ? 'idle' : run.status
+
+      const label = status === 'running'
+        ? (shown === '' ? '等待回复…' : '回复中…')
+        : status === 'error'
+          ? '运行失败'
+          : status === 'cancelled'
+            ? '已取消'
+            : status === 'done'
+              ? (shown === '' ? '已完成，但没有收到正文' : '已完成 · ' + shown.length + ' 字')
+              : '还没有运行'
+
+      /** Clipboard first; the canvas runs in a browser shell, so keep a textarea fallback. */
+      const copy = () => {
+        if (shown === '') return
+        const done = () => notify('已复制回复')
+        const failed = (error) => notify('复制失败：' + (error instanceof Error ? error.message : String(error)))
+        if (typeof navigator === 'object' && navigator !== null && navigator.clipboard !== undefined
+          && typeof navigator.clipboard.writeText === 'function') {
+          navigator.clipboard.writeText(shown).then(done).catch(failed)
+          return
+        }
+        try {
+          const area = document.createElement('textarea')
+          area.value = shown
+          area.style.position = 'fixed'
+          area.style.opacity = '0'
+          document.body.appendChild(area)
+          area.select()
+          const copied = typeof document.execCommand === 'function' && document.execCommand('copy')
+          area.remove()
+          if (copied === true) done()
+          else failed(new Error('当前环境不允许写入剪贴板'))
+        } catch (error) {
+          failed(error)
+        }
+      }
+
+      const statusBar = h('div', {
+        key: 'status',
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          height: '22px',
+          flex: 'none',
+        },
+      }, [
+        h('span', {
+          key: 'label',
+          style: {
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontSize: '10px',
+            color: status === 'error'
+              ? 'var(--dsw-alias-status-danger)'
+              : 'var(--dsw-alias-label-secondary)',
+          },
+        }, label),
+        h('button', {
+          key: 'copy',
+          type: 'button',
+          title: '复制回复',
+          'aria-label': '复制回复',
+          disabled: shown === '',
+          onClick: copy,
+          style: {
+            flex: 'none',
+            height: '20px',
+            padding: '0 8px',
+            font: 'inherit',
+            fontSize: '10px',
+            borderRadius: '6px',
+            border: '1px solid var(--dsw-alias-border-l2)',
+            background: 'transparent',
+            color: shown === '' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)',
+            cursor: shown === '' ? 'default' : 'pointer',
+          },
+        }, '复制'),
+      ])
+
+      const body = h('div', {
+        key: 'body',
+        style: {
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          padding: '8px',
+          boxSizing: 'border-box',
+          border: '1px dashed var(--dsw-alias-border-l3)',
+          borderRadius: '8px',
+          background: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 4%, transparent)',
+          fontSize: '12px',
+          lineHeight: '1.6',
+          color: shown === '' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)',
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere',
+          userSelect: 'text',
+        },
+      }, shown === ''
+        ? (status === 'running'
+            ? '等 api调用节点这一轮结束…'
+            : '还没有收到回复。运行工作流后，api调用节点返回的正文会显示在这里。')
+        : shown)
+
+      return h('div', {
+        style: { display: 'flex', flexDirection: 'column', gap: '6px', height: '152px', padding: '0 2px' },
+      }, [statusBar, body])
+    },
+  })
+}
+
+
+/**
+ * 数字透传的显示：节点里显示这一轮运行收到的数字。
+ *
+ * 和回复呈现区一样，视图不保存数据、不用 hook：正文来自运行状态（`helpers.run()` /
+ * `helpers.runInput('value')`），运行状态一变，画布重渲染，视图就跟着更新。
+ */
+
+function registerNumberView(api) {
+  api.registerNodeView({
+    type: 'NumberPass',
+    minHeight: 118,
+    render({ React, node, helpers }) {
+      const h = React.createElement
+      const run = typeof helpers.run === 'function' ? helpers.run() : null
+      const value = typeof helpers.runInput === 'function' ? helpers.runInput('value') : undefined
+      const status = run === null ? 'idle' : run.status
+      const shown = value === undefined
+        ? '—'
+        : (typeof value === 'number' ? String(value) : JSON.stringify(value))
+      const label = status === 'running'
+        ? (value === undefined ? '等待输入…' : '运行中…')
+        : status === 'error'
+          ? '运行失败'
+          : status === 'cancelled'
+            ? '已取消'
+            : status === 'done'
+              ? (value === undefined ? '已完成，没有收到数字' : '已完成 · ' + typeof value)
+              : '还没有运行'
+
+      const statusBar = h('div', {
+        key: 'status',
+        style: {
+          height: '18px',
+          flex: 'none',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontSize: '10px',
+          color: status === 'error'
+            ? 'var(--dsw-alias-status-danger)'
+            : 'var(--dsw-alias-label-secondary)',
+        },
+      }, label)
+
+      const number = h('div', {
+        key: 'value',
+        style: {
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxSizing: 'border-box',
+          border: '1px dashed var(--dsw-alias-border-l3)',
+          borderRadius: '8px',
+          background: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 4%, transparent)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+          fontSize: '22px',
+          fontWeight: 600,
+          color: value === undefined ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-label-primary)',
+          userSelect: 'text',
+        },
+      }, shown)
+
+      return h('div', {
+        style: { display: 'flex', flexDirection: 'column', gap: '6px', height: '118px', padding: '0 2px' },
+      }, [statusBar, number])
+    },
+  })
+}
+
+export function setup(api) {
+  registerFileView(api)
+  registerReplyView(api)
+  registerNumberView(api)
 }

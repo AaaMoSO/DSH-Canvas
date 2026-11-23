@@ -36,11 +36,12 @@ const recordRow = (node) => node.type === 'div'
   && find(node.props?.children, (child) => child.type === 'input') !== null
 
 async function main() {
-  const module = await import(pathToFileURL(path.join(REPO, 'extensions/agent-files/client.mjs')).href
+  const module = await import(pathToFileURL(path.join(REPO, 'extensions/agent-views/client.mjs')).href
     + '?view=' + Date.now())
-  let view = null
-  module.setup({ registerNodeView: (item) => { view = item } })
-  ok('the extension registers its node view', view !== null && view.type === 'AgentFiles')
+  const views = new Map()
+  module.setup({ registerNodeView: (item) => { views.set(item.type, item) } })
+  const view = views.get('AgentFiles')
+  ok('the shared extension registers the file view', view !== undefined && view.type === 'AgentFiles')
 
   let stored = 'C:/one.txt\nC:/two.txt\n'
   let redraws = 0

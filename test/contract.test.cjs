@@ -234,15 +234,15 @@ ok('bracket access on import.meta is treated as unverifiable', client.includes('
 ok('views receive a redraw helper', client.includes('redraw: redrawView'))
 ok('...backed by a canvas state bump', client.includes('const redrawView = React.useCallback'))
 ok('a view that changes its own state calls it', require('node:fs').readFileSync(
-  require('node:path').join(__dirname, '..', 'extensions/agent-files/client.mjs'), 'utf8')
+  require('node:path').join(__dirname, '..', 'extensions/agent-views/client.mjs'), 'utf8')
   .includes('helpers.redraw'))
 
 // ---- a view displays a run value through the run state -----------------------------------
 ok('views can ask for the newest run', client.includes('run: () => (runDetail === null'))
 ok('...and the value their node received', client.includes("runInput: (name) =>"))
 ok('the run state carries node inputs', executor.includes('inputs: Object.fromEntries(run.display)'))
-ok('the reply extension is registered', require('node:fs').existsSync(
-  require('node:path').join(__dirname, '..', 'extensions/agent-reply/extension.json')))
+ok('the agent views share one extension', require('node:fs').existsSync(
+  require('node:path').join(__dirname, '..', 'extensions/agent-views/extension.json')))
 
 // ---- a new node starts from its definition's values --------------------------------------
 ok('specs carry the definition default', client.includes('spec.default === undefined ? {} : { default: spec.default }'))

@@ -1,8 +1,0 @@
-{
-  "id": "agent-files",
-  "name": "Agent files",
-  "version": "2.0.0",
-  "description": "文件存放区的界面：左边拖入文件，右边是路径记录。",
-  "icon": "./icon.svg",
-  "client": "./client.mjs"
-}

@@ -36,11 +36,14 @@ function textOf(node) {
 }
 
 async function main() {
-  const module = await import(pathToFileURL(path.join(REPO, 'extensions/agent-reply/client.mjs')).href
+  const module = await import(pathToFileURL(path.join(REPO, 'extensions/agent-views/client.mjs')).href
     + '?reply=' + Date.now())
-  let view = null
-  module.setup({ registerNodeView: (item) => { view = item } })
-  ok('the extension registers the reply view', view !== null && view.type === 'AgentReply')
+  const views = new Map()
+  module.setup({ registerNodeView: (item) => { views.set(item.type, item) } })
+  const view = views.get('AgentReply')
+  ok('the shared extension registers the reply view', view !== undefined && view.type === 'AgentReply')
+  ok('...beside the file and number views',
+    ['AgentFiles', 'AgentReply', 'NumberPass'].every((type) => views.has(type)))
 
   const notices = []
   const render = (run, text) => view.render({
