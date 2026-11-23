@@ -60,4 +60,9 @@ ok('both halves advertise the same api version', clientVersion !== null && clien
 ok('the host keeps a returned disposer', host.includes('dispose = returned'))
 ok('the client collects a returned disposer', client.includes('disposers.push(returned)'))
 
+// AbortSignal.any (used per node) arrived in Node 20.3; say so instead of failing at runtime.
+const pkg = require('../package.json')
+ok('the plugin declares the Node it needs',
+  typeof pkg.engines?.node === 'string' && pkg.engines.node.includes('20.3'))
+
 report('api surface')

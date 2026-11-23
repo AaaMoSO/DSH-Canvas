@@ -4,6 +4,9 @@
   "private": true,
   "description": "An infinite node canvas in the sidebar: create nodes, wire ports, arrange a graph.",
   "type": "module",
+  "engines": {
+    "node": ">=20.3"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
