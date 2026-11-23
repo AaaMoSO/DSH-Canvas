@@ -9,7 +9,8 @@ remote execution backend when you need its node pack.
 - **Infinite canvas**: create nodes, wire ports, marquee/zoom/pan, groups, undo, minimap.
 - **Node packs**: the plugin ships empty — the Local library is whatever you put in `packs/`
   (see [Writing a node pack](#writing-a-node-pack)). A workflow stores types, widget values and
-  each node's origin; definitions and programs always come from the installed packs.
+  each node's origin. A newly created executable node pins its program and control schema into the
+  workflow; an older node is pinned once it is opened while its pack is still available.
 - **Ownership**: every node records the pack that produced it — `origin`, written when the node
   is created and, for a file that predates the field, once when it is first opened. Values are
   `local:<pack>` or `remote:<pack>`. The canvas kind (local / remote / mixed) is the set of its
@@ -104,11 +105,13 @@ export async function run(inputs, ctx) {
   to list and show the files that node writes;
 - the library re-reads `packs/` every time its menu opens, so a pack you copy in works without a
   restart;
-- `config.json` may also set `maxParallel` (default 4, 1 = one at a time): independent
-  branches of a workflow run together, while a node marked `"concurrency": "exclusive"` still
-  runs alone — across runs and within one;
+- `config.json` may also set `maxParallel` (default 1 for compatibility; 2–16 enables parallel
+  independent branches): independent branches of a workflow run together, while a node marked
+  `"concurrency": "exclusive"` still runs alone — across runs and within one;
 - `config.json` may set `nodeTimeoutMs`: a node that runs longer fails its run with the node and
-  the budget named, instead of holding the executor; 0 or absent keeps it unlimited.
+  the budget named; 0 or absent keeps it unlimited. JavaScript cannot be pre-empted in-process,
+  so an exclusive resource stays held until the underlying program actually stops. Synchronous
+  infinite loops still require restarting the Host.
 - a node whose program is missing still draws, and only fails when it runs.
 
 Extensions can contribute packs too — see [extensions/README.md](extensions/README.md).
@@ -121,7 +124,7 @@ index.js       host: packs, workflows, output files, extension routes
 executor.js    generic executor: graph → programs, locks, per-run workspace
 packs/         node packs you install (not tracked: the folder is yours)
 extensions/    capability packages (a ComfyUI format adapter + backend, a hover card)
-workflows/     saved workflows (v4: types, values, the pack each node came from, its home)
+workflows/     saved workflows (v4: types, values, origins, pinned programs/schemas, home)
 locale/        plugin name/description shown by the harness
 ```
 

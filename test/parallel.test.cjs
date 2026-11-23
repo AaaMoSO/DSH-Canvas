@@ -65,6 +65,11 @@ async function main() {
   eq('...and finish when capped at one', oneByOne.run.status, 'done')
   ok('maxParallel 1 keeps the old order (' + oneByOne.ms + 'ms)', oneByOne.ms >= 380)
 
+  const compatibilityDefault = await timed(make(undefined), fan)
+  eq('...and the unconfigured default keeps the old order', compatibilityDefault.run.status, 'done')
+  ok('an unconfigured executor stays sequential (' + compatibilityDefault.ms + 'ms)',
+    compatibilityDefault.ms >= 380)
+
   // ---- a dependency still waits ------------------------------------------------------------
   const chained = await timed(make({ maxParallel: 4 }), {
     first: { class_type: 'Slow', inputs: { ms: 100, tag: 'made' } },

@@ -31,7 +31,13 @@ async function main() {
   eq('a program is resolved through the pack the node names', await ran({ pack: 'alpha' }), 'alpha')
   eq('...and the other pack resolves to its own program', await ran({ pack: 'beta' }), 'beta')
   ok('a node without a pack still resolves by type', ['alpha', 'beta'].includes(await ran({})))
-  ok('a pack that is not installed falls back to the type', ['alpha', 'beta'].includes(await ran({ pack: 'ghost' })))
+  let ghost = null
+  try {
+    await ran({ pack: 'ghost' })
+  } catch (error) {
+    ghost = error
+  }
+  ok('a named pack never falls back to another pack\'s program', ghost instanceof ExecutionError)
 
   const inline = await executor.program('Anything', {
     program: { source: 'export async function run() { return ["inline"] }\n' },

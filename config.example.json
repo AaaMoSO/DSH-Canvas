@@ -3,5 +3,7 @@
   "sdCppPort": 8288,
   "outputDir": "D:\\path\\to\\ComfyUI\\output",
   "workspaceRoot": "",
-  "sdServerArgs": []
+  "sdServerArgs": [],
+  "maxParallel": 1,
+  "nodeTimeoutMs": 0
 }

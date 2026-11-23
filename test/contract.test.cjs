@@ -94,14 +94,14 @@ for (const name of ['node', 'React', 'helpers', 'setWidget', 'getWidget', 'notif
 }
 
 // ---- what a node program is handed ----------------------------------------------------------
-const programContext = executor.slice(executor.indexOf('const context = {'), executor.indexOf('const returned = await program.run'))
+const programContext = executor.slice(executor.indexOf('const context = {'), executor.indexOf('const ceiling ='))
 for (const name of ['nodeId', 'origin', 'runId', 'workflow', 'signal', 'config', 'workspace', 'log', 'lock']) {
   ok('a node program is handed ' + name, programContext.includes(name + ':'))
 }
 
 // ---- a created node carries its program, so the workflow is self-contained ------------------
 const nodeForType = grabFunction(client, 'nodeForType')
-ok('a created node copies the program source it was defined with', nodeForType.includes('program: { source: def.program.source }'))
+ok('a created node copies the program source it was defined with', nodeForType.includes('program: { source: programSource }'))
 ok('...but keeps the definition in the pack', nodeForType.includes('hydrateNode'))
 
 // ---- a workflow write replaces the file, never truncates it --------------------------------
@@ -113,9 +113,10 @@ ok('...and renamed over the target', writeWorkflow.includes('rename(staged, targ
 ok('the host passes an api version', host.includes('apiVersion: 1'))
 ok('the client passes one too', client.includes('apiVersion: 1'))
 ok('a replaced host module is disposed first', host.includes('disposeExtensionHost(extension.id)'))
-ok('a removed host module is disposed', host.includes('disposeExtensionHost(id)'))
-ok('a setup return value becomes a disposer', host.includes('dispose = returned') && client.includes('extensionDisposersRef.current.push(returned)'))
-ok('the client runs its disposers on unmount', client.includes('extensionDisposersRef.current = []'))
+const removeExtensionHost = grabFunction(host, 'removeExtension')
+ok('a removed host module is disposed', removeExtensionHost.includes('disposeExtensionHost(id)'))
+ok('a setup return value becomes a disposer', host.includes('dispose = returned') && client.includes('disposers.push(returned)'))
+ok('the client runs its disposers on unmount', client.includes('void disposeExtensionList(disposers)'))
 
 // ---- a crashed panel explains itself instead of going blank -------------------------------
 ok('the canvas is wrapped in an error boundary', client.includes('class PanelBoundary extends React.Component'))

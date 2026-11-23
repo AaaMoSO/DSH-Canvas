@@ -59,17 +59,30 @@ const executor = new Executor({
 // Extension host modules register their routes once per file version, and are told to close what
 // they opened before a new version replaces them.
 const extensionHosts = new Map()
+const extensionHostLoads = new Map()
 
 /** Drop one extension's host module, giving it the chance to clean up first. */
-function disposeExtensionHost(id) {
+async function disposeExtensionHost(id) {
   const cached = extensionHosts.get(id)
   extensionHosts.delete(id)
   if (cached === undefined || typeof cached.dispose !== 'function') return
   try {
-    cached.dispose()
+    await cached.dispose()
   } catch (error) {
     console.log('[node-canvas:' + id + '] dispose failed: '
       + (error instanceof Error ? error.message : String(error)))
+  }
+}
+
+/** Wait for a module load already in flight before removing or replacing its registration. */
+async function settleExtensionLoad(id) {
+  const loading = extensionHostLoads.get(id)
+  if (loading !== undefined) {
+    try {
+      await loading
+    } catch {
+      // The caller still owns the remove/reload action; the load failure is not its failure.
+    }
   }
 }
 const MAX_PACK_BYTES = 4 * 1024 * 1024
@@ -91,11 +104,23 @@ export function apply(ctx) {
   pluginCtx = ctx
   // Node programs get the canvas' own origin. The desktop Host binds a random port, so a program
   // that guessed one would be wrong.
-  try {
-    executor.origin = ctx.webServer.getOrigin()
-  } catch {
-    executor.origin = ''
-  }
+  ctx.effect(() => {
+    try {
+      executor.origin = ctx.webServer.getOrigin()
+    } catch {
+      executor.origin = ''
+    }
+    return async () => {
+      executor.cancelAll()
+      executor.origin = ''
+      if (pluginCtx === ctx) pluginCtx = null
+      const ids = new Set([...extensionHosts.keys(), ...extensionHostLoads.keys()])
+      await Promise.allSettled([...ids].map(async (id) => {
+        await settleExtensionLoad(id)
+        await disposeExtensionHost(id)
+      }))
+    }
+  })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: PREFIX,
@@ -338,7 +363,8 @@ async function handle(req, res) {
         await writeFile(tmp, JSON.stringify(values, null, 2) + String.fromCharCode(10), 'utf8')
         await rename(tmp, file)
         // The extension's host module is cached by version: drop it so new settings are used.
-        disposeExtensionHost(id)
+        await settleExtensionLoad(id)
+        await disposeExtensionHost(id)
         send(res, 200, { ok: true, values })
         return
       }
@@ -450,40 +476,56 @@ async function loadExtensionHost(extension) {
   } catch {
     // No settings file: the host module version alone decides.
   }
-  const cached = extensionHosts.get(extension.id)
-  if (cached !== undefined && cached.version === version) return cached
-  // A stale module is disposed before the new one is imported; otherwise its timers, child
-  // processes and listeners outlive the code that owns them.
-  if (cached !== undefined) disposeExtensionHost(extension.id)
-  const routes = []
-  const module = await import(pathToFileURL(file).href + '?v=' + version)
-  let dispose = null
-  if (typeof module.setup === 'function') {
-    const returned = module.setup({
-      id: extension.id,
-      name: extension.name,
-      // Bumped when the contract gains something an extension must know about.
-      apiVersion: 1,
-      rootDir: extension.path,
-      config: await readConfigFile(),
-      route: (method, routePath, handler) => {
-        if (typeof method !== 'string' || typeof routePath !== 'string' || typeof handler !== 'function') return
-        routes.push({
-          method: method.toUpperCase(),
-          path: routePath.startsWith('/') ? routePath : '/' + routePath,
-          handler,
-        })
-      },
-      log: (message) => console.log('[node-canvas:' + extension.id + '] ' + message),
-    })
-    if (typeof returned === 'function') dispose = returned
-    else if (returned !== null && typeof returned === 'object' && typeof returned.dispose === 'function') {
-      dispose = () => returned.dispose()
+  const loading = extensionHostLoads.get(extension.id)
+  if (loading !== undefined) {
+    try {
+      return await loading
+    } catch {
+      // Retry below so a request after a failed load can heal without a Host restart.
     }
   }
-  const entry = { version, routes, dispose }
-  extensionHosts.set(extension.id, entry)
-  return entry
+  const operation = (async () => {
+    const cached = extensionHosts.get(extension.id)
+    if (cached !== undefined && cached.version === version) return cached
+    // A stale module is disposed before the new one is imported; otherwise its timers, child
+    // processes and listeners outlive the code that owns them.
+    if (cached !== undefined) await disposeExtensionHost(extension.id)
+    const routes = []
+    const module = await import(pathToFileURL(file).href + '?v=' + version)
+    let dispose = null
+    if (typeof module.setup === 'function') {
+      const returned = await module.setup({
+        id: extension.id,
+        name: extension.name,
+        // Bumped when the contract gains something an extension must know about.
+        apiVersion: 1,
+        rootDir: extension.path,
+        config: await readConfigFile(),
+        route: (method, routePath, handler) => {
+          if (typeof method !== 'string' || typeof routePath !== 'string' || typeof handler !== 'function') return
+          routes.push({
+            method: method.toUpperCase(),
+            path: routePath.startsWith('/') ? routePath : '/' + routePath,
+            handler,
+          })
+        },
+        log: (message) => console.log('[node-canvas:' + extension.id + '] ' + message),
+      })
+      if (typeof returned === 'function') dispose = returned
+      else if (returned !== null && typeof returned === 'object' && typeof returned.dispose === 'function') {
+        dispose = () => returned.dispose()
+      }
+    }
+    const entry = { version, routes, dispose }
+    extensionHosts.set(extension.id, entry)
+    return entry
+  })()
+  extensionHostLoads.set(extension.id, operation)
+  try {
+    return await operation
+  } finally {
+    if (extensionHostLoads.get(extension.id) === operation) extensionHostLoads.delete(extension.id)
+  }
 }
 
 /**
@@ -892,6 +934,8 @@ async function removeExtension(id) {
   const list = await readExtensionRegistry()
   const entry = list.find((item) => item.id === id)
   if (entry === undefined) return false
+  await settleExtensionLoad(id)
+  await disposeExtensionHost(id)
   await writeExtensionRegistry(list.filter((item) => item.id !== id))
   if (path.resolve(entry.path).startsWith(path.resolve(EXTENSIONS_DIR) + path.sep)) {
     await rm(entry.path, { recursive: true, force: true }).catch(() => {})

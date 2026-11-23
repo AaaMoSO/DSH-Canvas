@@ -58,6 +58,6 @@ ok('both halves advertise the same api version', clientVersion !== null && clien
 
 // A returned disposer is honoured by both halves.
 ok('the host keeps a returned disposer', host.includes('dispose = returned'))
-ok('the client collects a returned disposer', client.includes('extensionDisposersRef.current.push(returned)'))
+ok('the client collects a returned disposer', client.includes('disposers.push(returned)'))
 
 report('api surface')

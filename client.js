@@ -417,18 +417,14 @@ function getCanvasStore() {
 function useStored(key, initial) {
   const store = getCanvasStore()
   const [, bump] = React.useReducer((value) => value + 1, 0)
-  React.useEffect(() => store.subscribe(() => bump()), [store])
+  React.useEffect(() => store.subscribeKey(key, () => bump()), [store, key])
   const setValue = React.useCallback((next) => store.set(key, next), [store, key])
   return [store.ensure(key, initial), setValue]
 }
 
-/** The same value, but this component is woken only when that one key changes. */
+/** An explicitly read-only view is the same key-bound subscription. */
 function useStoredValue(key, initial) {
-  const store = getCanvasStore()
-  const [, bump] = React.useReducer((value) => value + 1, 0)
-  React.useEffect(() => store.subscribeKey(key, () => bump()), [store, key])
-  const setValue = React.useCallback((next) => store.set(key, next), [store, key])
-  return [store.ensure(key, initial), setValue]
+  return useStored(key, initial)
 }
 
 /** Writing a value without listening to it: a producer does not need to re-render on every write. */
@@ -1327,6 +1323,36 @@ const thumbCache = new Map()
       }
     }
 
+    /** Rebuild the control schema a pinned node carries, refusing values a file cannot draw. */
+    function normalizeWidgetSpecs(raw) {
+      const specs = []
+      const seen = new Set()
+      for (const item of Array.isArray(raw) ? raw : []) {
+        if (item === null || typeof item !== 'object') continue
+        const name = typeof item.name === 'string' ? item.name.trim() : ''
+        if (name === '' || seen.has(name)) continue
+        seen.add(name)
+        const spec = {
+          name,
+          type: typeof item.type === 'string' && item.type.trim() !== '' ? item.type.trim() : WILDCARD_TYPE,
+        }
+        if (item.default !== undefined) spec.default = json(item.default)
+        if (Array.isArray(item.options)) spec.options = item.options.map((value) => String(value))
+        for (const key of ['step', 'min', 'max', 'precision']) {
+          if (typeof item[key] === 'number' && Number.isFinite(item[key])) spec[key] = item[key]
+        }
+        for (const key of ['multiline', 'hidden']) {
+          if (item[key] === true) spec[key] = true
+        }
+        for (const key of ['folder', 'modelsRoot']) {
+          if (typeof item[key] === 'string' && item[key] !== '') spec[key] = item[key]
+        }
+        spec.index = specs.length
+        specs.push(spec)
+      }
+      return specs
+    }
+
     function previewFromDef(def, pack) {
       const spec = def?.preview
       if (spec === null || spec === undefined || typeof spec !== 'object') return null
@@ -1360,7 +1386,30 @@ const thumbCache = new Map()
     function hydrateNode(node, definitionOf) {
       const store = widgetStoreOf(node)
       const entry = definitionOf(node)
+      const programSource = typeof node.program?.source === 'string' && node.program.source.trim() !== ''
+        ? node.program.source
+        : ''
+      // A pinned node carries both the program and the control schema. Using a newer pack schema
+      // with an older program turns a harmless pack update into a mysterious runtime failure.
+      const hasStoredSpecs = Object.prototype.hasOwnProperty.call(node, 'widgetSpecs')
+      const storedSpecs = node.pinned === true && hasStoredSpecs ? normalizeWidgetSpecs(node.widgetSpecs) : null
       if (entry === undefined) {
+        if (programSource !== '') {
+          const specs = storedSpecs ?? []
+          return {
+            ...node,
+            program: { source: programSource },
+            pinned: storedSpecs !== null,
+            widgetStore: store,
+            missing: storedSpecs === null && node.type !== '',
+            widgets: specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
+              ? store[spec.name]
+              : (spec.default === undefined ? null : spec.default))),
+            widgetSpecs: specs,
+            widgetInputs: specs.map((spec) => spec.name),
+            preview: null,
+          }
+        }
         // Unknown type: keep the stored ports so the wiring still renders, and mark the node.
         return {
           ...node,
@@ -1373,13 +1422,15 @@ const thumbCache = new Map()
         }
       }
       const modelsRoot = typeof entry.pack?.modelsRoot === 'string' ? entry.pack.modelsRoot : ''
-      const specs = []
+      const definitionSpecs = []
       const inputs = []
       const outputs = []
       for (const spec of Array.isArray(entry.def.inputs) ? entry.def.inputs : []) {
         const type = typeof spec.type === 'string' && spec.type !== '' ? spec.type : WILDCARD_TYPE
         inputs.push({ id: portIdFor('in', spec.name), name: spec.name, type })
-        if (spec.widget === true) specs.push({ ...specFromDef(spec, modelsRoot), index: specs.length })
+        if (spec.widget === true) {
+          definitionSpecs.push({ ...specFromDef(spec, modelsRoot), index: definitionSpecs.length })
+        }
       }
       for (const spec of Array.isArray(entry.def.outputs) ? entry.def.outputs : []) {
         outputs.push({
@@ -1388,18 +1439,39 @@ const thumbCache = new Map()
           type: typeof spec.type === 'string' && spec.type !== '' ? spec.type : WILDCARD_TYPE,
         })
       }
+      const definitionProgram = typeof entry.def.program?.source === 'string'
+        && entry.def.program.source.trim() !== ''
+        ? entry.def.program.source
+        : ''
+      const pinned = storedSpecs !== null && programSource !== ''
+      const specs = storedSpecs ?? definitionSpecs
+      const useStoredPorts = pinned
+        && Array.isArray(node.inputs)
+        && Array.isArray(node.outputs)
+      const nextInputs = useStoredPorts ? node.inputs : inputs
+      const nextOutputs = useStoredPorts ? node.outputs : outputs
       const widgets = specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
         ? store[spec.name]
         : (spec.default === undefined ? null : spec.default)))
+      const program = programSource !== '' ? programSource : definitionProgram
+      const concurrency = node.concurrency === 'exclusive' || node.concurrency === 'shared'
+        ? node.concurrency
+        : entry.def.concurrency
+      const resource = typeof node.resource === 'string' && node.resource !== ''
+        ? node.resource
+        : entry.def.resource
       return {
         ...node,
         missing: false,
+        ...(program === '' ? {} : { program: { source: program }, pinned: true }),
         widgetStore: store,
         widgets,
         widgetSpecs: specs,
         widgetInputs: specs.map((spec) => spec.name),
-        inputs,
-        outputs,
+        inputs: nextInputs,
+        outputs: nextOutputs,
+        ...(concurrency === 'exclusive' || concurrency === 'shared' ? { concurrency } : {}),
+        ...(typeof resource === 'string' && resource !== '' ? { resource } : {}),
         preview: previewFromDef(entry.def, entry.pack) ?? undefined,
       }
     }
@@ -1432,6 +1504,19 @@ const thumbCache = new Map()
           // An explicit inline program is the one thing a workflow may pin, so it is kept.
           ...(typeof node.program?.source === 'string' && node.program.source !== ''
             ? { program: { source: node.program.source } }
+            : {}),
+          // A pinned node keeps the schema it was built with. Without this, upgrading a pack can
+          // pair old code with new controls even though the program itself survived.
+          ...(node.pinned === true
+            && typeof node.program?.source === 'string'
+            && node.program.source !== ''
+            ? { pinned: true, widgetSpecs: normalizeWidgetSpecs(node.widgetSpecs) }
+            : {}),
+          ...(node.concurrency === 'exclusive' || node.concurrency === 'shared'
+            ? { concurrency: node.concurrency }
+            : {}),
+          ...(typeof node.resource === 'string' && node.resource !== ''
+            ? { resource: node.resource }
             : {}),
           // Ports stay so the graph still draws when a pack is not installed.
           inputs: (node.inputs ?? []).map((port) => ({ id: port.id, name: port.name, type: port.type })),
@@ -1495,6 +1580,12 @@ const thumbCache = new Map()
         if (item.widgets !== null && typeof item.widgets === 'object' && Array.isArray(item.widgets) !== true) {
           for (const [name, value] of Object.entries(item.widgets)) store[name] = value
         }
+        const programSource = item.program !== null && typeof item.program === 'object'
+          && typeof item.program.source === 'string' && item.program.source.trim() !== ''
+          ? item.program.source
+          : ''
+        const pinned = item.pinned === true && programSource !== '' && Array.isArray(item.widgetSpecs)
+        const storedSpecs = pinned ? normalizeWidgetSpecs(item.widgetSpecs) : []
         nodes.push({
           id,
           x: num(item.x, 0),
@@ -1508,14 +1599,20 @@ const thumbCache = new Map()
           ...(typeof item.origin === 'string' && item.origin !== '' ? { origin: item.origin } : {}),
           mode: num(item.mode, 0),
           widgetStore: store,
-          // Filled from the pack on the next render; nothing about the node is stored here.
+          // Values and a possible pinned schema; the current pack fills an unpinned node.
           widgets: null,
           widgetInputs: [],
-          widgetSpecs: [],
+          widgetSpecs: storedSpecs,
           // An explicit inline program is the one thing a file may pin.
-          ...(item.program !== null && typeof item.program === 'object'
-            && typeof item.program.source === 'string' && item.program.source.trim() !== ''
-            ? { program: { source: item.program.source } }
+          ...(programSource !== ''
+            ? { program: { source: programSource } }
+            : {}),
+          ...(pinned ? { pinned: true } : {}),
+          ...(item.concurrency === 'exclusive' || item.concurrency === 'shared'
+            ? { concurrency: item.concurrency }
+            : {}),
+          ...(typeof item.resource === 'string' && item.resource !== ''
+            ? { resource: item.resource }
             : {}),
           color: presetOf(item.color) === null ? null : item.color,
           inputs,
@@ -3972,10 +4069,26 @@ const thumbCache = new Map()
       //
       // Priority: the list arrives highest-first. Modules load bottom-up (lowest first) and the
       // collected registrations are reversed, so the highest extension wins any conflict.
+      const extensionSessionRef = React.useRef({ version: 0, disposers: [] })
+      const extensionLoadVersionRef = React.useRef(0)
+
+      async function disposeExtensionList(list) {
+        await Promise.allSettled(list.map((dispose) => Promise.resolve().then(dispose)))
+      }
+
       const loadAdapters = React.useCallback(async () => {
+        const version = ++extensionLoadVersionRef.current
+        const disposers = []
         try {
           const payload = await fetch('/node-canvas/extensions', { cache: 'no-store' })
             .then((response) => (response.ok === true ? response.json() : null))
+          if (payload === null || Array.isArray(payload.extensions) !== true
+            || version !== extensionLoadVersionRef.current) {
+            return
+          }
+          const previous = extensionSessionRef.current
+          extensionSessionRef.current = { version, disposers: [] }
+          await disposeExtensionList(previous.disposers)
           const formats = []
           const features = {
             nodeViews: [], nodeMenus: [], toolbarActions: [], panels: [], hovers: [], backends: [], sources: [],
@@ -3992,7 +4105,7 @@ const thumbCache = new Map()
                 if (item !== null && typeof item === 'object' && check(item)) list.push({ ...item, extension: extension.id })
               }
               if (typeof module.setup === 'function') {
-                const returned = module.setup({
+                const returned = await module.setup({
                   id: extension.id,
                   name: extension.name,
                   // Bumped when the contract gains something an extension must know about.
@@ -4014,9 +4127,9 @@ const thumbCache = new Map()
                     && typeof value.listWorkflows === 'function'
                     && typeof value.writeWorkflow === 'function'),
                 })
-                if (typeof returned === 'function') extensionDisposersRef.current.push(returned)
+                if (typeof returned === 'function') disposers.push(returned)
                 else if (returned !== null && typeof returned === 'object' && typeof returned.dispose === 'function') {
-                  extensionDisposersRef.current.push(() => returned.dispose())
+                  disposers.push(() => returned.dispose())
                 }
               } else if (module.adapter !== null && typeof module.adapter === 'object') {
                 // One-release compatibility with the first adapter-only shape.
@@ -4026,6 +4139,11 @@ const thumbCache = new Map()
               // A broken extension simply takes no part.
             }
           }
+          if (version !== extensionLoadVersionRef.current) {
+            await disposeExtensionList(disposers)
+            return
+          }
+          extensionSessionRef.current.disposers = disposers
           setAdapters(formats.reverse())
           setExtensionFeatures({
             nodeViews: features.nodeViews.reverse(),
@@ -4037,7 +4155,7 @@ const thumbCache = new Map()
             sources: features.sources.reverse(),
           })
         } catch {
-          // The Host not answering leaves the registered capabilities as they were.
+          await disposeExtensionList(disposers)
         }
       }, [])
 
@@ -4137,21 +4255,14 @@ const thumbCache = new Map()
         }
       }
 
-      const extensionDisposersRef = React.useRef([])
-
       // A reloaded extension is told to close what it opened before the next version runs.
       React.useEffect(() => {
         void loadAdapters()
         return () => {
-          const disposers = extensionDisposersRef.current
-          extensionDisposersRef.current = []
-          for (const dispose of disposers) {
-            try {
-              dispose()
-            } catch {
-              // One broken extension must not stop the others from cleaning up.
-            }
-          }
+          extensionLoadVersionRef.current += 1
+          const disposers = extensionSessionRef.current.disposers
+          extensionSessionRef.current = { version: 0, disposers: [] }
+          void disposeExtensionList(disposers)
         }
       }, [loadAdapters])
 
@@ -4215,6 +4326,7 @@ const thumbCache = new Map()
           showNotice(tr('extensions.registered', { name: payload?.extension?.name ?? body.name ?? '' }))
           loadExtensions()
           loadPacks()
+          await loadAdapters()
         } catch (error) {
           setExtensionDialog((current) => (current === null ? current : { ...current, busy: false, error: error.message }))
         }
@@ -4235,6 +4347,7 @@ const thumbCache = new Map()
           if (response.ok !== true) throw new Error('HTTP ' + response.status)
           loadExtensions()
           loadPacks()
+          await loadAdapters()
         } catch (error) {
           showNotice(tr('notice.saveFailed', { message: error.message }))
         }
@@ -4570,12 +4683,14 @@ const thumbCache = new Map()
         )
         // The library the node was dragged from is the answer, recorded at creation.
         const origin = originOfPack(pack)
-        // The program is copied onto the node: from here on the workflow carries what it needs to
-        // run, even if the pack is later moved, edited or removed. The definition still comes from
-        // the pack, so a widget added later shows up on the next load.
+        // The program and its control schema are copied onto the node: from here on the workflow
+        // carries what it needs to run, even if the pack is later moved, edited or removed.
         // A node that declares a size gets it; otherwise the library default.
         const width = typeof def.width === 'number' && def.width >= 120 ? def.width : NODE_W
         const declaredHeight = typeof def.height === 'number' && def.height >= 60 ? def.height : 0
+        const programSource = typeof def.program?.source === 'string' && def.program.source.trim() !== ''
+          ? def.program.source
+          : ''
         const base = {
           id: uid('n'),
           x: Math.round(at.x - width / 2),
@@ -4587,8 +4702,14 @@ const thumbCache = new Map()
           ...(origin === undefined ? {} : { origin }),
           mode: 0,
           widgetStore: {},
-          ...(typeof def.program?.source === 'string' && def.program.source.trim() !== ''
-            ? { program: { source: def.program.source } }
+          ...(programSource !== ''
+            ? { program: { source: programSource }, pinned: true }
+            : {}),
+          ...(def.concurrency === 'exclusive' || def.concurrency === 'shared'
+            ? { concurrency: def.concurrency }
+            : {}),
+          ...(typeof def.resource === 'string' && def.resource !== ''
+            ? { resource: def.resource }
             : {}),
           color: null,
           inputs: [],
@@ -5266,6 +5387,20 @@ const thumbCache = new Map()
       function toPrompt(graph) {
         const ids = new Map()
         graph.nodes.forEach((node, index) => ids.set(node.id, String(index + 1)))
+        const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+        const incoming = new Map()
+        for (const link of graph.links) {
+          let ports = incoming.get(link.to[0])
+          if (ports === undefined) {
+            ports = new Map()
+            incoming.set(link.to[0], ports)
+          }
+          ports.set(link.to[1], link)
+        }
+        const outputSlots = new Map()
+        for (const node of graph.nodes) {
+          node.outputs.forEach((port, index) => outputSlots.set(node.id + '\u0000' + port.id, index))
+        }
         const prompt = {}
         for (const node of graph.nodes) {
           if (typeof node.type !== 'string' || node.type.trim() === '') {
@@ -5273,12 +5408,12 @@ const thumbCache = new Map()
           }
           const inputs = {}
           for (const port of node.inputs) {
-            const link = graph.links.find((item) => item.to[0] === node.id && item.to[1] === port.id)
+            const link = incoming.get(node.id)?.get(port.id)
             if (link === undefined) continue
-            const source = graph.nodes.find((item) => item.id === link.from[0])
+            const source = byId.get(link.from[0])
             if (source === undefined) continue
-            const slot = source.outputs.findIndex((item) => item.id === link.from[1])
-            if (slot < 0) continue
+            const slot = outputSlots.get(source.id + '\u0000' + link.from[1])
+            if (slot === undefined) continue
             inputs[port.name] = [ids.get(source.id), slot]
           }
           for (const spec of widgetSpecsOf(node)) {
@@ -5288,11 +5423,20 @@ const thumbCache = new Map()
             inputs[spec.name] = value
           }
           const entry = definitionFor(node)
+          const programSource = typeof node.program?.source === 'string' && node.program.source.trim() !== ''
+            ? node.program.source
+            : ''
           // Packs may still be in flight; only refuse a type once the definitions are known.
-          if (entry === undefined && libraries.size > 0) {
+          if (entry === undefined && programSource === '' && libraries.size > 0) {
             throw new Error(tr('notice.unknownType', { type: node.type.trim() }))
           }
-          const exclusive = entry !== undefined && entry.def.concurrency === 'exclusive'
+          const concurrency = node.concurrency === 'exclusive' || node.concurrency === 'shared'
+            ? node.concurrency
+            : entry?.def.concurrency
+          const exclusive = concurrency === 'exclusive'
+          const resource = typeof node.resource === 'string' && node.resource !== ''
+            ? node.resource
+            : entry?.def.resource
           prompt[ids.get(node.id)] = {
             class_type: node.type.trim(),
             // Execution identity: the pack this node came from. Two packs may share a type name,
@@ -5307,11 +5451,11 @@ const thumbCache = new Map()
             ...(exclusive
               ? {
                   concurrency: 'exclusive',
-                  ...(entry?.def.resource === undefined ? {} : { resource: entry.def.resource }),
+                  ...(typeof resource === 'string' && resource !== '' ? { resource } : {}),
                 }
               : {}),
             // An inline program still wins, for a node that pins its own version.
-            ...(node.program === undefined ? null : { program: node.program }),
+            ...(programSource === '' ? {} : { program: { source: programSource } }),
           }
         }
         return prompt

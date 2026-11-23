@@ -82,6 +82,16 @@ class RunLock {
   }
 }
 
+/** A release callback that can be handed around safely more than once. */
+function once(callback) {
+  let called = false
+  return () => {
+    if (called === true) return
+    called = true
+    return callback()
+  }
+}
+
 export class Executor {
   constructor(options) {
     this.rootDir = options.rootDir
@@ -204,7 +214,12 @@ export class Executor {
     }
     if (typeof type !== 'string') throw new ExecutionError('no node program for ' + String(type))
     const pack = typeof spec?.pack === 'string' && spec.pack !== '' ? spec.pack : null
-    const find = () => this.programs.get((pack ?? '') + '\u0000' + type) ?? this.byType.get(type)
+    // A named pack is an execution identity, not a hint. Falling back to another pack's program
+    // would silently run different code for the same type; only legacy prompts without a pack
+    // may use the type-only fallback.
+    const find = () => (pack === null
+      ? this.byType.get(type)
+      : this.programs.get(pack + '\u0000' + type))
     let entry = find()
     if (entry === undefined) {
       await this.refresh()
@@ -315,40 +330,47 @@ export class Executor {
     return true
   }
 
+  /** Stop starting new work when the owning plugin is unloaded; in-flight nodes clean up later. */
+  cancelAll() {
+    for (const run of this.runs.values()) {
+      if (run.status !== 'running') continue
+      run.cancelRequested = true
+      run.abort.abort()
+    }
+  }
+
   note(run, entry) {
     run.log.push(entry)
     if (run.log.length > this.maxLogEntries) run.log.splice(0, run.log.length - this.maxLogEntries)
   }
 
   /** Take a named resource for this run; the release is kept until the run ends. */
-  async acquire(name, run) {
+  async acquire(name, run, signal = run.abort.signal) {
     let lock = this.locks.get(name)
     if (lock === undefined) {
       lock = new RunLock()
       this.locks.set(name, lock)
     }
-    return lock.acquire(run.id, run.abort.signal)
+    return lock.acquire(run.id, signal)
   }
 
   /**
-   * Queue behind the previous exclusive node of this resource in the same run. The run already
-   * holds the lease across runs; this keeps two of its own nodes from overlapping.
+   * Queue exclusive nodes of one resource inside a run. The run already holds the resource lease
+   * across runs, so this second lock only keeps its own nodes from overlapping.
    */
-  async enterExclusive(resource) {
-    const previous = this.inside.get(resource) ?? Promise.resolve()
-    let release = () => {}
-    const mine = new Promise((resolve) => {
-      release = resolve
-    })
-    this.inside.set(resource, previous.then(() => mine))
-    await previous
-    return release
+  async enterExclusive(resource, owner, signal) {
+    let lock = this.inside.get(resource)
+    if (lock === undefined) {
+      lock = new RunLock()
+      this.inside.set(resource, lock)
+    }
+    return lock.acquire(owner, signal)
   }
 
-  /** How many nodes may run at once; 1 keeps the old one-at-a-time behaviour. */
+  /** How many nodes may run at once; the old one-at-a-time behaviour is the safe default. */
   parallelism() {
     const raw = this.config.maxParallel
-    if (typeof raw !== 'number' || Number.isFinite(raw) !== true || raw < 1) return 4
+    if (typeof raw !== 'number' || Number.isFinite(raw) !== true || raw < 1) return 1
     return Math.min(Math.trunc(raw), 16)
   }
 
@@ -460,15 +482,10 @@ export class Executor {
       this.note(run, { type: 'run-error', message: run.error, at: Date.now() })
     } finally {
       run.current = null
-      // Whatever the outcome, hand the shared resources to the next queued run.
-      for (const release of run.finalizers) {
-        try {
-          release()
-        } catch {
-          // A release must never take the executor down.
-        }
-      }
-      run.finalizers.length = 0
+      // A timed-out or cancelled program may still be alive. Its leases and workspace stay held
+      // until the underlying promise settles, so the next run cannot use the resource beside it.
+      const finalizers = run.finalizers.splice(0)
+      await Promise.allSettled(finalizers.map((release) => Promise.resolve().then(release)))
       await rm(run.workspace, { recursive: true, force: true }).catch(() => {})
     }
   }
@@ -500,65 +517,123 @@ export class Executor {
       classType: spec.class_type,
       startedAt: Date.now(),
     }
+    const nodeAbort = new AbortController()
+    const nodeSignal = AbortSignal.any([run.abort.signal, nodeAbort.signal])
+    let settleNode
+    const nodeDone = new Promise((resolve) => {
+      settleNode = once(resolve)
+    })
     // A node that cannot run twice at once claims its resource for the whole run, so a
     // second workflow queues instead of interleaving with it.
     let leaveExclusive = null
-    if (spec.concurrency === 'exclusive') {
-      const resource = typeof spec.resource === 'string' && spec.resource !== ''
-        ? spec.resource
-        : spec.class_type
-      const release = await this.acquire(resource, run)
-      if (release === null) throw new ExecutionError('cancelled')
-      run.finalizers.push(release)
-      leaveExclusive = await this.enterExclusive(resource)
-    }
+    let releaseRunLease = null
+    let execution = null
+    // Register the lease cleanup before the first await. A cancel can race lock acquisition or
+    // module loading; the run must still wait for this node's shared resources to be released.
+    run.finalizers.push(() => nodeDone.then(() => {
+      if (releaseRunLease !== null) releaseRunLease()
+    }))
     try {
-      const outputs = await this.runProgram(run, spec, id, inputs)
+      if (spec.concurrency === 'exclusive') {
+        const resource = typeof spec.resource === 'string' && spec.resource !== ''
+          ? spec.resource
+          : spec.class_type
+        const release = await this.acquire(resource, run, nodeSignal)
+        if (release === null) throw new ExecutionError('cancelled')
+        releaseRunLease = once(release)
+        const leave = await this.enterExclusive(resource, run.id + '\u0000' + id, nodeSignal)
+        if (leave === null) throw new ExecutionError('cancelled')
+        leaveExclusive = once(leave)
+        // The next exclusive node in this run may start as soon as this one really stops, while
+        // the run keeps the cross-run resource lease until every node is finished.
+        nodeDone.then(() => leaveExclusive())
+      }
+      execution = await this.runProgram(run, spec, id, inputs, nodeAbort)
+      // Keep the lease until the program really stops. `execution.result` may reject on timeout
+      // while `execution.settled` is still waiting for a program that ignores its signal.
+      execution.settled.then(() => {
+        settleNode()
+      })
+      const outputs = await execution.result
       values.set(id, outputs)
       this.note(run, { type: 'node-done', node: id, outputs: summarize(outputs), at: Date.now() })
       return outputs
-    } finally {
-      if (leaveExclusive !== null) leaveExclusive()
+    } catch (error) {
+      // Failure before a program starts has no underlying work to wait for.
+      if (execution === null) {
+        settleNode()
+      }
+      throw error
     }
   }
 
-  /** The program call itself, once the node holds whatever it needs. */
-  async runProgram(run, spec, id, inputs) {
+  /** Start one program and return both its raced result and its real settlement. */
+  async runProgram(run, spec, id, inputs, nodeAbort) {
+    const nodeSignal = AbortSignal.any([run.abort.signal, nodeAbort.signal])
+    if (nodeSignal.aborted === true) throw new ExecutionError('cancelled')
     const program = await this.program(spec.class_type, spec)
+    if (nodeSignal.aborted === true) throw new ExecutionError('cancelled')
+    const releases = new Set()
+    let stopped = false
+    const ownRelease = (release) => {
+      const wrapped = once(release)
+      if (stopped === true) wrapped()
+      else releases.add(wrapped)
+      return wrapped
+    }
     const context = {
       nodeId: id,
       /** Where the canvas' own HTTP lives, for a program that has to call back in. */
       origin: this.origin ?? '',
       runId: run.id,
       workflow: run.workflow,
-      signal: run.abort.signal,
+      signal: nodeSignal,
       config: this.config,
       /** Scratch directory private to this run; removed when the run ends. */
       workspace: run.workspace,
       log: (message) => this.note(run, { type: 'log', node: id, message: String(message), at: Date.now() }),
       /** Exclusive use of a shared resource until this run ends (re-entrant per run). */
-      lock: (name) => this.acquire(name, run),
+      lock: async (name) => {
+        const release = await this.acquire(name, run, nodeSignal)
+        return release === null ? null : ownRelease(release)
+      },
       onRunEnd: (release) => {
-        if (typeof release === 'function') run.finalizers.push(release)
+        if (typeof release === 'function') ownRelease(release)
       },
     }
     const ceiling = typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
       ? Math.min(Math.max(Math.trunc(this.config.nodeTimeoutMs), 1), 3_600_000)
       : 0
-    const returned = await runWithTimeout(program.run(inputs, context), ceiling, id)
-    return Array.isArray(returned) === true ? returned : [returned]
+    const underlying = Promise.resolve().then(() => program.run(inputs, context))
+    const settled = underlying.then(
+      () => {
+        stopped = true
+        nodeAbort.abort()
+      },
+      () => {
+        stopped = true
+        nodeAbort.abort()
+      },
+    )
+    run.finalizers.push(() => settled.then(() => {
+      for (const release of releases) release()
+    }))
+    const result = runWithTimeout(underlying, ceiling, id, () => nodeAbort.abort())
+      .then((returned) => (Array.isArray(returned) === true ? returned : [returned]))
+    return { result, settled }
   }
 }
 
 /**
  * Run a program with a ceiling. The program itself cannot be stopped (it is plain JavaScript), so
- * the run reports the failure and lets its finalizers clean up; a stuck node no longer holds the
- * whole workflow hostage.
+ * the run reports the failure promptly. Its leases and workspace stay held until the underlying
+ * promise settles; a synchronous infinite loop still blocks the Host process.
  */
-function runWithTimeout(promise, ms, id) {
+function runWithTimeout(promise, ms, id, abort) {
   if (ms <= 0) return promise
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      if (typeof abort === 'function') abort()
       reject(new ExecutionError('node ' + id + ' timed out after ' + ms + 'ms'))
     }, ms)
     promise.then(

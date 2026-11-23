@@ -16,8 +16,11 @@ const executor = sourceOf('executor.js')
 
 /** Copy one function declaration out of a source file, verbatim. */
 function grabFunction(source, name) {
-  const head = 'function ' + name + '('
-  const start = source.indexOf(head)
+  const plain = 'function ' + name + '('
+  const asyncHead = 'async ' + plain
+  const plainAt = source.indexOf(plain)
+  const asyncAt = source.indexOf(asyncHead)
+  const start = asyncAt >= 0 && (plainAt < 0 || asyncAt < plainAt) ? asyncAt : plainAt
   if (start < 0) throw new Error('no function ' + name + ' in the source')
   const open = source.indexOf('{', start)
   let depth = 0

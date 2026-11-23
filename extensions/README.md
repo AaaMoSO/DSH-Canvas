@@ -27,7 +27,11 @@ extensions/<id>/
 ```js
 export function setup(api) {
   api.registerWorkflowFormat({ id, name, parse(raw, ctx), serialize(graph, ctx) })
-  api.registerNodeView({ type, render({ node, React, setWidget, notify, helpers }) })
+  api.registerNodeView({
+    type, width?, height?,
+    render({ node, React, setWidget, getWidget, notify, helpers }),
+    onFiles?(paths, { node, setWidget, getWidget, notify })
+  })
   api.registerNodeMenu({ label, when?(node), run(node, helpers) })
   api.registerToolbarAction({ id, title, icon?, label?, run(helpers) })
   api.registerPanel({ id, title, width?, render({ React, helpers, close, notify }) })
@@ -77,12 +81,19 @@ export function setup(api) {
 
 ## 生命周期
 
-`setup(api)` 可以返回一个清理函数（或 `{ dispose() }`）：画布卸载、拓展重载、或拓展被移除时调用它。
+`setup(api)` 可以返回一个清理函数（或 `{ dispose() }`，两者也可返回 Promise）：画布卸载、
+拓展重载、排序变化或拓展被移除时调用它。
 定时器、子进程、事件监听都应该在那里关掉——**不要把清理留给模块级变量**。
 
 `host.mjs` 的模块按文件 mtime 缓存；新版本导入前会先调用旧版本的清理函数，`settings.json` 变化同理。
 
 `api.apiVersion` 是契约版本（当前 `1`）。通过它可以判断某个能力是否可用，而不是猜。
+
+节点视图可以声明 `width` / `height` 请求更大的节点盒子。`onFiles(paths, context)` 接收一次
+文件拖放已经转换好的宿主绝对路径；它不是 React 组件，不能使用 hook。
+
+可执行节点被拖入画布时，程序源码和控件 schema 会固定在该节点上；之后 pack 更新不会把新控件
+和旧程序拼在一起。需要跟随 pack 改版的节点应重新从节点库创建。
 
 约定：
 
