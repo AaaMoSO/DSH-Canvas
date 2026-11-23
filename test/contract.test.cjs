@@ -202,11 +202,14 @@ eq('the workflow list is handed every helper it calls',
 ok('pinning checks the program before copying it', client.includes('sourceIsSelfContained(programSource)'))
 ok('...and says so when it refuses', client.includes("tr('notice.pinSkipped')"))
 ok('hydrating from a pack uses the same rule', client.includes('sourceIsSelfContained(definitionProgram)'))
-ok('the detector ignores comments and strings before looking for imports',
-  client.includes("replace(/\\/\\*[\\s\\S]*?\\*\\//g"))
+ok('the detector tokenizes instead of stripping with a few regexes',
+  client.includes('function sourceModuleSpecifiers')
+  && client.includes('sourceModuleSpecifiers(source)'))
+ok('...letting node: builtins through and rejecting the rest',
+  client.includes("specifier.startsWith('node:')"))
 
 // ---- the execution model is stated, not implied ------------------------------------------
-ok('run-start records the isolation mode', client.includes('') && executor.includes("isolation: this.usesIsolation()"))
+ok('run-start records the isolation mode', executor.includes('isolation: this.usesIsolation()'))
 ok('the host announces isolation at startup', host.includes('node programs run in isolated processes'))
 
 // ---- a pinned node has an explicit way back to its pack ------------------------------------

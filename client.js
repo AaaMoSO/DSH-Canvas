@@ -950,20 +950,182 @@ function WorkflowList(props) {
 }
 
 /**
+ * The module specifiers a program asks for. This is a small tokenizer rather than a regular
+ * expression: comments, strings, regex literals and template *text* hide the words import/require,
+ * while the expressions inside `${…}` are real code and must still be seen. Anything that
+ * cannot be read statically (a dynamic import of a variable, for example) is reported as
+ * unresolved, because a pinned copy cannot be trusted to run it.
+ */
+function sourceModuleSpecifiers(source) {
+  const text = String(source ?? '')
+  const literals = []
+  let skeleton = ''
+  let last = ''
+  let index = 0
+  const modes = ['code']
+  const braces = []
+  const expressionStarters = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}',
+    ';', '+', '-', '*', '%', '^', '~', '<', '>'])
+  const wordStarters = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'new',
+    'throw', 'else', 'do', 'yield', 'await'])
+  const push = (token) => {
+    skeleton += token
+    last = token
+  }
+  const literal = (value) => {
+    literals.push(value)
+    skeleton += '\u0001' + (literals.length - 1) + '\u0001'
+    last = '"'
+  }
+  const regexAllowed = () => expressionStarters.has(last) || wordStarters.has(last)
+
+  while (index < text.length) {
+    // Inside a template's text: only `${…}` returns to code, everything else is literal.
+    if (modes[modes.length - 1] === 'template') {
+      const char = text[index]
+      if (char === '\\') {
+        index += 2
+      } else if (char === '`') {
+        index += 1
+        modes.pop()
+        push('\u0001tpl\u0001')
+      } else if (char === '$' && text[index + 1] === '{') {
+        index += 2
+        modes.push('code')
+        braces.push(0)
+        push('(')
+      } else {
+        index += 1
+      }
+      continue
+    }
+    const char = text[index]
+    if (char === '/' && text[index + 1] === '/') {
+      index += 2
+      while (index < text.length && text[index] !== '\n') index += 1
+      continue
+    }
+    if (char === '/' && text[index + 1] === '*') {
+      index += 2
+      while (index < text.length && !(text[index] === '*' && text[index + 1] === '/')) index += 1
+      index += 2
+      continue
+    }
+    if (char === "'" || char === '"') {
+      const quote = char
+      let value = ''
+      index += 1
+      while (index < text.length) {
+        const current = text[index]
+        if (current === '\\') {
+          value += text[index + 1] ?? ''
+          index += 2
+          continue
+        }
+        if (current === quote) {
+          index += 1
+          break
+        }
+        value += current
+        index += 1
+      }
+      literal(value)
+      continue
+    }
+    if (char === '`') {
+      index += 1
+      modes.push('template')
+      continue
+    }
+    if (char === '/' && regexAllowed()) {
+      let inClass = false
+      index += 1
+      while (index < text.length) {
+        const current = text[index]
+        if (current === '\\') {
+          index += 2
+          continue
+        }
+        if (current === '[') inClass = true
+        else if (current === ']') inClass = false
+        else if (current === '/' && inClass !== true) {
+          index += 1
+          break
+        } else if (current === '\n') {
+          break
+        }
+        index += 1
+      }
+      push('\u0002')
+      continue
+    }
+    if (braces.length > 0) {
+      if (char === '{') braces[braces.length - 1] += 1
+      else if (char === '}') {
+        if (braces[braces.length - 1] === 0) {
+          braces.pop()
+          modes.pop()
+          index += 1
+          push(')')
+          continue
+        }
+        braces[braces.length - 1] -= 1
+      }
+    }
+    if (/[A-Za-z_$]/.test(char)) {
+      let word = ''
+      while (index < text.length && /[A-Za-z0-9_$]/.test(text[index])) {
+        word += text[index]
+        index += 1
+      }
+      push(word)
+      continue
+    }
+    if (/\s/.test(char)) {
+      index += 1
+      push(' ')
+      continue
+    }
+    push(char)
+    index += 1
+  }
+
+  const fromLiteral = (index) => literals[Number(index)] ?? ''
+  const hits = []
+  const patterns = [
+    /(?<![.\w$])import\s*\(\s*\u0001(\d+)\u0001\s*\)/g,
+    /(?<![.\w$])import\s*\u0001(\d+)\u0001/g,
+    /(?<![.\w$])import\s[^;\n]*?\bfrom\s*\u0001(\d+)\u0001/g,
+    /(?<![.\w$])export\s[^;\n]*?\bfrom\s*\u0001(\d+)\u0001/g,
+    /(?<![.\w$])require\s*\(\s*\u0001(\d+)\u0001\s*\)/g,
+  ]
+  for (const pattern of patterns) {
+    for (const match of skeleton.matchAll(pattern)) hits.push({ at: match.index, value: fromLiteral(match[1]) })
+  }
+  // Report them in the order the source reads, one entry per literal.
+  hits.sort((left, right) => left.at - right.at)
+  const specifiers = []
+  const seen = new Set()
+  for (const hit of hits) {
+    if (seen.has(hit.at) === true) continue
+    seen.add(hit.at)
+    specifiers.push(hit.value)
+  }
+  let unresolved = false
+  if (/(?<![.\w$])import\s*\(\s*(?!\u0001)/.test(skeleton) === true) unresolved = true
+  if (/(?<![.\w$])require\s*\(\s*(?!\u0001)/.test(skeleton) === true) unresolved = true
+  return { specifiers, unresolved }
+}
+
+/**
  * Whether a node program can be pinned into a workflow exactly as it is. A pinned program is
- * imported from a `data:` URL, which has no directory: any static import, dynamic import, re-export
- * or `require` would have nothing to resolve against, so such a program must stay a pack reference.
+ * imported from a `data:` URL, which has no directory: a relative, absolute or package specifier has
+ * nothing to resolve against. `node:` builtins resolve without a directory and are allowed.
  */
 function sourceIsSelfContained(source) {
-  const code = String(source ?? '')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ')
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-    .replace(/`(?:[^`\\]|\\.)*`/g, '``')
-  if (/(?<![.\w$])(?:import|require)\b/.test(code) === true) return false
-  if (/(?<![.\w$])export\b[^;]*\bfrom\b/.test(code) === true) return false
-  return true
+  const { specifiers, unresolved } = sourceModuleSpecifiers(source)
+  if (unresolved === true) return false
+  return specifiers.every((specifier) => specifier.startsWith('node:'))
 }
 
 /**
@@ -1234,7 +1396,7 @@ const thumbCache = new Map()
      */
     const CULL_THRESHOLD = 160
 
-function visibleGraph(graph, view, area) {
+    function visibleGraph(graph, view, area) {
       const byId = new Map(graph.nodes.map((node) => [node.id, node]))
       const width = num(area?.w, 0)
       const height = num(area?.h, 0)
@@ -1561,6 +1723,46 @@ function visibleGraph(graph, view, area) {
         ...(typeof resource === 'string' && resource !== '' ? { resource } : {}),
         preview: previewFromDef(entry.def, entry.pack) ?? undefined,
       }
+    }
+
+    /**
+     * The links a refreshed node keeps: one that points at a port the new definition no longer has
+     * cannot survive, and the count says how many were removed.
+     */
+    function linksAfterRefresh(links, nodeId, inputs, outputs) {
+      const inputIds = new Set(inputs.map((port) => port.id))
+      const outputIds = new Set(outputs.map((port) => port.id))
+      let dropped = 0
+      const kept = links.filter((link) => {
+        const fromHere = link.from[0] === nodeId
+        const toHere = link.to[0] === nodeId
+        if (fromHere !== true && toHere !== true) return true
+        if (fromHere === true && outputIds.has(link.from[1]) !== true) {
+          dropped += 1
+          return false
+        }
+        if (toHere === true && inputIds.has(link.to[1]) !== true) {
+          dropped += 1
+          return false
+        }
+        return true
+      })
+      return { links: kept, dropped }
+    }
+
+    /**
+     * Rebuild a node from its current pack definition. This is deliberately a full hydrate of a
+     * candidate that carries no pinned schema and no stored ports: ports, control schema and
+     * widget order all come from the same version of the definition. Values kept in the widget
+     * store travel by name, while geometry, id, mode and the title the user sees are preserved.
+     */
+    function refreshNodeDefinition(node, entry) {
+      const candidate = { ...node }
+      for (const key of ['program', 'pinned', 'widgetSpecs', 'widgets', 'widgetInputs',
+        'inputs', 'outputs', 'missing', 'preview']) {
+        delete candidate[key]
+      }
+      return hydrateNode(candidate, () => entry)
     }
 
     function hydrateGraph(graph, definitionOf) {
@@ -2038,6 +2240,7 @@ function visibleGraph(graph, view, area) {
       'notice.deletedOffscreen': 'Deleted {n} node(s) outside the current view.',
       'menu.refresh': 'Refresh from pack',
       'notice.refreshed': 'Refreshed “{name}” from its pack.',
+      'notice.refreshedWithLinks': 'Refreshed “{name}”; removed {n} link(s) to ports it no longer has.',
       'notice.refreshMissing': 'This node’s pack is not installed; there is nothing to refresh from.',
       'menu.properties': 'Node properties…',
       'menu.rename': 'Rename',
@@ -2251,6 +2454,7 @@ function visibleGraph(graph, view, area) {
       'notice.deletedOffscreen': '已删除 {n} 个当前视口外的节点。',
       'menu.refresh': '从节点库刷新',
       'notice.refreshed': '已从节点库刷新「{name}」。',
+      'notice.refreshedWithLinks': '已刷新「{name}」，并移除了 {n} 条指向已不存在端口的连线。',
       'notice.refreshMissing': '这个节点的节点包未安装，无法刷新。',
       'menu.properties': '设置节点属性…',
       'menu.rename': '重命名',
@@ -7419,7 +7623,8 @@ function visibleGraph(graph, view, area) {
       /**
        * Re-pin a node from its current pack definition. A pinned node keeps its own program and
        * control schema on purpose, which also means a pack fix never reaches it; this is the
-       * explicit way to take the pack's current version again.
+       * explicit way to take the pack's current version again. Ports may change with the pack, so
+       * links that point at a port the new definition no longer has are removed and counted.
        */
       function refreshNodeFromDefinition(node) {
         const entry = definitionFor(node)
@@ -7427,41 +7632,18 @@ function visibleGraph(graph, view, area) {
           showNotice(tr('notice.refreshMissing'))
           return
         }
-        const def = entry.def
-        const programSource = typeof def.program?.source === 'string' && def.program.source.trim() !== ''
-          ? def.program.source
-          : ''
-        const pinnable = programSource !== '' && sourceIsSelfContained(programSource)
-        const modelsRoot = typeof entry.pack?.modelsRoot === 'string' ? entry.pack.modelsRoot : ''
-        const specs = []
-        for (const spec of Array.isArray(def.inputs) ? def.inputs : []) {
-          if (spec.widget === true) specs.push({ ...specFromDef(spec, modelsRoot), index: specs.length })
-        }
-        const next = {
-          ...node,
-          title: def.display_name || node.title,
-        }
-        if (pinnable) {
-          next.program = { source: programSource }
-          next.pinned = true
-          next.widgetSpecs = specs
-        } else {
-          delete next.program
-          delete next.pinned
-          delete next.widgetSpecs
-        }
-        if (def.concurrency === 'exclusive' || def.concurrency === 'shared') next.concurrency = def.concurrency
-        else delete next.concurrency
-        if (typeof def.resource === 'string' && def.resource !== '') next.resource = def.resource
-        else delete next.resource
+        const next = refreshNodeDefinition(node, entry)
         const graph = graphRef.current
+        const { links, dropped } = linksAfterRefresh(graph.links, node.id, next.inputs, next.outputs)
         pushHistory()
         updateGraph({
           nodes: graph.nodes.map((item) => (item.id === node.id ? next : item)),
-          links: graph.links,
+          links,
           extra: graph.extra,
         })
-        showNotice(tr('notice.refreshed', { name: next.title }))
+        showNotice(dropped === 0
+          ? tr('notice.refreshed', { name: next.title })
+          : tr('notice.refreshedWithLinks', { name: next.title, n: dropped }))
       }
 
       function onNodeContextMenu(event, node) {

@@ -55,9 +55,11 @@ eq('a pinned node writes its execution resource', [serialized.nodes[0].concurren
   ['exclusive', 'gpu'])
 
 const specFromDef = buildFunction(client, 'specFromDef', {})
-const sourceIsSelfContained = buildFunction(client, 'sourceIsSelfContained', {})
+const sourceModuleSpecifiers = buildFunction(client, 'sourceModuleSpecifiers', {})
+const sourceIsSelfContained = buildFunction(client, 'sourceIsSelfContained', { sourceModuleSpecifiers })
 const hydrateNode = buildFunction(client, 'hydrateNode', {
   sourceIsSelfContained,
+  sourceModuleSpecifiers,
   widgetStoreOf,
   normalizeWidgetSpecs,
   specFromDef,
@@ -99,18 +101,33 @@ eq('...and the execution resource it was defined with', hydratedOld.resource, 'g
 // ---- only a self-contained program may be pinned ------------------------------------------
 const standalone = 'export async function run(inputs) { return [inputs.text] }\n'
 ok('a program with no imports can be pinned', sourceIsSelfContained(standalone) === true)
-ok('a static import stops pinning',
-  sourceIsSelfContained("import { readFile } from 'node:fs/promises'\n" + standalone) === false)
+ok('a node: builtin import can still be pinned',
+  sourceIsSelfContained("import { readFile } from 'node:fs/promises'\n" + standalone) === true)
 ok('a relative import stops pinning',
   sourceIsSelfContained("import './helper.mjs'\n" + standalone) === false)
 ok('a dynamic import stops pinning',
   sourceIsSelfContained("const mod = await import('./helper.mjs')\n" + standalone) === false)
 ok('a re-export stops pinning',
   sourceIsSelfContained("export { helper } from './helper.mjs'\n" + standalone) === false)
-ok('require stops pinning',
-  sourceIsSelfContained("const fs = require('node:fs')\n" + standalone) === false)
+ok('requiring a node: builtin is still self-contained',
+  sourceIsSelfContained("const fs = require('node:fs')\n" + standalone) === true)
+ok('requiring a package stops pinning',
+  sourceIsSelfContained("const fs = require('some-package')\n" + standalone) === false)
 ok('the word import in a string or comment does not stop pinning',
   sourceIsSelfContained("// import './x' in a comment\nconst hint = 'import(\'y\')'\n" + standalone) === true)
+ok('import.meta does not stop pinning',
+  sourceIsSelfContained('const here = import.meta.url\n' + standalone) === true)
+ok('a regex literal that mentions import does not stop pinning',
+  sourceIsSelfContained('const re = /import\\(/\n' + standalone) === true)
+ok('a template literal only mentions import in its text',
+  sourceIsSelfContained('const s = `import("./x")`\n' + standalone) === true)
+ok('an import inside a template interpolation stops pinning',
+  sourceIsSelfContained('const v = `${await import("./helper.mjs")}`\n' + standalone) === false)
+ok('a dynamic import of a variable cannot be verified',
+  sourceIsSelfContained('const m = await import(name)\n' + standalone) === false)
+eq('specifiers are reported for the caller',
+  sourceModuleSpecifiers("import a from 'node:path'\nimport './b.mjs'\nexport { c } from './c.mjs'\n").specifiers,
+  ['node:path', './b.mjs', './c.mjs'])
 
 // An old workflow whose pack program imports a helper keeps a pack reference instead of being
 // pinned into a copy that could never run.
@@ -139,5 +156,70 @@ const hydratedImporting = hydrateNode({
 eq('a program that imports is not pinned', hydratedImporting.pinned, undefined)
 eq('...and carries no program copy', hydratedImporting.program, undefined)
 eq('...while still hydrating from the pack', hydratedImporting.widgets, ['kept'])
+
+// ---- a refresh is a full re-hydration, not four patched fields ----------------------------
+const refreshNodeDefinition = buildFunction(client, 'refreshNodeDefinition', { hydrateNode })
+const linksAfterRefresh = buildFunction(client, 'linksAfterRefresh', {})
+
+const evolvingNode = {
+  id: 'n9',
+  type: 'Evolving',
+  origin: 'local:p',
+  x: 10,
+  y: 20,
+  w: 190,
+  h: 80,
+  title: 'My name',
+  mode: 0,
+  widgetStore: { alpha: 'A', beta: 'B' },
+  program: { source: 'export async function run() { return ["old"] }' },
+  pinned: true,
+  widgetSpecs: [
+    { name: 'alpha', type: 'STRING', index: 0 },
+    { name: 'beta', type: 'STRING', index: 1 },
+  ],
+  widgets: ['A', 'B'],
+  widgetInputs: ['alpha', 'beta'],
+  inputs: [
+    { id: 'i:alpha', name: 'alpha', type: 'STRING' },
+    { id: 'i:beta', name: 'beta', type: 'STRING' },
+  ],
+  outputs: [{ id: 'o:old', name: 'old', type: 'OLD' }],
+}
+
+const evolvingEntry = {
+  pack: { id: 'p', modelsRoot: '' },
+  def: {
+    type: 'Evolving',
+    program: { source: 'export async function run() { return ["new"] }' },
+    inputs: [
+      { name: 'beta', type: 'STRING', widget: true },
+      { name: 'alpha', type: 'STRING', widget: true },
+      { name: 'extra', type: 'STRING' },
+    ],
+    outputs: [{ name: 'fresh', type: 'NEW' }],
+  },
+}
+
+const refreshed = refreshNodeDefinition(evolvingNode, evolvingEntry)
+eq('a refresh takes the new ports', refreshed.inputs.map((port) => port.id), ['i:beta', 'i:alpha', 'i:extra'])
+eq('...and the new output', refreshed.outputs.map((port) => port.id), ['o:fresh'])
+eq('...rebuilds the widget order from the definition', refreshed.widgetSpecs.map((spec) => spec.name), ['beta', 'alpha'])
+eq('...keeps the saved values by name', refreshed.widgets, ['B', 'A'])
+eq('...and keeps the visible title, geometry and mode',
+  [refreshed.title, refreshed.x, refreshed.y, refreshed.w, refreshed.h, refreshed.mode],
+  ['My name', 10, 20, 190, 80, 0])
+ok('...while pinning the current program', refreshed.pinned === true
+  && refreshed.program.source.includes('"new"'))
+
+const links = [
+  { id: 'l1', from: ['n9', 'o:old'], to: ['other', 'i:x'] },
+  { id: 'l2', from: ['feed', 'o:y'], to: ['n9', 'i:alpha'] },
+  { id: 'l3', from: ['feed', 'o:z'], to: ['n9', 'i:beta'] },
+  { id: 'l4', from: ['a', 'o:1'], to: ['b', 'i:2'] },
+]
+const pruned = linksAfterRefresh(links, 'n9', refreshed.inputs, refreshed.outputs)
+eq('a link to a port the pack dropped is removed', pruned.links.map((link) => link.id), ['l2', 'l3', 'l4'])
+eq('...and it is counted', pruned.dropped, 1)
 
 report('workflow')

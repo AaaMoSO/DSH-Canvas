@@ -14,7 +14,11 @@ const client = sourceOf('client.js')
 const host = sourceOf('index.js')
 const executor = sourceOf('executor.js')
 
-/** Copy one function declaration out of a source file, verbatim. */
+/**
+ * Copy one function declaration out of a source file, verbatim. Braces inside strings, comments
+ * and template literals do not count — a program that inspects braces itself would otherwise end
+ * the extracted body at the first quoted `{`.
+ */
 function grabFunction(source, name) {
   const plain = 'function ' + name + '('
   const asyncHead = 'async ' + plain
@@ -24,10 +28,57 @@ function grabFunction(source, name) {
   if (start < 0) throw new Error('no function ' + name + ' in the source')
   const open = source.indexOf('{', start)
   let depth = 0
+  const stack = []
   for (let index = open; index < source.length; index += 1) {
-    if (source[index] === '{') depth += 1
-    else if (source[index] === '}') {
+    const char = source[index]
+    const state = stack.length === 0 ? 'code' : stack[stack.length - 1]
+    if (state === 'line') {
+      if (char === '\n') stack.pop()
+      continue
+    }
+    if (state === 'block') {
+      if (char === '*' && source[index + 1] === '/') {
+        stack.pop()
+        index += 1
+      }
+      continue
+    }
+    if (state === 'template') {
+      if (char === '\\') index += 1
+      else if (char === '`') stack.pop()
+      else if (char === '$' && source[index + 1] === '{') {
+        stack.push('code')
+        depth += 1
+        index += 1
+      }
+      continue
+    }
+    if (state === 'single' || state === 'double') {
+      if (char === '\\') index += 1
+      else if ((state === 'single' && char === "'") || (state === 'double' && char === '"')) stack.pop()
+      continue
+    }
+    // code
+    if (char === '/' && source[index + 1] === '/') {
+      stack.push('line')
+      index += 1
+      continue
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      stack.push('block')
+      index += 1
+      continue
+    }
+    if (char === "'") { stack.push('single'); continue }
+    if (char === '"') { stack.push('double'); continue }
+    if (char === '`') { stack.push('template'); continue }
+    if (char === '{') depth += 1
+    else if (char === '}') {
       depth -= 1
+      // A `}` that closes a template expression returns to the template text.
+      if (stack.length > 0 && stack[stack.length - 1] === 'code' && depth >= 0) {
+        if (stack[stack.length - 1] === 'code' && stack.length > 1) stack.pop()
+      }
       if (depth === 0) return source.slice(start, index + 1)
     }
   }
