@@ -44,6 +44,8 @@ async function main() {
   const spin = await executor.start({ spin: { class_type: 'Spin', inputs: {} } })
   const spinState = await waitFor(executor, spin, 2000)
   eq('a synchronous loop times out through process termination', spinState.status, 'error')
+  eq('the run log says which execution model ran it',
+    spinState.log.find((entry) => entry.type === 'run-start')?.isolation, 'process')
   ok('...with the timeout explanation', /timed out after 100ms/.test(String(spinState.error)))
 
   const echo = await executor.start({ echo: { class_type: 'Echo', inputs: { value: 'alive' } } })

@@ -121,6 +121,18 @@ export function apply(ctx) {
       }))
     }
   })
+  // Say once, at startup, which execution model a timeout implies. The run log carries it too, but
+  // the surprise ("why is my node in a child process?") happens before the first run.
+  void executor.loadConfig().then(() => {
+    const mode = typeof executor.config.nodeIsolation === 'string' ? executor.config.nodeIsolation : 'auto'
+    const timed = typeof executor.config.nodeTimeoutMs === 'number' && executor.config.nodeTimeoutMs > 0
+    if (mode === 'process' || (mode === 'auto' && timed)) {
+      console.log('[node-canvas] node programs run in isolated processes'
+        + (mode === 'auto' ? ' (nodeTimeoutMs > 0); set nodeIsolation to "in-process" to opt out' : ''))
+    }
+  }).catch(() => {
+    // A config that cannot be read leaves the executor at its defaults.
+  })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: PREFIX,

@@ -33,6 +33,8 @@ async function main() {
   const plainId = await unbounded.start(prompt)
   const plain = await waitFor(unbounded, plainId, 3000)
   eq('a slow node still finishes when nothing caps it', plain.status, 'done')
+  eq('an unconfigured run stays in-process and says so',
+    plain.log.find((entry) => entry.type === 'run-start')?.isolation, 'in-process')
 
   // With a ceiling it fails, names the node and the number.
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ nodeTimeoutMs: 60 }), 'utf8')

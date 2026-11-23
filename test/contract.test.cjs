@@ -205,4 +205,8 @@ ok('hydrating from a pack uses the same rule', client.includes('sourceIsSelfCont
 ok('the detector ignores comments and strings before looking for imports',
   client.includes("replace(/\\/\\*[\\s\\S]*?\\*\\//g"))
 
+// ---- the execution model is stated, not implied ------------------------------------------
+ok('run-start records the isolation mode', client.includes('') && executor.includes("isolation: this.usesIsolation()"))
+ok('the host announces isolation at startup', host.includes('node programs run in isolated processes'))
+
 report('contract')

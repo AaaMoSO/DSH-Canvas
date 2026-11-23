@@ -402,7 +402,15 @@ export class Executor {
     }
     try {
       const order = executionOrder(prompt)
-      this.note(run, { type: 'run-start', nodes: order.length, at: Date.now() })
+      // Which execution model this run uses, and how many nodes may overlap: both are answers to
+      // "why did this run behave differently than the last one" and belong in its own log.
+      this.note(run, {
+        type: 'run-start',
+        nodes: order.length,
+        isolation: this.usesIsolation() ? 'process' : 'in-process',
+        parallel: this.parallelism(),
+        at: Date.now(),
+      })
       const values = new Map()
       // What each node waits for. The order above already guarantees a node comes after its
       // dependencies in the list, which keeps the start order stable when several are ready.
