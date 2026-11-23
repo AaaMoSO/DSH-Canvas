@@ -94,7 +94,7 @@ for (const name of ['node', 'React', 'helpers', 'setWidget', 'getWidget', 'notif
 }
 
 // ---- what a node program is handed ----------------------------------------------------------
-const programContext = executor.slice(executor.indexOf('const context = {'), executor.indexOf('const ceiling ='))
+const programContext = executor.slice(executor.indexOf('const context = {'), executor.indexOf('const underlying ='))
 for (const name of ['nodeId', 'origin', 'runId', 'workflow', 'signal', 'config', 'workspace', 'log', 'lock']) {
   ok('a node program is handed ' + name, programContext.includes(name + ':'))
 }

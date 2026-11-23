@@ -1184,6 +1184,44 @@ const thumbCache = new Map()
       return { minX, minY, maxX, maxY }
     }
 
+    /**
+     * The part of a large graph worth putting in the DOM. One viewport of overscan keeps normal
+     * panning and zooming from popping nodes in at the edge; links whose own bounds cross the
+     * region stay even when both endpoint nodes are outside it.
+     */
+    function visibleGraph(graph, view, area) {
+      const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+      const width = num(area?.w, 0)
+      const height = num(area?.h, 0)
+      const zoom = clamp(num(view?.k, 1), ZOOM_MIN, ZOOM_MAX)
+      if (width <= 0 || height <= 0 || graph.nodes.length < 160) {
+        return { nodes: graph.nodes, links: graph.links, byId }
+      }
+      const viewWidth = width / zoom
+      const viewHeight = height / zoom
+      const left = -num(view?.x, 0) / zoom - viewWidth
+      const top = -num(view?.y, 0) / zoom - viewHeight
+      const right = (-num(view?.x, 0) + width) / zoom + viewWidth
+      const bottom = (-num(view?.y, 0) + height) / zoom + viewHeight
+      const nodes = graph.nodes.filter((node) => node.x + node.w >= left
+        && node.x <= right
+        && node.y + nodeHeight(node) >= top
+        && node.y <= bottom)
+      const visibleIds = new Set(nodes.map((node) => node.id))
+      const links = graph.links.filter((link) => {
+        if (visibleIds.has(link.from[0]) || visibleIds.has(link.to[0])) return true
+        const from = byId.get(link.from[0])
+        const to = byId.get(link.to[0])
+        if (from === undefined || to === undefined) return false
+        const minX = Math.min(from.x, to.x)
+        const minY = Math.min(from.y, to.y)
+        const maxX = Math.max(from.x + from.w, to.x + to.w)
+        const maxY = Math.max(from.y + nodeHeight(from), to.y + nodeHeight(to))
+        return maxX >= left && minX <= right && maxY >= top && minY <= bottom
+      })
+      return { nodes, links, byId }
+    }
+
     // The last `/packs` payload: a workflow is hydrated from the installed packs, not from its
     // own file. A graph loaded before the packs arrive is re-hydrated as soon as they do.
     let packsCache = []
@@ -9289,8 +9327,9 @@ const thumbCache = new Map()
         }, children))
       }
 
-      const byId = new Map(graph.nodes.map((node) => [node.id, node]))
       const nodeCount = graph.nodes.length
+      const visible = visibleGraph(graph, view, shellSize())
+      const byId = visible.byId
       // Derived from the door's slide state; everything below the toolbar reads these, so they
       // are computed first.
       const animating = slide !== null && slide.animate === true
@@ -9460,7 +9499,7 @@ const thumbCache = new Map()
         key: 'links',
         style: S.linksSvg,
         'aria-hidden': true,
-      }, h('g', { transform: canvasTransform }, graph.links.map((link) => renderLink(link, byId))))
+      }, h('g', { transform: canvasTransform }, visible.links.map((link) => renderLink(link, byId))))
 
       // The phantom lives in graph space, so it lands exactly where the node will: same size,
       // same zoom, same position on screen.
@@ -9475,7 +9514,7 @@ const thumbCache = new Map()
       const nodesLayer = h('div', {
         key: 'nodes',
         style: { ...S.nodesLayer, transform: 'translate(' + view.x + 'px, ' + view.y + 'px) scale(' + view.k + ')' },
-      }, [...graph.nodes.map((node) => renderNode(node)), dragPhantom])
+      }, [...visible.nodes.map((node) => renderNode(node)), dragPhantom])
 
       const overlaySvg = h('svg', {
         key: 'overlay',

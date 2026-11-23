@@ -109,9 +109,14 @@ export async function run(inputs, ctx) {
   independent branches): independent branches of a workflow run together, while a node marked
   `"concurrency": "exclusive"` still runs alone — across runs and within one;
 - `config.json` may set `nodeTimeoutMs`: a node that runs longer fails its run with the node and
-  the budget named; 0 or absent keeps it unlimited. JavaScript cannot be pre-empted in-process,
-  so an exclusive resource stays held until the underlying program actually stops. Synchronous
-  infinite loops still require restarting the Host.
+  the budget named; 0 or absent keeps it unlimited. With a timeout, node programs run in an isolated
+  child process and are actually terminated, including a synchronous infinite loop.
+- `nodeIsolation` is `auto` by default: process isolation is used when `nodeTimeoutMs` is positive
+  and the in-process compatibility path is used otherwise. Set `process` to always isolate, or
+  `in-process` to keep direct object references at the cost of cooperative cancellation. Isolated
+  process inputs and outputs must be structured-cloneable.
+- `nodeStartupTimeoutMs` caps isolated module loading before `run()` starts; its default is 1000 ms
+  when a node timeout exists and 5000 ms when isolation is forced without one.
 - a node whose program is missing still draws, and only fails when it runs.
 
 Extensions can contribute packs too — see [extensions/README.md](extensions/README.md).
@@ -122,6 +127,7 @@ Extensions can contribute packs too — see [extensions/README.md](extensions/RE
 client.js      canvas UI (single bundle, no JSX)
 index.js       host: packs, workflows, output files, extension routes
 executor.js    generic executor: graph → programs, locks, per-run workspace
+node-process.js isolated program host for hard timeout/cancellation
 packs/         node packs you install (not tracked: the folder is yours)
 extensions/    capability packages (a ComfyUI format adapter + backend, a hover card)
 workflows/     saved workflows (v4: types, values, origins, pinned programs/schemas, home)
@@ -161,6 +167,10 @@ window bounds.
   the host sidebar away, or bring the sidebar back and only then shrink the sheet into the room it
   actually leaves. The second step waits for the sidebar's animation to settle, so the distance the
   sheet travels is always the one that exists at that moment.
+
+- **Large graphs render their visible neighborhood.** Above 160 nodes the DOM keeps one viewport of
+  overscan around the current view; links crossing that region remain mounted. The minimap still
+  reads the whole graph.
 
 ## License
 

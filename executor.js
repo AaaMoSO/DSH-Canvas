@@ -23,9 +23,12 @@
  */
 
 import { readdir, readFile, stat, mkdir, rm } from 'node:fs/promises'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
+import { fork } from 'node:child_process'
+
+const ISOLATED_ENTRY = fileURLToPath(new URL('./node-process.js', import.meta.url))
 
 /** ComfyUI's link form: `[sourceNodeId, sourceSlotIndex]`. */
 export function isLink(value) {
@@ -205,12 +208,11 @@ export class Executor {
       .sort((left, right) => left.type.localeCompare(right.type))
   }
 
-  async program(type, spec) {
-    // A node that carries its own program source never touches the registry: this is what makes
-    // a saved graph independent of the pack it was created from.
+  /** Resolve what to run without importing it into the Host process. */
+  async programEntry(type, spec) {
     const inline = spec?.program
     if (inline !== undefined && typeof inline.source === 'string' && inline.source.trim() !== '') {
-      return this.inlineProgram(inline.source)
+      return { source: inline.source, file: null, pack: null }
     }
     if (typeof type !== 'string') throw new ExecutionError('no node program for ' + String(type))
     const pack = typeof spec?.pack === 'string' && spec.pack !== '' ? spec.pack : null
@@ -226,6 +228,14 @@ export class Executor {
       entry = find()
     }
     if (entry === undefined) throw new ExecutionError('no node program for ' + String(type))
+    return entry
+  }
+
+  async program(type, spec) {
+    // A node that carries its own program source never touches the registry: this is what makes
+    // a saved graph independent of the pack it was created from.
+    const entry = await this.programEntry(type, spec)
+    if (entry.source !== null && entry.source !== undefined) return this.inlineProgram(entry.source)
     if (entry.module !== undefined) return entry.module
     const module = await import(pathToFileURL(entry.file).href + '?v=' + entry.version)
     if (typeof module.run !== 'function') {
@@ -372,6 +382,13 @@ export class Executor {
     const raw = this.config.maxParallel
     if (typeof raw !== 'number' || Number.isFinite(raw) !== true || raw < 1) return 1
     return Math.min(Math.trunc(raw), 16)
+  }
+
+  /** Process isolation is automatic when a timeout is configured; programs may override it. */
+  usesIsolation() {
+    if (this.config.nodeIsolation === 'in-process') return false
+    if (this.config.nodeIsolation === 'process') return true
+    return typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
   }
 
   async execute(run, prompt) {
@@ -571,8 +588,36 @@ export class Executor {
   async runProgram(run, spec, id, inputs, nodeAbort) {
     const nodeSignal = AbortSignal.any([run.abort.signal, nodeAbort.signal])
     if (nodeSignal.aborted === true) throw new ExecutionError('cancelled')
-    const program = await this.program(spec.class_type, spec)
+    const isolated = this.usesIsolation()
+    const program = isolated
+      ? await this.programEntry(spec.class_type, spec)
+      : await this.program(spec.class_type, spec)
     if (nodeSignal.aborted === true) throw new ExecutionError('cancelled')
+    const ceiling = typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
+      ? Math.min(Math.max(Math.trunc(this.config.nodeTimeoutMs), 1), 3_600_000)
+      : 0
+    if (isolated) {
+      const launch = this.startIsolatedProgram(program, inputs, run, id, nodeSignal)
+      const startupTimeout = typeof this.config.nodeStartupTimeoutMs === 'number'
+        && this.config.nodeStartupTimeoutMs > 0
+        ? Math.min(Math.max(Math.trunc(this.config.nodeStartupTimeoutMs), 1), 60_000)
+        : (ceiling > 0 ? Math.max(ceiling, 1000) : 5000)
+      try {
+        await runWithTimeout(launch.ready, startupTimeout, id, () => {
+          nodeAbort.abort()
+          launch.terminate()
+        })
+      } catch (error) {
+        launch.terminate()
+        throw error
+      }
+      run.finalizers.push(() => launch.settled.then(() => launch.releaseAll()))
+      const result = runWithTimeout(launch.result, ceiling, id, () => {
+        nodeAbort.abort()
+        launch.terminate()
+      }).then((returned) => (Array.isArray(returned) === true ? returned : [returned]))
+      return { result, settled: launch.settled }
+    }
     const releases = new Set()
     let stopped = false
     const ownRelease = (release) => {
@@ -601,9 +646,6 @@ export class Executor {
         if (typeof release === 'function') ownRelease(release)
       },
     }
-    const ceiling = typeof this.config.nodeTimeoutMs === 'number' && this.config.nodeTimeoutMs > 0
-      ? Math.min(Math.max(Math.trunc(this.config.nodeTimeoutMs), 1), 3_600_000)
-      : 0
     const underlying = Promise.resolve().then(() => program.run(inputs, context))
     const settled = underlying.then(
       () => {
@@ -622,12 +664,202 @@ export class Executor {
       .then((returned) => (Array.isArray(returned) === true ? returned : [returned]))
     return { result, settled }
   }
+
+  /**
+   * Run one program in a child process. The module is loaded there, so a synchronous loop at module
+   * evaluation time or inside `run()` cannot block the Host; timeout or cancellation kills it.
+   */
+  startIsolatedProgram(program, inputs, run, id, nodeSignal) {
+    if (nodeSignal.aborted === true) throw new ExecutionError('cancelled')
+    let child
+    try {
+      child = fork(ISOLATED_ENTRY, [], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        execArgv: [],
+        serialization: 'advanced',
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      })
+      child.stdout.setEncoding('utf8')
+      child.stderr.setEncoding('utf8')
+      child.stdout.on('data', (message) => {
+        this.note(run, { type: 'log', node: id, message: String(message).trimEnd(), at: Date.now() })
+      })
+      child.stderr.on('data', (message) => {
+        this.note(run, {
+          type: 'log', node: id, message: 'stderr: ' + String(message).trimEnd(), at: Date.now(),
+        })
+      })
+    } catch (error) {
+      throw new ExecutionError('isolated process could not start: '
+        + (error instanceof Error ? error.message : String(error)))
+    }
+    const locks = new Map()
+    let lockSeed = 0
+    let readyDone = false
+    let resultDone = false
+    let resolveReady
+    let rejectReady
+    let resolveResult
+    let rejectResult
+    let resolveSettled
+    const ready = new Promise((resolve, reject) => {
+      resolveReady = resolve
+      rejectReady = reject
+    })
+    const result = new Promise((resolve, reject) => {
+      resolveResult = resolve
+      rejectResult = reject
+    })
+    void result.catch(() => {})
+    const settled = new Promise((resolve) => {
+      resolveSettled = resolve
+    })
+    const releaseAll = () => {
+      for (const release of locks.values()) release()
+      locks.clear()
+    }
+    const fail = (error) => {
+      const value = error instanceof Error ? error : new Error(String(error))
+      if (readyDone !== true) {
+        readyDone = true
+        rejectReady(value)
+      }
+      if (resultDone !== true) {
+        resultDone = true
+        rejectResult(value)
+      }
+    }
+    const terminate = () => {
+      if (child === undefined || child.exitCode !== null) return
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        // The exit path resolves the settlement below.
+      }
+      const force = setTimeout(() => {
+        if (child.exitCode === null) {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // Already gone.
+          }
+        }
+      }, 250)
+      force.unref()
+    }
+    const send = (message) => {
+      try {
+        if (child.connected) {
+          child.send(message, (error) => {
+            if (error) {
+              fail(error)
+              terminate()
+            }
+          })
+        }
+      } catch (error) {
+        fail(error)
+        terminate()
+      }
+    }
+    const abort = () => {
+      terminate()
+      fail(new ExecutionError('cancelled'))
+    }
+    nodeSignal.addEventListener('abort', abort, { once: true })
+    if (nodeSignal.aborted === true) abort()
+    child.on('message', (message) => {
+      if (message === null || typeof message !== 'object') return
+      if (message.type === 'ready') {
+        if (readyDone === true) return
+        readyDone = true
+        send({ type: 'start' })
+        resolveReady()
+        return
+      }
+      if (message.type === 'log') {
+        this.note(run, {
+          type: 'log', node: id, message: String(message.message ?? ''), at: Date.now(),
+        })
+        return
+      }
+      if (message.type === 'rpc' && message.method === 'lock') {
+        void (async () => {
+          try {
+            const release = await this.acquire(String(message.payload?.name ?? ''), run, nodeSignal)
+            if (release === null) {
+              send({ type: 'rpc-result', id: message.id, ok: true, result: null })
+              return
+            }
+            const token = String(++lockSeed)
+            locks.set(token, once(release))
+            send({ type: 'rpc-result', id: message.id, ok: true, result: token })
+          } catch (error) {
+            send({
+              type: 'rpc-result',
+              id: message.id,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        })()
+        return
+      }
+      if (message.type === 'release') {
+        const token = String(message.token ?? '')
+        const release = locks.get(token)
+        if (release !== undefined) {
+          locks.delete(token)
+          release()
+        }
+        return
+      }
+      if (message.type === 'done') {
+        if (resultDone === true) return
+        resultDone = true
+        resolveResult(message.returned)
+        terminate()
+        return
+      }
+      if (message.type === 'failure') {
+        const error = new ExecutionError(String(message.message ?? 'isolated process failed'))
+        if (typeof message.stack === 'string' && message.stack !== '') error.stack = message.stack
+        fail(error)
+        terminate()
+      }
+    })
+    child.on('error', (error) => {
+      fail(error)
+      terminate()
+    })
+    child.on('exit', () => {
+      nodeSignal.removeEventListener('abort', abort)
+      resolveSettled()
+      if (resultDone !== true) fail(new ExecutionError('isolated process exited before producing outputs'))
+    })
+    send({
+      type: 'init',
+      data: {
+        file: typeof program.file === 'string' ? program.file : null,
+        source: typeof program.source === 'string' ? program.source : null,
+        version: Date.now(),
+        nodeId: id,
+        origin: this.origin ?? '',
+        runId: run.id,
+        workflow: run.workflow,
+        config: this.config,
+        workspace: run.workspace,
+        inputs,
+      },
+    })
+    return { ready, result, settled, terminate, releaseAll }
+  }
 }
 
 /**
- * Run a program with a ceiling. The program itself cannot be stopped (it is plain JavaScript), so
- * the run reports the failure promptly. Its leases and workspace stay held until the underlying
- * promise settles; a synchronous infinite loop still blocks the Host process.
+ * Run a program with a ceiling. Isolated programs are killed through their child process; an
+ * explicitly in-process program remains cooperative and cannot be pre-empted. Leases and the
+ * workspace stay held until the underlying promise settles in either mode.
  */
 function runWithTimeout(promise, ms, id, abort) {
   if (ms <= 0) return promise

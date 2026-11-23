@@ -24,16 +24,19 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-resource-'))
   const nodes = path.join(root, 'packs', 'demo', 'nodes')
   fs.mkdirSync(nodes, { recursive: true })
-  fs.writeFileSync(path.join(nodes, 'Slow.mjs'), `import { appendFile } from 'node:fs/promises'
+  fs.writeFileSync(path.join(nodes, 'Slow.mjs'), `import { appendFileSync } from 'node:fs'
 export async function run(inputs) {
-  await appendFile(inputs.log, inputs.tag + ':start:' + Date.now() + String.fromCharCode(10))
+  appendFileSync(inputs.log, inputs.tag + ':start:' + Date.now() + String.fromCharCode(10))
+  const timer = setInterval(() => appendFileSync(inputs.log,
+    inputs.tag + ':beat:' + Date.now() + String.fromCharCode(10)), 10)
   await new Promise((resolve) => setTimeout(resolve, Number(inputs.ms)))
-  await appendFile(inputs.log, inputs.tag + ':end:' + Date.now() + String.fromCharCode(10))
+  clearInterval(timer)
+  appendFileSync(inputs.log, inputs.tag + ':end:' + Date.now() + String.fromCharCode(10))
   return [inputs.tag]
 }
 `, 'utf8')
   fs.writeFileSync(path.join(root, 'config.json'),
-    JSON.stringify({ maxParallel: 2, nodeTimeoutMs: 60 }), 'utf8')
+    JSON.stringify({ maxParallel: 2, nodeTimeoutMs: 60, nodeIsolation: 'process' }), 'utf8')
 
   const executor = new Executor({ rootDir: root, extraDirs: async () => [] })
   const log = path.join(root, 'events.txt')
@@ -57,21 +60,26 @@ export async function run(inputs) {
     const [tag, phase, at] = line.split(':')
     return { tag, phase, at: Number(at) }
   })
-  const firstEnd = events.find((entry) => entry.tag === 'first' && entry.phase === 'end')
+  const firstBeat = events.filter((entry) => entry.tag === 'first' && entry.phase === 'beat').at(-1)
   const secondStart = events.find((entry) => entry.tag === 'second' && entry.phase === 'start')
-  ok('the second exclusive program never overlaps the timed-out one',
-    firstEnd !== undefined && secondStart !== undefined && secondStart.at >= firstEnd.at)
+  ok('the timed-out process stops before the next exclusive program starts',
+    firstBeat !== undefined && secondStart !== undefined && firstBeat.at < secondStart.at)
 
   // Cancellation has the same rule even without a timeout: the UI may report cancelled promptly,
   // but the next exclusive program waits for the old program to stop.
   fs.writeFileSync(path.join(root, 'config.json'),
-    JSON.stringify({ maxParallel: 2, nodeTimeoutMs: 1000 }), 'utf8')
+    JSON.stringify({ maxParallel: 2, nodeTimeoutMs: 1000, nodeIsolation: 'process' }), 'utf8')
   const cancellable = new Executor({ rootDir: root, extraDirs: async () => [] })
   const cancelLog = path.join(root, 'cancel-events.txt')
   const cancelledRun = await cancellable.start({
     first: exclusive('cancel-first', 360, cancelLog),
   })
-  await new Promise((resolve) => setTimeout(resolve, 50))
+  const waitStarted = Date.now()
+  while (Date.now() - waitStarted < 1500
+    && (!fs.existsSync(cancelLog) || !fs.readFileSync(cancelLog, 'utf8').includes('cancel-first:start:'))) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  await new Promise((resolve) => setTimeout(resolve, 40))
   await cancellable.cancel(cancelledRun)
   const cancelledState = await waitFor(cancellable, cancelledRun, 1000)
   eq('cancelling reports the run at once', cancelledState.status, 'cancelled')
@@ -85,10 +93,11 @@ export async function run(inputs) {
     const [tag, phase, at] = line.split(':')
     return { tag, phase, at: Number(at) }
   })
-  const cancelledEnd = cancelEvents.find((entry) => entry.tag === 'cancel-first' && entry.phase === 'end')
+  const cancelledBeat = cancelEvents.filter((entry) => entry.tag === 'cancel-first' && entry.phase === 'beat').at(-1)
   const nextStart = cancelEvents.find((entry) => entry.tag === 'cancel-second' && entry.phase === 'start')
-  ok('the cancelled program and the next exclusive program do not overlap',
-    cancelledEnd !== undefined && nextStart !== undefined && nextStart.at >= cancelledEnd.at)
+  ok('the cancelled process stops before the next exclusive program starts ('
+    + String(cancelledBeat?.at) + ' / ' + String(nextStart?.at) + ')',
+  cancelledBeat !== undefined && nextStart !== undefined && cancelledBeat.at < nextStart.at)
 
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   report('resource-safety')
