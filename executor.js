@@ -783,6 +783,13 @@ export class Executor {
         })
         return
       }
+      if (message.type === 'warn') {
+        // A contract the isolated boundary cannot honour; the run log is where it can be seen.
+        this.note(run, {
+          type: 'log', node: id, message: 'warning: ' + String(message.message ?? ''), at: Date.now(),
+        })
+        return
+      }
       if (message.type === 'rpc' && message.method === 'lock') {
         void (async () => {
           try {

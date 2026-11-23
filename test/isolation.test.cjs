@@ -34,6 +34,9 @@ async function main() {
     'utf8')
   fs.writeFileSync(path.join(nodes, 'NonClone.mjs'),
     'export async function run() { return [() => {}] }\n', 'utf8')
+  // A cleanup closure is not a lock handle: the isolated process cannot keep it.
+  fs.writeFileSync(path.join(nodes, 'Cleanup.mjs'),
+    'export async function run(inputs, ctx) { ctx.onRunEnd(() => {}); return ["ok"] }\n', 'utf8')
   fs.writeFileSync(path.join(root, 'config.json'),
     JSON.stringify({ nodeTimeoutMs: 100, nodeIsolation: 'process' }), 'utf8')
 
@@ -63,6 +66,16 @@ async function main() {
   const lockedB = await executor.start({ lock: { class_type: 'Locked', inputs: {} } })
   const lockedBState = await waitFor(executor, lockedB, 2000)
   eq('the lock is released when the isolated run ends', lockedBState.status, 'done')
+
+  // A lock handle is the one run-end cleanup the boundary honours; it must not warn.
+  ok('a lock handle passed to onRunEnd is not reported as a lost cleanup',
+    lockedAState.log.every((entry) => !/onRunEnd only accepts/.test(String(entry.message ?? ''))))
+
+  const cleanup = await executor.start({ cleanup: { class_type: 'Cleanup', inputs: {} } })
+  const cleanupState = await waitFor(executor, cleanup, 2000)
+  eq('a plain cleanup is still accepted at runtime', cleanupState.status, 'done')
+  ok('...and the run log says it was not kept',
+    cleanupState.log.some((entry) => /warning: ctx\.onRunEnd only accepts/.test(String(entry.message ?? ''))))
 
   const nonClone = await executor.start({ bad: { class_type: 'NonClone', inputs: {} } })
   const nonCloneState = await waitFor(executor, nonClone, 2000)

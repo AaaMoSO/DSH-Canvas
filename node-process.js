@@ -8,6 +8,9 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { pathToFileURL } from 'node:url'
 
+/** Marks the release a lock() call returns, so onRunEnd can recognise it. */
+const RUN_RESOURCE = Symbol('node-canvas.run-resource')
+
 const controller = new AbortController()
 const pending = new Map()
 let requestId = 0
@@ -92,11 +95,24 @@ async function execute() {
       lock: async (name) => {
         const token = await request('lock', { name: String(name) })
         if (token === null) return null
-        return () => send({ type: 'release', token })
+        const release = () => send({ type: 'release', token })
+        // Tagged so onRunEnd can tell a lock handle from an arbitrary cleanup closure.
+        release[RUN_RESOURCE] = token
+        return release
       },
-      // Every lock from this process is retained by the Host until the run ends. Programs may keep
-      // calling this for source compatibility; the Host has already made the promise true.
-      onRunEnd: () => {},
+      /**
+       * The only run-end cleanup an isolated process can honour is a lock: the Host already keeps
+       * that lease until the run ends, so there is nothing left to do here. Any other function
+       * cannot cross the process boundary; say so in the run log instead of dropping it silently.
+       */
+      onRunEnd: (release) => {
+        if (release === null || typeof release !== 'function' || release[RUN_RESOURCE] === undefined) {
+          send({
+            type: 'warn',
+            message: 'ctx.onRunEnd only accepts the function returned by ctx.lock() when the node runs in an isolated process; this cleanup was not kept',
+          })
+        }
+      },
     }
     if (controller.signal.aborted) throw new Error('cancelled')
     const returned = await data.run(data.inputs, context)
