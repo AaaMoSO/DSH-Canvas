@@ -526,6 +526,11 @@ async function handle(req, res) {
  * effect on the next request.
  */
 export async function loadExtensionHost(extension) {
+  // Captured before the first await. Reading the file version yields at least once, and a settings
+  // save, a removal or a plugin unload that lands in that window must still be able to invalidate
+  // this load; capturing afterwards would adopt the bumped generation and resurrect the extension.
+  const generation = extensionGeneration(extension.id)
+  const stale = () => extensionGeneration(extension.id) !== generation
   const file = path.join(extension.path, 'host.mjs')
   let version = 0
   try {
@@ -543,14 +548,14 @@ export async function loadExtensionHost(extension) {
   const loading = extensionHostLoads.get(extension.id)
   if (loading !== undefined) {
     try {
-      return await loading
+      const shared = await loading
+      return stale() === true ? null : shared
     } catch {
       // Retry below so a request after a failed load can heal without a Host restart.
     }
   }
   const operation = (async () => {
-    const generation = extensionGeneration(extension.id)
-    const stale = () => extensionGeneration(extension.id) !== generation
+    if (stale() === true) return null
     const cached = extensionHosts.get(extension.id)
     if (cached !== undefined && cached.version === version) return cached
     // A stale module is disposed before the new one is imported; otherwise its timers, child

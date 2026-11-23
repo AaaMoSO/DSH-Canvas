@@ -25,6 +25,22 @@ export function setup(api) {
 
   const extension = { id: 'slow', name: 'Slow', path: dir }
 
+﻿  // An external disposal can land while the loader is still reading the file version — the only
+  // await before the load operation is registered. The load must notice and discard itself.
+  const raceDir = path.join(root, 'race')
+  fs.mkdirSync(raceDir, { recursive: true })
+  fs.writeFileSync(path.join(raceDir, 'host.mjs'), 'export function setup() { return () => {} }\n', 'utf8')
+  const raceExtension = { id: 'race', name: 'Race', path: raceDir }
+  const racing = host.loadExtensionHost(raceExtension)
+  await host.disposeExtensionHost('race')
+  const raced = await racing
+  eq('an external dispose during the file read discards the load', raced, null)
+  ok('...and nothing is cached', host.hostExtensionIds().includes('race') === false)
+  const recovered = await host.loadExtensionHost(raceExtension)
+  ok('...while a later load still works', recovered !== null)
+  await host.disposeExtensionHost('race')
+
+
   // Dispose while the module is still importing.
   const pending = host.loadExtensionHost(extension)
   await new Promise((resolve) => setTimeout(resolve, 20))
