@@ -64,6 +64,12 @@ const extensionHostLoads = new Map()
 // its module into the cache. Every such action bumps a generation; a load compares what it read
 // when it started with the generation at the moment it would publish.
 const extensionHostGenerations = new Map()
+// A load registers itself here synchronously, before reading file versions, so the plugin unload
+// path can invalidate it even when it has not produced a promise yet. Counted, not a Set: two
+// concurrent callers may be in this window for the same extension.
+const pendingLoadCounts = new Map()
+// Set once the plugin is unloading: a load starting after that point has no owner to finish for.
+let pluginClosing = false
 
 function extensionGeneration(id) {
   return extensionHostGenerations.get(id) ?? 0
@@ -73,9 +79,9 @@ function bumpExtensionGeneration(id) {
   extensionHostGenerations.set(id, extensionGeneration(id) + 1)
 }
 
-/** Ids currently cached or loading; the unload path must invalidate every one of them. */
+/** Ids cached, loading, or seen by a loader that is still reading file versions. */
 export function hostExtensionIds() {
-  return [...new Set([...extensionHosts.keys(), ...extensionHostLoads.keys()])]
+  return [...new Set([...extensionHosts.keys(), ...extensionHostLoads.keys(), ...pendingLoadCounts.keys()])]
 }
 
 // A cleanup that never settles must not stall a settings save, an extension removal or the whole
@@ -112,7 +118,6 @@ async function withDeadline(work, ms, label) {
   return result
 }
 
-/** Drop one extension's host module, giving it the chance to clean up first. */
 /**
  * Drop one extension's host module, giving it the chance to clean up first. An external caller
  * (settings save, removal, plugin unload) must also invalidate loads in flight; the version
@@ -126,6 +131,16 @@ export async function disposeExtensionHost(id, options) {
   extensionHosts.delete(id)
   if (cached === undefined || typeof cached.dispose !== 'function') return
   await withDeadline(() => cached.dispose(), CLEANUP_DEADLINE_MS, 'dispose of extension ' + id)
+}
+
+/**
+ * What a caller gets from a finished load: the entry, unless the extension was invalidated while
+ * the caller was waiting. The owner and every sharer use the same rule, so a dispose that lands
+ * after the cache write but before a caller resumes can never hand out a disposed entry.
+ */
+export async function settleLoad(operation, stale) {
+  const loaded = await operation
+  return stale() === true ? null : loaded
 }
 
 /** Wait for a module load already in flight before removing or replacing its registration. */
@@ -152,6 +167,7 @@ export class HttpError extends Error {
 let pluginCtx = null
 
 export function apply(ctx) {
+  pluginClosing = false
   pluginCtx = ctx
   // Node programs get the canvas' own origin. The desktop Host binds a random port, so a program
   // that guessed one would be wrong.
@@ -165,6 +181,8 @@ export function apply(ctx) {
       executor.cancelAll()
       executor.origin = ''
       if (pluginCtx === ctx) pluginCtx = null
+      // Closing is set before the snapshot: a load that starts from now on has no one to finish for.
+      pluginClosing = true
       const ids = hostExtensionIds()
       for (const id of ids) bumpExtensionGeneration(id)
       await Promise.allSettled(ids.map(async (id) => {
@@ -526,11 +544,13 @@ async function handle(req, res) {
  * effect on the next request.
  */
 export async function loadExtensionHost(extension) {
+  if (pluginClosing === true) return null
   // Captured before the first await. Reading the file version yields at least once, and a settings
   // save, a removal or a plugin unload that lands in that window must still be able to invalidate
   // this load; capturing afterwards would adopt the bumped generation and resurrect the extension.
   const generation = extensionGeneration(extension.id)
   const stale = () => extensionGeneration(extension.id) !== generation
+  pendingLoadCounts.set(extension.id, (pendingLoadCounts.get(extension.id) ?? 0) + 1)
   const file = path.join(extension.path, 'host.mjs')
   let version = 0
   try {
@@ -548,8 +568,7 @@ export async function loadExtensionHost(extension) {
   const loading = extensionHostLoads.get(extension.id)
   if (loading !== undefined) {
     try {
-      const shared = await loading
-      return stale() === true ? null : shared
+      return await settleLoad(loading, stale)
     } catch {
       // Retry below so a request after a failed load can heal without a Host restart.
     }
@@ -611,9 +630,12 @@ export async function loadExtensionHost(extension) {
   })()
   extensionHostLoads.set(extension.id, operation)
   try {
-    return await operation
+    return await settleLoad(operation, stale)
   } finally {
     if (extensionHostLoads.get(extension.id) === operation) extensionHostLoads.delete(extension.id)
+    const remaining = (pendingLoadCounts.get(extension.id) ?? 1) - 1
+    if (remaining > 0) pendingLoadCounts.set(extension.id, remaining)
+    else pendingLoadCounts.delete(extension.id)
   }
 }
 

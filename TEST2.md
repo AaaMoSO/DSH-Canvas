@@ -62,9 +62,20 @@
 - 行为测试覆盖这个窗口：调用加载后立即（同步）从外部 dispose，断言加载返回 `null`、不进入缓存，
   且之后仍可正常加载。
 
+## 第六轮（插件卸载窗口）
+
+- 加载在**第一个 await 之前**同步登记到 `pendingLoadCounts`，`hostExtensionIds()` 把它算进来：
+  插件卸载即使发生在读取文件版本的两次 `stat` 期间，也能让这次加载作废。
+- 插件卸载先置 `pluginClosing`：卸载开始之后才发起的加载直接返回 `null`，不会在已经卸载的
+  插件里创建定时器或子进程；重新 `apply` 时复位。
+- 拥有者路径与共享路径统一走 `settleLoad(operation, stale)`：即使 dispose 落在缓存写入之后、
+  调用方恢复之前，调用方也不会拿到已经销毁的 entry。
+- 新增 `host-unload` 测试：用真实 `apply(ctx)` 的生命周期 disposer 覆盖 stat 窗口、卸载后的加载
+  拒绝，以及 `settleLoad` 的两种结果。
+
 ## 验证
 
-`npm test`（或 `node test/run.cjs`）：**14 个文件、257 项检查**，全部通过。
+`npm test`（或 `node test/run.cjs`）：**15 个文件、263 项检查**，全部通过。
 
 - 命名 pack 缺失必须报错；固定程序在 pack 消失后仍能生成 prompt；固定节点保存并恢复控件 schema、
   值、并发属性与资源名。
