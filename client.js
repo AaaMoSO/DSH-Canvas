@@ -1579,6 +1579,9 @@ const thumbCache = new Map()
       return {
         name: spec.name,
         type: spec.type,
+        // The definition's initial value: hydrateNode starts a new control from it. Dropping it
+        // here left every new node's widget empty, even though the pack declared a default.
+        ...(spec.default === undefined ? {} : { default: spec.default }),
         ...(Array.isArray(spec.options) ? { options: spec.options.slice() } : {}),
         ...(typeof spec.step === 'number' ? { step: spec.step } : {}),
         ...(typeof spec.min === 'number' ? { min: spec.min } : {}),
@@ -1651,6 +1654,26 @@ const thumbCache = new Map()
      * Fill one node from its pack definition. Widget values are matched by name, so a pack that
      * adds, removes or reorders widgets never silently shifts a stored value onto another control.
      */
+    /**
+     * The control values a node starts from: values already in the file win, and a control without
+     * one takes its definition's default. Defaults are written into the store too, so a saved
+     * workflow keeps the value it started with even if the pack later changes its default.
+     */
+    function valuesFor(store, specs) {
+      const next = { ...store }
+      for (const spec of specs) {
+        if (Object.prototype.hasOwnProperty.call(next, spec.name) !== true && spec.default !== undefined) {
+          next[spec.name] = spec.default
+        }
+      }
+      return {
+        store: next,
+        widgets: specs.map((spec) => (Object.prototype.hasOwnProperty.call(next, spec.name)
+          ? next[spec.name]
+          : null)),
+      }
+    }
+
     function hydrateNode(node, definitionOf) {
       const store = widgetStoreOf(node)
       const entry = definitionOf(node)
@@ -1669,14 +1692,13 @@ const thumbCache = new Map()
           // Keep the shape the file describes, drop code that could never run, and say so with
           // `missing` instead of letting it fail mysteriously inside a data: URL.
           const specs = storedSpecs ?? []
+          const values = valuesFor(store, specs)
           const dropped = {
             ...node,
             pinned: false,
-            widgetStore: store,
+            widgetStore: values.store,
             missing: node.type !== '',
-            widgets: specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
-              ? store[spec.name]
-              : (spec.default === undefined ? null : spec.default))),
+            widgets: values.widgets,
             widgetSpecs: specs,
             widgetInputs: specs.map((spec) => spec.name),
             preview: null,
@@ -1686,15 +1708,14 @@ const thumbCache = new Map()
         }
         if (programSource !== '') {
           const specs = storedSpecs ?? []
+          const values = valuesFor(store, specs)
           return {
             ...node,
             program: { source: programSource },
             pinned: storedSpecs !== null,
-            widgetStore: store,
+            widgetStore: values.store,
             missing: storedSpecs === null && node.type !== '',
-            widgets: specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
-              ? store[spec.name]
-              : (spec.default === undefined ? null : spec.default))),
+            widgets: values.widgets,
             widgetSpecs: specs,
             widgetInputs: specs.map((spec) => spec.name),
             preview: null,
@@ -1741,9 +1762,7 @@ const thumbCache = new Map()
         && Array.isArray(node.outputs)
       const nextInputs = useStoredPorts ? node.inputs : inputs
       const nextOutputs = useStoredPorts ? node.outputs : outputs
-      const widgets = specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
-        ? store[spec.name]
-        : (spec.default === undefined ? null : spec.default)))
+      const values = valuesFor(store, specs)
       // An inline program is already part of the file and stays as it is; a program taken from the
       // pack is only pinned when the copy can run on its own.
       const program = programSource !== ''
@@ -1758,8 +1777,8 @@ const thumbCache = new Map()
       const hydrated = {
         ...node,
         missing: false,
-        widgetStore: store,
-        widgets,
+        widgetStore: values.store,
+        widgets: values.widgets,
         widgetSpecs: specs,
         widgetInputs: specs.map((spec) => spec.name),
         inputs: nextInputs,
@@ -2120,6 +2139,12 @@ const thumbCache = new Map()
       } catch {
         // Nothing to do: the in-memory canvas is already empty.
       }
+    }
+
+    /** A JSON-safe copy of a value a workflow file can carry; functions and cycles cannot. */
+    function json(value) {
+      const text = JSON.stringify(value)
+      return text === undefined ? null : JSON.parse(text)
     }
 
     /** JSON with sorted keys, so two equal graphs always compare equal. */
@@ -3913,6 +3938,9 @@ const thumbCache = new Map()
       const [runs, setRuns] = React.useState(() => runController.snapshot().runs)
       // The newest run's detail: views display what a node received (the reply area shows text).
       const [runDetail, setRunDetail] = React.useState(null)
+      // A draft canvas has no workflow name, but running one from the library should still show its
+      // result in the canvas the user is looking at.
+      const lastRunNameRef = React.useRef(null)
       // Each workflow keeps its own canvas document, so switching never duplicates or drops edits.
       const workflowGraphsRef = React.useRef(getCanvasStore().ensure('workflowGraphs', new Map()))
       // Every workflow that was opened or saved this session keeps its own saved copy, so
@@ -4403,8 +4431,11 @@ const thumbCache = new Map()
       React.useEffect(() => {
         let newest = null
         for (const run of runs) {
-          // Only this canvas' own runs: a workflow's runs belong to the workflow, a draft to null.
-          if (run.workflow !== currentWorkflow) continue
+          // This canvas' own runs: a workflow's runs belong to the workflow; a draft follows the
+          // workflow it most recently started from the library.
+          const belongs = run.workflow === currentWorkflow
+            || (currentWorkflow === null && run.workflow === lastRunNameRef.current)
+          if (belongs !== true) continue
           if (newest === null || run.startedAt > newest.startedAt) newest = run
         }
         if (newest === null) {
@@ -6588,6 +6619,7 @@ const thumbCache = new Map()
           })
           const payload = await response.json()
           if (payload.ok !== true) throw new Error(payload.error ?? 'HTTP ' + response.status)
+          lastRunNameRef.current = name
           loadRuns()
         } catch (error) {
           showNotice(tr('notice.runFailed', { message: error.message }))

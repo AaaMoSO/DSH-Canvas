@@ -3,7 +3,7 @@
 const { client, buildFunction, ok, eq, report } = require('./harness.cjs')
 
 const WILDCARD_TYPE = '*'
-const json = (value) => JSON.parse(JSON.stringify(value))
+const json = buildFunction(client, 'json', {})
 const normalizeWidgetSpecs = buildFunction(client, 'normalizeWidgetSpecs', { WILDCARD_TYPE, json })
 const widgetStoreOf = (node) => node.widgetStore || {}
 
@@ -58,10 +58,12 @@ const specFromDef = buildFunction(client, 'specFromDef', {})
 const sourceModuleSpecifiers = buildFunction(client, 'sourceModuleSpecifiers', {})
 const sourceIsSelfContained = buildFunction(client, 'sourceIsSelfContained', { sourceModuleSpecifiers })
 const usableInlineProgram = buildFunction(client, 'usableInlineProgram', { sourceIsSelfContained })
+const valuesFor = buildFunction(client, 'valuesFor', {})
 const hydrateNode = buildFunction(client, 'hydrateNode', {
   sourceIsSelfContained,
   sourceModuleSpecifiers,
   usableInlineProgram,
+  valuesFor,
   widgetStoreOf,
   normalizeWidgetSpecs,
   specFromDef,
@@ -182,6 +184,22 @@ const hydratedImporting = hydrateNode({
   inputs: [],
   outputs: [],
 }, (node) => importDefinition)
+// A fresh node starts its controls from the definition's defaults.
+const fresh = hydrateNode(
+  { id: 'n5', type: 'WithDefault', x: 0, y: 0, w: 190, h: 80, mode: 0, widgetStore: {}, inputs: [], outputs: [] },
+  () => ({
+    pack: { id: 'p', modelsRoot: '' },
+    def: {
+      type: 'WithDefault',
+      inputs: [{ name: 'sleep', type: 'FLOAT', widget: true, default: 2.5 }],
+      outputs: [],
+      program: { source: 'export async function run() { return [] }' },
+    },
+  }),
+)
+eq('a new node starts from the definition default', fresh.widgets, [2.5])
+eq('...and stores it under the widget name', fresh.widgetStore, { sleep: 2.5 })
+
 eq('a program that imports is not pinned', hydratedImporting.pinned, undefined)
 ﻿// An inline copy written by an older build (or a hand edit) is audited when the file is opened.
 const invalidInline = {

@@ -244,4 +244,9 @@ ok('the run state carries node inputs', executor.includes('inputs: Object.fromEn
 ok('the reply extension is registered', require('node:fs').existsSync(
   require('node:path').join(__dirname, '..', 'extensions/agent-reply/extension.json')))
 
+// ---- a new node starts from its definition's values --------------------------------------
+ok('specs carry the definition default', client.includes('spec.default === undefined ? {} : { default: spec.default }'))
+ok('...and hydration writes it into the store', client.includes('function valuesFor(store, specs)'))
+ok('the module defines the json helper it uses', client.includes('function json(value)'))
+
 report('contract')
