@@ -10,10 +10,12 @@ remote execution backend when you need its node pack.
 - **Node packs**: the plugin ships empty — the Local library is whatever you put in `packs/`
   (see [Writing a node pack](#writing-a-node-pack)). A workflow stores types, widget values and
   each node's origin. A newly created executable node pins its program and control schema into the
-  workflow; an older node is pinned once it is opened while its pack is still available. A program
-  that imports anything cannot live in the pinned copy (a `data:` URL has no directory), so such a
-  node stays a pack reference and says so when it is created. A pinned node can be re-read from its
-  pack through the node menu ("从节点库刷新").
+  workflow; an older node is pinned once it is opened while its pack is still available. A pinned
+  copy is imported from a `data:` URL, which has no directory: only `node:` builtins, `import.meta`
+  and literal specifiers qualify; relative, package or computed imports keep the node a pack
+  reference, and the canvas says so when such a node is created. The node menu's
+  "从节点库刷新" rebuilds a node from its current definition (ports included) while keeping its
+  title, geometry and values by widget name.
 - **Ownership**: every node records the pack that produced it — `origin`, written when the node
   is created and, for a file that predates the field, once when it is first opened. Values are
   `local:<pack>` or `remote:<pack>`. The canvas kind (local / remote / mixed) is the set of its
