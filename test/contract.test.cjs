@@ -223,4 +223,11 @@ ok('...which re-reads the definition and the pinning rule',
 ok('...and is disabled when the pack is gone',
   client.includes('disabled: definitionFor(node) === undefined'))
 
+// ---- pinned copies already in a file are audited when it is opened ------------------------
+ok('hydration only trusts an inline copy that can run', client.includes('usableInlineProgram(node)'))
+ok('...and drops one it cannot', client.includes('delete hydrated.program'))
+ok('opening a file counts the copies it must drop', client.includes('pendingPinnedAudit += rejected'))
+ok('...and the panel says so once', client.includes("tr('notice.programsRejected'"))
+ok('bracket access on import.meta is treated as unverifiable', client.includes('metaBrackets > plainUrlBrackets'))
+
 report('contract')

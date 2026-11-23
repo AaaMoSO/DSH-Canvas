@@ -57,9 +57,11 @@ eq('a pinned node writes its execution resource', [serialized.nodes[0].concurren
 const specFromDef = buildFunction(client, 'specFromDef', {})
 const sourceModuleSpecifiers = buildFunction(client, 'sourceModuleSpecifiers', {})
 const sourceIsSelfContained = buildFunction(client, 'sourceIsSelfContained', { sourceModuleSpecifiers })
+const usableInlineProgram = buildFunction(client, 'usableInlineProgram', { sourceIsSelfContained })
 const hydrateNode = buildFunction(client, 'hydrateNode', {
   sourceIsSelfContained,
   sourceModuleSpecifiers,
+  usableInlineProgram,
   widgetStoreOf,
   normalizeWidgetSpecs,
   specFromDef,
@@ -118,6 +120,13 @@ ok('...and createRequire cannot fix that on a data: URL',
   sourceIsSelfContained("import { createRequire } from 'node:module'\nconst req = createRequire(import.meta.url)\n" + standalone) === false)
 ok('import.meta.resolve is not verifiable either',
   sourceIsSelfContained("const p = import.meta.resolve('./x.mjs')\n" + standalone) === false)
+﻿ok('...including its bracket spelling',
+  sourceIsSelfContained("const p = import.meta['resolve']('./x.mjs')\n" + standalone) === false)
+ok('...while a plain url bracket access is harmless',
+  sourceIsSelfContained("const u = import.meta['url']\n" + standalone) === true)
+ok('a computed bracket access cannot be verified',
+  sourceIsSelfContained("const p = import.meta[('res' + 'olve')]\n" + standalone) === false)
+
 ok('the word import in a string or comment does not stop pinning',
   sourceIsSelfContained("// import './x' in a comment\nconst hint = 'import(\'y\')'\n" + standalone) === true)
 ok('import.meta does not stop pinning',
@@ -174,6 +183,44 @@ const hydratedImporting = hydrateNode({
   outputs: [],
 }, (node) => importDefinition)
 eq('a program that imports is not pinned', hydratedImporting.pinned, undefined)
+﻿// An inline copy written by an older build (or a hand edit) is audited when the file is opened.
+const invalidInline = {
+  id: 'n4',
+  type: 'Legacy',
+  origin: 'local:with-helper',
+  x: 0,
+  y: 0,
+  w: 190,
+  h: 80,
+  mode: 0,
+  widgetStore: { text: 'kept' },
+  program: { source: "import './helper.mjs'\n" + standalone },
+  pinned: true,
+  widgetSpecs: [{ name: 'text', type: 'STRING', index: 0 }],
+  widgets: ['kept'],
+  widgetInputs: ['text'],
+  inputs: [{ id: 'i:text', name: 'text', type: 'STRING' }],
+  outputs: [],
+}
+
+const auditedWithPack = hydrateNode({ ...invalidInline }, () => ({
+  pack: { id: 'legacy', modelsRoot: '' },
+  def: {
+    type: 'Legacy',
+    program: { source: 'export async function run() { return ["from-pack"] }' },
+    inputs: [{ name: 'text', type: 'STRING', widget: true, default: 'default' }],
+    outputs: [],
+  },
+}))
+ok('an unrunnable inline copy falls back to the pack program',
+  auditedWithPack.program?.source?.includes('from-pack') === true && auditedWithPack.pinned === true)
+eq('...and takes the pack schema rather than the stale copy', auditedWithPack.widgets, ['kept'])
+
+const auditedWithoutPack = hydrateNode({ ...invalidInline }, () => undefined)
+eq('with no pack the unrunnable copy is dropped', auditedWithoutPack.program, undefined)
+ok('...and the node is marked unrunnable', auditedWithoutPack.missing === true)
+eq('...while its shape and values still draw', [auditedWithoutPack.inputs.length, auditedWithoutPack.widgets], [1, ['kept']])
+
 eq('...and carries no program copy', hydratedImporting.program, undefined)
 eq('...while still hydrating from the pack', hydratedImporting.widgets, ['kept'])
 

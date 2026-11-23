@@ -1119,9 +1119,25 @@ function sourceModuleSpecifiers(source) {
   // `createRequire(import.meta.url)` cannot accept a data: URL either. Neither can be verified.
   if (/(?<![.\w$])require\s*\(/.test(skeleton) === true) unresolved = true
   if (/(?<![.\w$])createRequire\s*\(/.test(skeleton) === true) unresolved = true
-  // A relative resolve depends on a directory the pinned copy does not have.
+  // A relative resolve depends on a directory the pinned copy does not have. Property access can
+  // also be spelled `import.meta['resolve']`; only a literal `['url']` is known to be harmless,
+  // and anything computed (concatenation, template expression) cannot be read at all.
   if (/(?<![.\w$])import\s*\.\s*meta\s*\.\s*resolve\b/.test(skeleton) === true) unresolved = true
+  let metaBrackets = 0
+  for (const unused of skeleton.matchAll(/(?<![.\w$])import\s*\.\s*meta\s*\[/g)) metaBrackets += 1
+  let plainUrlBrackets = 0
+  for (const match of skeleton.matchAll(/(?<![.\w$])import\s*\.\s*meta\s*\[\s*\u0001(\d+)\u0001\s*\]/g)) {
+    if (fromLiteral(match[1]) === 'url') plainUrlBrackets += 1
+  }
+  if (metaBrackets > plainUrlBrackets) unresolved = true
   return { specifiers, unresolved }
+}
+
+/** The inline program a node may actually run: a pinned copy that imports cannot. */
+function usableInlineProgram(node) {
+  const source = typeof node.program?.source === 'string' ? node.program.source : ''
+  if (source.trim() === '') return ''
+  return sourceIsSelfContained(source) === true ? source : ''
 }
 
 /**
@@ -1638,14 +1654,36 @@ const thumbCache = new Map()
     function hydrateNode(node, definitionOf) {
       const store = widgetStoreOf(node)
       const entry = definitionOf(node)
-      const programSource = typeof node.program?.source === 'string' && node.program.source.trim() !== ''
-        ? node.program.source
-        : ''
+      const rawProgram = typeof node.program?.source === 'string' ? node.program.source : ''
+      // An inline program that cannot run from a data: URL is not a usable pin, however it got
+      // into the file (an older build, a hand edit). Ignoring it here is what makes the node fall
+      // back to its pack, or read as unrunnable when the pack is gone.
+      const programSource = usableInlineProgram(node)
+      const inlineRejected = rawProgram.trim() !== '' && programSource === ''
       // A pinned node carries both the program and the control schema. Using a newer pack schema
       // with an older program turns a harmless pack update into a mysterious runtime failure.
       const hasStoredSpecs = Object.prototype.hasOwnProperty.call(node, 'widgetSpecs')
       const storedSpecs = node.pinned === true && hasStoredSpecs ? normalizeWidgetSpecs(node.widgetSpecs) : null
       if (entry === undefined) {
+        if (inlineRejected === true) {
+          // Keep the shape the file describes, drop code that could never run, and say so with
+          // `missing` instead of letting it fail mysteriously inside a data: URL.
+          const specs = storedSpecs ?? []
+          const dropped = {
+            ...node,
+            pinned: false,
+            widgetStore: store,
+            missing: node.type !== '',
+            widgets: specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
+              ? store[spec.name]
+              : (spec.default === undefined ? null : spec.default))),
+            widgetSpecs: specs,
+            widgetInputs: specs.map((spec) => spec.name),
+            preview: null,
+          }
+          delete dropped.program
+          return dropped
+        }
         if (programSource !== '') {
           const specs = storedSpecs ?? []
           return {
@@ -1696,7 +1734,8 @@ const thumbCache = new Map()
         ? entry.def.program.source
         : ''
       const pinned = storedSpecs !== null && programSource !== ''
-      const specs = storedSpecs ?? definitionSpecs
+      // A rejected inline copy also disqualifies its schema and ports: they belong to that copy.
+      const specs = pinned ? storedSpecs : definitionSpecs
       const useStoredPorts = pinned
         && Array.isArray(node.inputs)
         && Array.isArray(node.outputs)
@@ -1716,10 +1755,9 @@ const thumbCache = new Map()
       const resource = typeof node.resource === 'string' && node.resource !== ''
         ? node.resource
         : entry.def.resource
-      return {
+      const hydrated = {
         ...node,
         missing: false,
-        ...(program === '' ? {} : { program: { source: program }, pinned: true }),
         widgetStore: store,
         widgets,
         widgetSpecs: specs,
@@ -1730,6 +1768,15 @@ const thumbCache = new Map()
         ...(typeof resource === 'string' && resource !== '' ? { resource } : {}),
         preview: previewFromDef(entry.def, entry.pack) ?? undefined,
       }
+      if (program === '') {
+        // The file's own copy was rejected and the definition has nothing runnable to offer.
+        delete hydrated.program
+        delete hydrated.pinned
+      } else {
+        hydrated.program = { source: program }
+        hydrated.pinned = true
+      }
+      return hydrated
     }
 
     /**
@@ -1781,7 +1828,19 @@ const thumbCache = new Map()
       return hydrateNode(candidate, () => entry)
     }
 
+    // Pinned copies that could not run and were dropped while a file was opened. The panel reads
+    // this once after the graph is in place and says so; loaders live in many places.
+    let pendingPinnedAudit = 0
+
     function hydrateGraph(graph, definitionOf) {
+      let rejected = 0
+      for (const node of graph.nodes) {
+        if (typeof node.program?.source === 'string' && node.program.source.trim() !== ''
+          && sourceIsSelfContained(node.program.source) !== true) {
+          rejected += 1
+        }
+      }
+      if (rejected > 0) pendingPinnedAudit += rejected
       return { ...graph, nodes: graph.nodes.map((node) => hydrateNode(node, definitionOf)) }
     }
 
@@ -2255,6 +2314,7 @@ const thumbCache = new Map()
       'menu.selectAll': 'Select all',
       'notice.deletedOffscreen': 'Deleted {n} node(s) outside the current view.',
       'menu.refresh': 'Refresh from pack',
+      'notice.programsRejected': 'Dropped {n} pinned program(s) that could not run from the pinned copy; those nodes now use their pack, or read as unrunnable if it is gone.',
       'notice.refreshed': 'Refreshed “{name}” from its pack.',
       'notice.refreshedWithLinks': 'Refreshed “{name}”; removed {n} link(s) to ports it no longer has.',
       'notice.refreshMissing': 'This node’s pack is not installed; there is nothing to refresh from.',
@@ -2469,6 +2529,7 @@ const thumbCache = new Map()
       'menu.selectAll': '全选',
       'notice.deletedOffscreen': '已删除 {n} 个当前视口外的节点。',
       'menu.refresh': '从节点库刷新',
+      'notice.programsRejected': '有 {n} 个节点的固化程序无法在副本中运行，已丢弃；它们将使用节点包，若包已缺失则显示为不可运行。',
       'notice.refreshed': '已从节点库刷新「{name}」。',
       'notice.refreshedWithLinks': '已刷新「{name}」，并移除了 {n} 条指向已不存在端口的连线。',
       'notice.refreshMissing': '这个节点的节点包未安装，无法刷新。',
@@ -8519,7 +8580,12 @@ const thumbCache = new Map()
       React.useEffect(() => {
         if (packsReady !== true) return
         let changed = false
+        let rejectedInline = 0
         const nodes = graph.nodes.map((node) => {
+          if (typeof node.program?.source === 'string' && node.program.source.trim() !== ''
+            && sourceIsSelfContained(node.program.source) !== true) {
+            rejectedInline += 1
+          }
           // A node from a file that predates the field is stamped once, as soon as the packs can
           // say which one declares its type. A node that already answers is never asked again.
           const origin = typeof node.origin === 'string' && node.origin !== ''
@@ -8540,6 +8606,7 @@ const thumbCache = new Map()
           return next
         })
         if (changed === true) {
+          if (rejectedInline > 0) showNotice(tr('notice.programsRejected', { n: rejectedInline }))
           // Re-deriving nodes from the packs is not an edit: when the canvas was saved, it stays
           // saved even though the in-memory graph changed.
           const before = graphSignature(graph)
@@ -8558,6 +8625,13 @@ const thumbCache = new Map()
       // Restore the previous session's unsaved canvas, but only once every node type it uses is
       // installed. A draft from an older format would render as a graph full of empty controls,
       // so it is dropped instead of resurrected.
+      React.useEffect(() => {
+        if (pendingPinnedAudit === 0) return
+        const rejected = pendingPinnedAudit
+        pendingPinnedAudit = 0
+        showNotice(tr('notice.programsRejected', { n: rejected }))
+      }, [graph])
+
       React.useEffect(() => {
         if (packsReady !== true) return
         const store = getCanvasStore()
