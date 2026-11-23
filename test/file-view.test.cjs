@@ -94,6 +94,36 @@ async function main() {
   legacyPick.props.onClick()
   eq('...and toggling it does not throw', legacyRedraws, 0)
 
+  // onFiles adds new paths and reports duplicates by stored path, not by file name.
+  const context = (initial) => {
+    const box = { value: initial, notices: [] }
+    const ctx = {
+      node: { id: 'n3' },
+      setWidget: (name, value) => { box.value = String(value) },
+      getWidget: () => box.value,
+      notify: (message) => { box.notices.push(message) },
+    }
+    return { box, ctx }
+  }
+
+  const duplicate = context('C:/one.txt')
+  view.onFiles([{ path: 'C:/one.txt', name: 'one.txt', bytes: 1 }], duplicate.ctx)
+  eq('a path already recorded is reported, not added',
+    [duplicate.box.value, duplicate.box.notices.at(-1)],
+    ['C:/one.txt', '这些文件已经在记录里了'])
+
+  const fresh = context('C:/one.txt')
+  view.onFiles([{ path: 'C:/two.txt', name: 'two.txt', bytes: 1 }], fresh.ctx)
+  eq('a new path is appended', fresh.box.value, 'C:/one.txt\nC:/two.txt')
+  eq('...and reported as added', fresh.box.notices.at(-1), '已加入 1 个文件')
+
+  const mixed = context('C:/one.txt')
+  view.onFiles([
+    { path: 'C:/one.txt', name: 'one.txt', bytes: 1 },
+    { path: 'C:/three.txt', name: 'three.txt', bytes: 1 },
+  ], mixed.ctx)
+  eq('only the new path of a mixed drop is added', mixed.box.value, 'C:/one.txt\nC:/three.txt')
+
   report('file view')
 }
 

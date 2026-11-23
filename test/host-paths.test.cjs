@@ -26,7 +26,7 @@ async function main() {
     return {
       ok: true,
       status: 200,
-      json: async () => ({ ok: true, file: 'D:\\node-canvas\\inbox\\stamp-attachment-1.png@176w.webp' }),
+      json: async () => ({ ok: true, file: { path: 'D:\\node-canvas\\inbox\\stamp-attachment-1.png@176w.webp', name: 'attachment-1.png@176w.webp', bytes: 9 } }),
     }
   }
   const uploaded = await hostPathsOf([{ path: 'attachment-1.png@176w.webp', name: 'attachment-1.png@176w.webp', size: 9 }])
@@ -35,6 +35,26 @@ async function main() {
   eq('...to the inbox endpoint', calls.length, 1)
   eq('...carrying the name', calls[0].url, '/node-canvas/inbox?name=attachment-1.png%40176w.webp')
   eq('...with the body as the file', calls[0].options.method, 'POST')
+
+  // Older hosts answered with the path itself.
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ ok: true, file: 'D:\\node-canvas\\inbox\\stamp-old.webp' }),
+  })
+  const legacy = await hostPathsOf([{ path: 'old.webp', name: 'old.webp', size: 1 }])
+  eq('...and an older host answer is accepted too', legacy,
+    [{ path: 'D:\\node-canvas\\inbox\\stamp-old.webp', name: 'old.webp', bytes: 1 }])
+
+  // An answer without a path is not stored: it would be a record that cannot be read.
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, file: { name: 'x' } }) })
+  let missing = null
+  try {
+    await hostPathsOf([{ path: 'x.png', name: 'x.png', size: 1 }])
+  } catch (error) {
+    missing = error.message
+  }
+  eq('an answer without a path is refused', missing, 'the host did not answer with a path')
 
   // A failed upload must surface, not store a path that cannot be read.
   global.fetch = async () => ({ ok: false, status: 413, json: async () => ({ ok: false, error: 'too large' }) })

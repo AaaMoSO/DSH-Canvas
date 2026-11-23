@@ -4587,9 +4587,15 @@ const thumbCache = new Map()
           if (response.ok !== true || payload?.ok !== true) {
             throw new Error(payload?.error ?? ('HTTP ' + response.status))
           }
-          // The host answers with the absolute path it stored; keep the same shape as the direct
-          // branch, because a node view reads `.path` and would otherwise drop the upload silently.
-          paths.push({ path: payload.file, name: file.name ?? 'file', bytes: file.size })
+          // The inbox answers with `{ path, name, bytes }`; older hosts answered with the path
+          // itself. Accept both, and keep the same entry shape as the direct branch: a node view
+          // reads `.path`, and an object stored there would be dropped as "already recorded".
+          const stored = payload.file
+          const storedPath = typeof stored === 'string'
+            ? stored
+            : (stored !== null && typeof stored === 'object' && typeof stored.path === 'string' ? stored.path : '')
+          if (storedPath === '') throw new Error('the host did not answer with a path')
+          paths.push({ path: storedPath, name: file.name ?? 'file', bytes: file.size })
         }
         return paths
       }
