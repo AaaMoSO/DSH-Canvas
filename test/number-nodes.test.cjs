@@ -39,6 +39,13 @@ async function main() {
   eq('...with one numeric FLOAT control', [initDef.inputs[0].name, initDef.inputs[0].type, initDef.inputs[0].default, initDef.inputs[0].step],
     ['value', 'FLOAT', 0, 0.5])
   eq('...and a NUMBER output', initDef.outputs[0].type, 'NUMBER')
+  const gateDef = pack.nodes.find((node) => node.type === 'ThresholdGate')
+  ok('阈值比较 is defined', gateDef !== undefined)
+  eq('...with a value input and the reference control',
+    gateDef.inputs.map((input) => input.name), ['value', 'reference'])
+  const reference = gateDef.inputs.find((input) => input.name === 'reference')
+  eq('...whose default is zero and step is half', [reference.widget, reference.default, reference.step], [true, 0, 0.5])
+  eq('...passing a NUMBER through', gateDef.outputs[0].type, 'NUMBER')
 
   // ---- 数字加一 -----------------------------------------------------------------------------
   const plus = await importProgram('NumberPlusOne')
@@ -98,6 +105,27 @@ async function main() {
   eq('the stored value comes out as a number', await init.run({ value: 3.5 }, context().ctx), [3.5])
   eq('a missing value falls back to zero', await init.run({}, context().ctx), [0])
   eq('a numeric string is accepted', await init.run({ value: '4.5' }, context().ctx), [4.5])
+
+  // ---- 阈值比较 -----------------------------------------------------------------------------
+  const gate = await importProgram('ThresholdGate')
+
+  const above = context()
+  eq('a value above the reference passes through unchanged',
+    await gate.run({ value: 5, reference: 4 }, above.ctx), [5])
+  ok('...and the log says so', above.logs.some((line) => line.includes('大于参考值')))
+
+  const equal = context()
+  eq('equal to the reference does not pass (strictly greater)',
+    await gate.run({ value: 5, reference: 5 }, equal.ctx), [null])
+  ok('...and the log says so', equal.logs.some((line) => line.includes('不大于参考值')))
+
+  eq('below the reference gives an empty output', await gate.run({ value: 4, reference: 5 }, context().ctx), [null])
+  eq('an empty string counts as no input', await gate.run({ value: '', reference: 0 }, context().ctx), [null])
+  eq('a null input gives an empty output', await gate.run({ value: null, reference: -10 }, context().ctx), [null])
+  eq('a numeric string is compared as a number', await gate.run({ value: '7', reference: 6 }, context().ctx), [7])
+  eq('a missing reference is treated as zero (5 > 0)', await gate.run({ value: 5 }, context().ctx), [5])
+  eq('...so a negative value fails it', await gate.run({ value: -1 }, context().ctx), [null])
+  eq('a numeric string reference is accepted', await gate.run({ value: 3, reference: '2' }, context().ctx), [3])
 
   report('number nodes')
 }
