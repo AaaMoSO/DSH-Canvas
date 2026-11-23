@@ -14,7 +14,9 @@ remote execution backend when you need its node pack.
   copy is imported from a `data:` URL, which has no directory and is an ES module: only `import`
   of `node:` builtins, `import.meta`, and literal specifiers qualify. Relative, package or computed
   imports, raw `require(...)`, `createRequire` and `import.meta.resolve` keep the node a pack
-  reference, and the canvas says so when such a node is created. The node menu's
+  reference, and the canvas says so when such a node is created. Opening a file audits the pinned
+  copies it already carries: a copy that cannot run is dropped (the node falls back to its pack, or
+  reads as unrunnable when the pack is gone) and the canvas reports how many. The node menu's
   "从节点库刷新" rebuilds a node from its current definition (ports, controls, concurrency and
   resource) while keeping its title, geometry and values by widget name; links to dropped ports or
   to ports whose type changed are removed and counted.
