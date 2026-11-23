@@ -683,6 +683,8 @@ export class Executor {
     try {
       child = fork(ISOLATED_ENTRY, [], {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        // Empty on purpose: the Host's own flags must not leak into the isolated program. A test
+        // runner's --input-type=module, for instance, makes a script-file child fail outright.
         execArgv: [],
         serialization: 'advanced',
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],

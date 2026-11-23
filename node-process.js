@@ -2,10 +2,9 @@
  * One isolated node program. The Host keeps the scheduler, leases and run state; this process only
  * executes `run(inputs, ctx)` and asks the Host for services that cannot cross a process boundary.
  *
- * The same entry also supports worker_threads, but the Executor uses a child process so even a
- * synchronous loop during module evaluation can be terminated by the operating system.
+ * The Executor forks this file as a child process, so a synchronous loop during module evaluation
+ * as well as inside `run()` can be terminated by the operating system.
  */
-import { parentPort, workerData } from 'node:worker_threads'
 import { pathToFileURL } from 'node:url'
 
 /** Marks the release a lock() call returns, so onRunEnd can recognise it. */
@@ -15,14 +14,13 @@ const controller = new AbortController()
 const pending = new Map()
 let requestId = 0
 let started = false
-let data = parentPort === null ? null : workerData
+let data = null
+/** The program's `run`, bound once its module has loaded. */
+let run = null
 
 function send(message) {
-  if (parentPort !== null) {
-    parentPort.postMessage(message)
-    return
-  }
-  if (process.connected) process.send(message)
+  if (process.connected !== true) return
+  process.send(message)
 }
 
 function describe(error) {
@@ -75,11 +73,9 @@ function onMessage(message) {
   }
 }
 
-if (parentPort !== null) parentPort.on('message', onMessage)
-else {
-  process.on('message', onMessage)
-  process.on('disconnect', () => process.exit(0))
-}
+process.on('message', onMessage)
+// The parent going away must not leave an orphan running a node forever.
+process.on('disconnect', () => process.exit(0))
 
 async function execute() {
   try {
@@ -115,7 +111,7 @@ async function execute() {
       },
     }
     if (controller.signal.aborted) throw new Error('cancelled')
-    const returned = await data.run(data.inputs, context)
+    const returned = await run(data.inputs, context)
     if (controller.signal.aborted) throw new Error('cancelled')
     try {
       send({ type: 'done', returned })
@@ -136,11 +132,9 @@ async function boot() {
     if (typeof module.run !== 'function') {
       throw new Error('node program does not export run(inputs, ctx)')
     }
-    data.run = module.run
+    run = module.run
     send({ type: 'ready' })
   } catch (error) {
     postFailure(error)
   }
 }
-
-if (parentPort !== null) void boot()
