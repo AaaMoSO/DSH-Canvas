@@ -28,6 +28,20 @@
 - 子进程隔离能终止运行函数或模块加载阶段的同步无限循环，并且终止后 Host 仍可执行下一轮。
 - 大图只把当前视口及一屏 overscan 内的节点/连线放进 DOM。
 
+## 复核后补做的（本轮）
+
+- `onRunEnd` 收窄：只接受 `ctx.lock()` 的返回值（租约由宿主保留到 run 结束）；隔离模式下普通
+  清理闭包会在运行日志中告警，而不是被静默丢弃。
+- 固定程序前检查自包含：含任何 import / re-export / require 的程序不再固化，保留 pack 引用并
+  在创建时提示；打开旧工作流时同样适用。节点菜单新增「从节点库刷新」。
+- 可观测性：每个 run 的日志首行带 `isolation` 与 `parallel`；宿主在启动时打印一次执行模式。
+- `package.json` 声明 `engines.node >= 20.3`（`AbortSignal.any` 的最低版本）。
+- 扩展清理有界等待：宿主 3 秒、渲染侧 2 秒；超时只停止等待并告警（无法终止卡住的 Promise）。
+- 删除 `node-process.js` 未使用的 worker_threads 分支；`execArgv: []` 注释说明原因；culling
+  阈值改为命名常量，删除视口外节点时报告数量。
+
+当前 `npm test` 为 **13 个文件、198 项检查**。
+
 ## 仍然存在的限制
 
 - `nodeIsolation: "in-process"` 仍是协作取消，无法抢占同步死循环；默认 `auto` 在设置超时后

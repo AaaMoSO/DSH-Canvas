@@ -10,7 +10,10 @@ remote execution backend when you need its node pack.
 - **Node packs**: the plugin ships empty — the Local library is whatever you put in `packs/`
   (see [Writing a node pack](#writing-a-node-pack)). A workflow stores types, widget values and
   each node's origin. A newly created executable node pins its program and control schema into the
-  workflow; an older node is pinned once it is opened while its pack is still available.
+  workflow; an older node is pinned once it is opened while its pack is still available. A program
+  that imports anything cannot live in the pinned copy (a `data:` URL has no directory), so such a
+  node stays a pack reference and says so when it is created. A pinned node can be re-read from its
+  pack through the node menu ("从节点库刷新").
 - **Ownership**: every node records the pack that produced it — `origin`, written when the node
   is created and, for a file that predates the field, once when it is first opened. Values are
   `local:<pack>` or `remote:<pack>`. The canvas kind (local / remote / mixed) is the set of its
@@ -114,7 +117,8 @@ export async function run(inputs, ctx) {
 - `nodeIsolation` is `auto` by default: process isolation is used when `nodeTimeoutMs` is positive
   and the in-process compatibility path is used otherwise. Set `process` to always isolate, or
   `in-process` to keep direct object references at the cost of cooperative cancellation. Isolated
-  process inputs and outputs must be structured-cloneable.
+  process inputs and outputs must be structured-cloneable. Every run's log starts with the mode it
+  used (`isolation`, `parallel`), and the Host prints the consequence once at startup.
 - `nodeStartupTimeoutMs` caps isolated module loading before `run()` starts; its default is 1000 ms
   when a node timeout exists and 5000 ms when isolation is forced without one.
 - a node whose program is missing still draws, and only fails when it runs.
