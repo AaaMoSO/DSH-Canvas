@@ -4557,6 +4557,11 @@ const thumbCache = new Map()
         return files
       }
 
+      /** A real host path: a drive letter, a UNC share, or a POSIX absolute path. */
+      function isHostPath(value) {
+        return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/')
+      }
+
       /**
        * Turn dropped files into host paths. Electron already tells us where they came from; a plain
        * browser does not, so the file is handed to the Host, which stores it and answers with its
@@ -4565,7 +4570,10 @@ const thumbCache = new Map()
       async function hostPathsOf(files) {
         const paths = []
         for (const file of files) {
-          const direct = typeof file?.path === 'string' && file.path !== '' ? file.path : ''
+          // A drag out of another page can carry a bare attachment name in `path`; treating that
+          // as a host path leaves a record the conversation API cannot read. Only absolute paths
+          // are trusted; anything else is stored through the Host and comes back absolute.
+          const direct = typeof file?.path === 'string' && isHostPath(file.path) ? file.path : ''
           if (direct !== '') {
             paths.push({ path: direct, name: file.name, bytes: file.size })
             continue
@@ -4579,7 +4587,9 @@ const thumbCache = new Map()
           if (response.ok !== true || payload?.ok !== true) {
             throw new Error(payload?.error ?? ('HTTP ' + response.status))
           }
-          paths.push(payload.file)
+          // The host answers with the absolute path it stored; keep the same shape as the direct
+          // branch, because a node view reads `.path` and would otherwise drop the upload silently.
+          paths.push({ path: payload.file, name: file.name ?? 'file', bytes: file.size })
         }
         return paths
       }
