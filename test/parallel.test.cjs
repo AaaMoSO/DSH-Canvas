@@ -80,6 +80,18 @@ async function main() {
   ok('the consumer received what the producer returned',
     done.length === 1 && JSON.stringify(done[0].outputs).includes('made'))
 
+  // ---- a run reports what each node received (a view displays it) --------------------------
+  const display = make({ maxParallel: 2 })
+  const displayRun = await timed(display, {
+    source: { class_type: 'Slow', inputs: { ms: 1, tag: 'hello reply' } },
+    reply: { class_type: 'Echo', canvasId: 'node-reply', inputs: { value: ['source', 0] } },
+  })
+  eq('the displayed run finishes', displayRun.run.status, 'done')
+  eq('the run files a node under its canvas id when the prompt has one',
+    displayRun.run.inputs?.['node-reply']?.value, 'hello reply')
+  eq('...and the widget inputs of the producer',
+    displayRun.run.inputs?.source?.tag, 'hello reply')
+
   // ---- an exclusive resource still serialises ----------------------------------------------
   const exclusive = {
     x: { class_type: 'Slow', inputs: { ms: 90, tag: 'x' }, concurrency: 'exclusive', resource: 'gpu' },

@@ -3911,6 +3911,8 @@ const thumbCache = new Map()
       // Runs known to the Host, newest first: mirrored from the run controller.
       const runController = getRunController()
       const [runs, setRuns] = React.useState(() => runController.snapshot().runs)
+      // The newest run's detail: views display what a node received (the reply area shows text).
+      const [runDetail, setRunDetail] = React.useState(null)
       // Each workflow keeps its own canvas document, so switching never duplicates or drops edits.
       const workflowGraphsRef = React.useRef(getCanvasStore().ensure('workflowGraphs', new Map()))
       // Every workflow that was opened or saved this session keeps its own saved copy, so
@@ -4399,6 +4401,32 @@ const thumbCache = new Map()
       }, [runController])
 
       React.useEffect(() => {
+        let newest = null
+        for (const run of runs) {
+          // Only this canvas' own runs: a workflow's runs belong to the workflow, a draft to null.
+          if (run.workflow !== currentWorkflow) continue
+          if (newest === null || run.startedAt > newest.startedAt) newest = run
+        }
+        if (newest === null) {
+          setRunDetail(null)
+          return undefined
+        }
+        let alive = true
+        void (async () => {
+          try {
+            const response = await fetch('/node-canvas/run/' + newest.id, { cache: 'no-store' })
+            const payload = await response.json()
+            if (alive === true && payload?.ok === true && payload.run !== undefined) setRunDetail(payload.run)
+          } catch {
+            // A failed poll leaves the last detail; the next run change asks again.
+          }
+        })()
+        return () => {
+          alive = false
+        }
+      }, [runs, currentWorkflow])
+
+      React.useEffect(() => {
         loadPacks()
       }, [loadPacks])
 
@@ -4608,6 +4636,23 @@ const thumbCache = new Map()
           notify: showNotice,
           /** Ask the canvas to draw again after a view changed its own transient state. */
           redraw: redrawView,
+          /**
+           * The newest run of this canvas, and what this node was handed in it. A view that
+           * displays a value (the reply area) reads it here instead of inventing state.
+           */
+          run: () => (runDetail === null
+            ? null
+            : {
+                id: runDetail.id,
+                workflow: runDetail.workflow,
+                status: runDetail.status,
+                error: runDetail.error ?? null,
+              }),
+          runInput: (name) => {
+            if (node === undefined || runDetail === null || typeof runDetail.inputs !== 'object') return undefined
+            const shown = runDetail.inputs[node.id]
+            return shown === null || shown === undefined ? undefined : shown[name]
+          },
           pushHistory,
           updateGraph,
           tr,

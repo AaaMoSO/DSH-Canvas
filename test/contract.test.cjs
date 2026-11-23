@@ -237,4 +237,11 @@ ok('a view that changes its own state calls it', require('node:fs').readFileSync
   require('node:path').join(__dirname, '..', 'extensions/agent-files/client.mjs'), 'utf8')
   .includes('helpers.redraw'))
 
+// ---- a view displays a run value through the run state -----------------------------------
+ok('views can ask for the newest run', client.includes('run: () => (runDetail === null'))
+ok('...and the value their node received', client.includes("runInput: (name) =>"))
+ok('the run state carries node inputs', executor.includes('inputs: Object.fromEntries(run.display)'))
+ok('the reply extension is registered', require('node:fs').existsSync(
+  require('node:path').join(__dirname, '..', 'extensions/agent-reply/extension.json')))
+
 report('contract')

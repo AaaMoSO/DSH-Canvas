@@ -280,6 +280,9 @@ export class Executor {
       startedAt: Date.now(),
       finishedAt: null,
       log: [],
+      // What each node received, kept for views that display a value (the reply area reads the
+      // text its node was handed). Capped so one large value cannot bloat every status poll.
+      display: new Map(),
       finalizers: [],
       abort: new AbortController(),
     }
@@ -329,6 +332,7 @@ export class Executor {
       finishedAt: run.finishedAt,
       current: run.current ?? null,
       log: run.log,
+      inputs: Object.fromEntries(run.display),
     }
   }
 
@@ -534,6 +538,11 @@ export class Executor {
       }
       inputs[name] = source[value[1]]
     }
+    // Views look values up by the canvas node id; a prompt may only know its own key.
+    run.display.set(
+      typeof spec.canvasId === 'string' && spec.canvasId !== '' ? spec.canvasId : id,
+      displayInputsOf(inputs),
+    )
     this.note(run, { type: 'node-start', node: id, classType: spec.class_type, at: Date.now() })
     // What the canvas highlights: the node graph id when the caller supplied one, otherwise
     // the prompt key it already knows. With several nodes running this is the latest to start.
@@ -946,6 +955,36 @@ export function executionOrder(prompt) {
     }
   }
   return order
+}
+
+/** Longest text a view is handed; the run log keeps the rest out of every status poll. */
+const MAX_DISPLAY_TEXT = 20000
+
+/**
+ * A JSON-safe copy of what a node received, for a view that displays it. Strings stay readable
+ * (capped); arrays of strings keep their first items; other shapes are described, not copied.
+ */
+function displayInputsOf(inputs) {
+  const shown = {}
+  for (const [name, value] of Object.entries(inputs)) {
+    if (typeof value === 'string') {
+      shown[name] = value.length > MAX_DISPLAY_TEXT ? value.slice(0, MAX_DISPLAY_TEXT) + '…' : value
+    } else if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+      shown[name] = value
+    } else if (Array.isArray(value)) {
+      shown[name] = {
+        kind: 'array',
+        length: value.length,
+        items: value.slice(0, 20).map((item) => {
+          const text = String(item)
+          return text.length > 200 ? text.slice(0, 200) + '…' : text
+        }),
+      }
+    } else if (typeof value === 'object') {
+      shown[name] = { kind: 'object' }
+    }
+  }
+  return shown
 }
 
 /** A tiny, JSON-safe description of what a node returned, for the progress log. */

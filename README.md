@@ -11,6 +11,9 @@ remote execution backend when you need its node pack.
   (see [Writing a node pack](#writing-a-node-pack)). A workflow stores types, widget values and
   each node's origin. A newly created executable node pins its program and control schema into the
   workflow; an older node is pinned once it is opened while its pack is still available. A pinned
+  The reply area shows what its node was handed: while a run is in flight it says so, and when the
+  run ends it shows the text, its length and a copy button. Views read that from the run state
+  (`helpers.run()` / `helpers.runInput(name)`), so nothing is duplicated into the graph.
   Dropping files on a node stores absolute host paths: a drag that carries no host path (for example
   an image dragged out of a chat message) is first copied into the plugin's inbox, so a view never
   records a name the conversation API cannot read.

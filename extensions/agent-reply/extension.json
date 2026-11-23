@@ -1,0 +1,7 @@
+{
+  "id": "agent-reply",
+  "name": "Agent reply",
+  "version": "1.0.0",
+  "description": "回复呈现区的界面：把 api调用节点这一轮收到的正文显示在节点里，可滚动、可复制。",
+  "client": "./client.mjs"
+}

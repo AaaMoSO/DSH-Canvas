@@ -78,6 +78,10 @@ export function setup(api) {
 `redraw()` 只在节点视图里用到：视图不是 React 组件，自己的瞬态状态（按钮高亮、行选中）改完后
 必须显式调用它，画布才会重绘；提示条之类的其他状态更新不会再顺带重绘视图。
 
+展示运行结果的视图用另外两个：`run()` 返回本画布最新一次运行的 `{ id, workflow, status, error }`，
+`runInput(name)` 返回**这个节点**在那次运行里收到的输入值（字符串按 20000 字截断，数组保留前几项）。
+它们随运行状态自动刷新，不需要 `redraw()`。宿主只保留节点收到的输入，不在画布里另存一份结果。
+
 工作流格式适配器还会收到：`nodeHeight(node)`、`presetOf(color)`、`presetByBody(bgcolor)`、
 `widgetInputNames(node)`、`widgetNamesOf(node)`、`widgetValues(node)`。节点不再自带定义与程序，
 所以适配器读写控件值时要经由这几个函数，而不是直接读节点上的数组。
