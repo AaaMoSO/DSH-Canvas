@@ -112,7 +112,10 @@ ok('...and renamed over the target', writeWorkflow.includes('rename(staged, targ
 // ---- an extension is told when the canvas is done with it ---------------------------------
 ok('the host passes an api version', host.includes('apiVersion: 1'))
 ok('the client passes one too', client.includes('apiVersion: 1'))
-ok('a replaced host module is disposed first', host.includes('disposeExtensionHost(extension.id)'))
+ok('a replaced host module is disposed first',
+  host.includes('disposeExtensionHost(extension.id, { invalidate: false })'))
+ok('...without invalidating the load that owns the replacement',
+  host.includes('const invalidate = options?.invalidate !== false'))
 const removeExtensionHost = grabFunction(host, 'removeExtension')
 ok('a removed host module is disposed', removeExtensionHost.includes('disposeExtensionHost(id)'))
 ok('a setup return value becomes a disposer', host.includes('dispose = returned') && client.includes('disposers.push(returned)'))

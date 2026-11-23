@@ -113,10 +113,15 @@ async function withDeadline(work, ms, label) {
 }
 
 /** Drop one extension's host module, giving it the chance to clean up first. */
-export async function disposeExtensionHost(id) {
-  // Invalidate any load still in flight before touching the cache: a module that arrives later
-  // would otherwise resurrect the extension under its old settings or after its removal.
-  bumpExtensionGeneration(id)
+/**
+ * Drop one extension's host module, giving it the chance to clean up first. An external caller
+ * (settings save, removal, plugin unload) must also invalidate loads in flight; the version
+ * replacement inside a load is the one case that must not, or the loader would discard its own
+ * fresh module.
+ */
+export async function disposeExtensionHost(id, options) {
+  const invalidate = options?.invalidate !== false
+  if (invalidate === true) bumpExtensionGeneration(id)
   const cached = extensionHosts.get(id)
   extensionHosts.delete(id)
   if (cached === undefined || typeof cached.dispose !== 'function') return
@@ -550,7 +555,11 @@ export async function loadExtensionHost(extension) {
     if (cached !== undefined && cached.version === version) return cached
     // A stale module is disposed before the new one is imported; otherwise its timers, child
     // processes and listeners outlive the code that owns them.
-    if (cached !== undefined) await disposeExtensionHost(extension.id)
+    if (cached !== undefined) {
+      // A newer file replacing an older module is not an external invalidation: this very load
+      // owns the fresh module, so bumping the generation here would make it discard itself.
+      await disposeExtensionHost(extension.id, { invalidate: false })
+    }
     const routes = []
     const module = await import(pathToFileURL(file).href + '?v=' + version)
     if (stale() === true) {

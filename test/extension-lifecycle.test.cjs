@@ -47,6 +47,18 @@ export function setup(api) {
   ok('a reload after disposal builds a new module', third !== null && third !== first)
   eq('...and setup ran a second time', fs.readFileSync(marker, 'utf8').trim().split('\n').length, 2)
 
+  // A changed host.mjs replaces the cached module. The internal replacement must not count as an
+  // external invalidation, or the loader would discard the very module it just imported.
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  fs.appendFileSync(path.join(dir, 'host.mjs'), '\n// v2\n')
+  const versioned = await host.loadExtensionHost(extension)
+  ok('editing host.mjs loads the new module', versioned !== null && versioned !== third)
+  eq('...running setup again',
+    fs.readFileSync(marker, 'utf8').trim().split('\n').length, 3)
+  ok('...and caching it', host.hostExtensionIds().includes('slow'))
+  const versionedAgain = await host.loadExtensionHost(extension)
+  ok('...so the next request reuses the new module', versionedAgain === versioned)
+
   await host.disposeExtensionHost('slow')
   fs.rmSync(root, { recursive: true, force: true })
   report('extension lifecycle')
