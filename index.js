@@ -60,6 +60,23 @@ const executor = new Executor({
 // they opened before a new version replaces them.
 const extensionHosts = new Map()
 const extensionHostLoads = new Map()
+// A load that finishes after its extension was disposed, reconfigured or removed must not write
+// its module into the cache. Every such action bumps a generation; a load compares what it read
+// when it started with the generation at the moment it would publish.
+const extensionHostGenerations = new Map()
+
+function extensionGeneration(id) {
+  return extensionHostGenerations.get(id) ?? 0
+}
+
+function bumpExtensionGeneration(id) {
+  extensionHostGenerations.set(id, extensionGeneration(id) + 1)
+}
+
+/** Ids currently cached or loading; the unload path must invalidate every one of them. */
+export function hostExtensionIds() {
+  return [...new Set([...extensionHosts.keys(), ...extensionHostLoads.keys()])]
+}
 
 // A cleanup that never settles must not stall a settings save, an extension removal or the whole
 // plugin unload. Waiting is bounded; the runaway promise is left running and reported.
@@ -96,7 +113,10 @@ async function withDeadline(work, ms, label) {
 }
 
 /** Drop one extension's host module, giving it the chance to clean up first. */
-async function disposeExtensionHost(id) {
+export async function disposeExtensionHost(id) {
+  // Invalidate any load still in flight before touching the cache: a module that arrives later
+  // would otherwise resurrect the extension under its old settings or after its removal.
+  bumpExtensionGeneration(id)
   const cached = extensionHosts.get(id)
   extensionHosts.delete(id)
   if (cached === undefined || typeof cached.dispose !== 'function') return
@@ -140,8 +160,9 @@ export function apply(ctx) {
       executor.cancelAll()
       executor.origin = ''
       if (pluginCtx === ctx) pluginCtx = null
-      const ids = new Set([...extensionHosts.keys(), ...extensionHostLoads.keys()])
-      await Promise.allSettled([...ids].map(async (id) => {
+      const ids = hostExtensionIds()
+      for (const id of ids) bumpExtensionGeneration(id)
+      await Promise.allSettled(ids.map(async (id) => {
         await settleExtensionLoad(id)
         await disposeExtensionHost(id)
       }))
@@ -499,7 +520,7 @@ async function handle(req, res) {
  * registers routes under `/node-canvas/ext/<id>/…`. Cached per file version, so editing it takes
  * effect on the next request.
  */
-async function loadExtensionHost(extension) {
+export async function loadExtensionHost(extension) {
   const file = path.join(extension.path, 'host.mjs')
   let version = 0
   try {
@@ -523,6 +544,8 @@ async function loadExtensionHost(extension) {
     }
   }
   const operation = (async () => {
+    const generation = extensionGeneration(extension.id)
+    const stale = () => extensionGeneration(extension.id) !== generation
     const cached = extensionHosts.get(extension.id)
     if (cached !== undefined && cached.version === version) return cached
     // A stale module is disposed before the new one is imported; otherwise its timers, child
@@ -530,6 +553,11 @@ async function loadExtensionHost(extension) {
     if (cached !== undefined) await disposeExtensionHost(extension.id)
     const routes = []
     const module = await import(pathToFileURL(file).href + '?v=' + version)
+    if (stale() === true) {
+      console.log('[node-canvas:' + extension.id + '] load finished after the extension was '
+        + 'disposed; the module is discarded')
+      return null
+    }
     let dispose = null
     if (typeof module.setup === 'function') {
       const returned = await module.setup({
@@ -553,6 +581,15 @@ async function loadExtensionHost(extension) {
       else if (returned !== null && typeof returned === 'object' && typeof returned.dispose === 'function') {
         dispose = () => returned.dispose()
       }
+    }
+    if (stale() === true) {
+      // The extension was removed or reconfigured while setup ran: close what it just opened.
+      if (typeof dispose === 'function') {
+        await withDeadline(() => dispose(), CLEANUP_DEADLINE_MS, 'late dispose of extension ' + extension.id)
+      }
+      console.log('[node-canvas:' + extension.id + '] setup finished after the extension was '
+        + 'disposed; its cleanup ran and nothing was registered')
+      return null
     }
     const entry = { version, routes, dispose }
     extensionHosts.set(extension.id, entry)
