@@ -61,28 +61,54 @@ const executor = new Executor({
 const extensionHosts = new Map()
 const extensionHostLoads = new Map()
 
+// A cleanup that never settles must not stall a settings save, an extension removal or the whole
+// plugin unload. Waiting is bounded; the runaway promise is left running and reported.
+const CLEANUP_DEADLINE_MS = 3000
+
+/**
+ * Wait for `work`, but only up to `ms`. Striking the deadline stops the caller from waiting; it
+ * cannot terminate the work itself (JavaScript has no way to cancel a promise), so a stuck cleanup
+ * is reported and then ignored.
+ */
+async function withDeadline(work, ms, label) {
+  let timer = null
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms)
+    if (typeof timer.unref === 'function') timer.unref()
+  })
+  const result = await Promise.race([
+    Promise.resolve().then(work).then(
+      () => 'done',
+      (error) => {
+        console.log('[node-canvas] ' + label + ' failed: '
+          + (error instanceof Error ? error.message : String(error)))
+        return 'failed'
+      },
+    ),
+    deadline,
+  ])
+  if (timer !== null) clearTimeout(timer)
+  if (result === 'timeout') {
+    console.log('[node-canvas] ' + label + ' is still running after ' + ms + 'ms; '
+      + 'continuing without waiting for it')
+  }
+  return result
+}
+
 /** Drop one extension's host module, giving it the chance to clean up first. */
 async function disposeExtensionHost(id) {
   const cached = extensionHosts.get(id)
   extensionHosts.delete(id)
   if (cached === undefined || typeof cached.dispose !== 'function') return
-  try {
-    await cached.dispose()
-  } catch (error) {
-    console.log('[node-canvas:' + id + '] dispose failed: '
-      + (error instanceof Error ? error.message : String(error)))
-  }
+  await withDeadline(() => cached.dispose(), CLEANUP_DEADLINE_MS, 'dispose of extension ' + id)
 }
 
 /** Wait for a module load already in flight before removing or replacing its registration. */
 async function settleExtensionLoad(id) {
   const loading = extensionHostLoads.get(id)
   if (loading !== undefined) {
-    try {
-      await loading
-    } catch {
-      // The caller still owns the remove/reload action; the load failure is not its failure.
-    }
+    // A module whose top-level await never settles would otherwise hold the request forever.
+    await withDeadline(() => loading, CLEANUP_DEADLINE_MS, 'load of extension ' + id)
   }
 }
 const MAX_PACK_BYTES = 4 * 1024 * 1024

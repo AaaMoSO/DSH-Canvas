@@ -966,6 +966,32 @@ function sourceIsSelfContained(source) {
   return true
 }
 
+/**
+ * Wait for a cleanup only up to `ms`. The deadline stops the caller from waiting; the cleanup
+ * promise itself keeps running, which the caller cannot change from here.
+ */
+async function withDeadline(work, ms, label) {
+  let timer = null
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms)
+  })
+  const result = await Promise.race([
+    Promise.resolve().then(work).then(
+      () => 'done',
+      (error) => {
+        console.warn('[node-canvas] ' + label + ' failed', error)
+        return 'failed'
+      },
+    ),
+    deadline,
+  ])
+  if (timer !== null) clearTimeout(timer)
+  if (result === 'timeout') {
+    console.warn('[node-canvas] ' + label + ' is still running after ' + ms + 'ms; continuing without waiting for it')
+  }
+  return result
+}
+
 const NOTICE_MS = 2600
 
 /**
@@ -4134,7 +4160,7 @@ const thumbCache = new Map()
       const extensionLoadVersionRef = React.useRef(0)
 
       async function disposeExtensionList(list) {
-        await Promise.allSettled(list.map((dispose) => Promise.resolve().then(dispose)))
+        await Promise.allSettled(list.map((dispose) => withDeadline(dispose, 2000, 'extension cleanup')))
       }
 
       const loadAdapters = React.useCallback(async () => {
