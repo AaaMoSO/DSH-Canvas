@@ -103,17 +103,23 @@ export function setup(api) {
 和旧程序拼在一起。固定后的程序从 `data:` URL 导入，没有目录可以解析，所以能否固定由**模块
 说明符**决定：
 
-- 允许：无 import；`node:` 内置模块（`import { readFile } from 'node:fs/promises'`、
-  `require('node:fs')`）；`import.meta.url`；注释、字符串、正则与模板文本里出现的 import 字样；
-- 不允许：相对/绝对路径、包名（`import 'lodash'`）、以及说明符不是字面量的动态 import
-  （例如 `import(name)`）。
+- 允许：无 import；`import` 形式的 `node:` 内置模块（`import { readFile } from 'node:fs/promises'`）；
+  `import.meta.url`；注释、字符串、正则与模板文本里出现的 import 字样；
+- 不允许：相对/绝对路径、包名（`import 'lodash'`）、说明符不是字面量的动态 import
+  （例如 `import(name)`）、以及**任何 `require(...)`**——固定副本是 `data:` URL 里的 ES 模块，
+  没有 CommonJS 的 `require`；`createRequire(import.meta.url)` 也不行，data: 不是文件 URL。
+  `import.meta.resolve(...)` 同样视为不可验证。
+
+静态 import/export 有没有空格都识别（`import{x}from'./x.mjs'`、`export*from'./x.mjs'`、跨行、
+关键字与 `from` 之间夹注释都算），因为它们由词法扫描读取，而不是靠几条文法正则。
 
 检测器是词法级的：它跳过注释、字符串、正则和模板文本，但会进入模板的表达式部分。程序不满足
 上述条件时保留对 pack 的引用，创建时提示一次。
 
 需要跟随 pack 改版的节点可以在节点菜单里选「从节点库刷新」：它会按当前定义**重建整个节点**
 （端口、控件 schema、控件顺序、预览），保留自定义标题、位置、尺寸和模式，控件值按名称迁移；
-新定义里不再存在的端口会被移除，指向它们的连线一并删除并在提示里给出数量。
+新定义里不再存在的端口会被移除，端口 id 相同但**类型变了**的连线也会被移除；两者都计入提示里的
+数量。`concurrency` 与 `resource` 同样来自当前定义——pack 改了执行资源，刷新后即生效。
 
 ## 执行上下文与进程隔离
 

@@ -34,9 +34,22 @@
 - 删除 `node-process.js` 未使用的 worker_threads 分支；`execArgv: []` 注释说明原因；culling
   阈值改为命名常量，删除视口外节点时报告数量；`grabFunction` 改为忽略字符串/注释/模板里的花括号。
 
+## 第三轮（再次复核）
+
+- 扩展文件版本变化不再自失效：内部替换旧模块时调用 `disposeExtensionHost(id, { invalidate: false })`，
+  只有设置保存、删除、插件卸载这类外部失效才递增 generation。行为测试改为「编辑 host.mjs 后
+  再加载」，断言新模块生效、setup 再次运行并进入缓存。
+- 自包含规则修正：**任何 `require(...)` 都不可固定**（固定副本是 data: URL 里的 ESM，没有
+  CommonJS 的 require）；`createRequire`、`import.meta.resolve` 视为不可验证；`node:` 仅限
+  `import` 形式。
+- 静态 import/export 不再依赖空格：`import{x}from'./x'`、`export*from'./x'`、跨行、关键字与
+  `from` 之间夹注释都能识别；测试按语法矩阵逐条断言。
+- 刷新也会丢弃旧的 `concurrency` / `resource`，从当前定义重建；端口 id 未变但类型变化的连线
+  同样被移除（提示里计数）。
+
 ## 验证
 
-`npm test`（或 `node test/run.cjs`）：**14 个文件、222 项检查**，全部通过。
+`npm test`（或 `node test/run.cjs`）：**14 个文件、241 项检查**，全部通过。
 
 - 命名 pack 缺失必须报错；固定程序在 pack 消失后仍能生成 prompt；固定节点保存并恢复控件 schema、
   值、并发属性与资源名。
