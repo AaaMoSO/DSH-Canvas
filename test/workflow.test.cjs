@@ -55,7 +55,9 @@ eq('a pinned node writes its execution resource', [serialized.nodes[0].concurren
   ['exclusive', 'gpu'])
 
 const specFromDef = buildFunction(client, 'specFromDef', {})
+const sourceIsSelfContained = buildFunction(client, 'sourceIsSelfContained', {})
 const hydrateNode = buildFunction(client, 'hydrateNode', {
+  sourceIsSelfContained,
   widgetStoreOf,
   normalizeWidgetSpecs,
   specFromDef,
@@ -93,5 +95,49 @@ const hydratedOld = hydrateNode({
 ok('an old workflow is pinned when its pack is still available', hydratedOld.pinned === true)
 eq('...with the current schema and saved values', hydratedOld.widgets, ['old-value'])
 eq('...and the execution resource it was defined with', hydratedOld.resource, 'gpu')
+
+// ---- only a self-contained program may be pinned ------------------------------------------
+const standalone = 'export async function run(inputs) { return [inputs.text] }\n'
+ok('a program with no imports can be pinned', sourceIsSelfContained(standalone) === true)
+ok('a static import stops pinning',
+  sourceIsSelfContained("import { readFile } from 'node:fs/promises'\n" + standalone) === false)
+ok('a relative import stops pinning',
+  sourceIsSelfContained("import './helper.mjs'\n" + standalone) === false)
+ok('a dynamic import stops pinning',
+  sourceIsSelfContained("const mod = await import('./helper.mjs')\n" + standalone) === false)
+ok('a re-export stops pinning',
+  sourceIsSelfContained("export { helper } from './helper.mjs'\n" + standalone) === false)
+ok('require stops pinning',
+  sourceIsSelfContained("const fs = require('node:fs')\n" + standalone) === false)
+ok('the word import in a string or comment does not stop pinning',
+  sourceIsSelfContained("// import './x' in a comment\nconst hint = 'import(\'y\')'\n" + standalone) === true)
+
+// An old workflow whose pack program imports a helper keeps a pack reference instead of being
+// pinned into a copy that could never run.
+const importDefinition = {
+  pack: { id: 'with-helper', modelsRoot: '' },
+  def: {
+    type: 'NeedsHelper',
+    program: { source: "import './helper.mjs'\n" + standalone },
+    inputs: [{ name: 'text', type: 'STRING', widget: true, default: 'default' }],
+    outputs: [{ name: 'text', type: 'STRING' }],
+  },
+}
+const hydratedImporting = hydrateNode({
+  id: 'n3',
+  type: 'NeedsHelper',
+  origin: 'local:with-helper',
+  x: 0,
+  y: 0,
+  w: 190,
+  h: 80,
+  mode: 0,
+  widgetStore: { text: 'kept' },
+  inputs: [],
+  outputs: [],
+}, (node) => importDefinition)
+eq('a program that imports is not pinned', hydratedImporting.pinned, undefined)
+eq('...and carries no program copy', hydratedImporting.program, undefined)
+eq('...while still hydrating from the pack', hydratedImporting.widgets, ['kept'])
 
 report('workflow')

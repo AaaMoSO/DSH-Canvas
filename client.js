@@ -949,6 +949,23 @@ function WorkflowList(props) {
   return { rows, hintAt, slotAt }
 }
 
+/**
+ * Whether a node program can be pinned into a workflow exactly as it is. A pinned program is
+ * imported from a `data:` URL, which has no directory: any static import, dynamic import, re-export
+ * or `require` would have nothing to resolve against, so such a program must stay a pack reference.
+ */
+function sourceIsSelfContained(source) {
+  const code = String(source ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``')
+  if (/(?<![.\w$])(?:import|require)\b/.test(code) === true) return false
+  if (/(?<![.\w$])export\b[^;]*\bfrom\b/.test(code) === true) return false
+  return true
+}
+
 const NOTICE_MS = 2600
 
 /**
@@ -1491,7 +1508,11 @@ const thumbCache = new Map()
       const widgets = specs.map((spec) => (Object.prototype.hasOwnProperty.call(store, spec.name)
         ? store[spec.name]
         : (spec.default === undefined ? null : spec.default)))
-      const program = programSource !== '' ? programSource : definitionProgram
+      // An inline program is already part of the file and stays as it is; a program taken from the
+      // pack is only pinned when the copy can run on its own.
+      const program = programSource !== ''
+        ? programSource
+        : (sourceIsSelfContained(definitionProgram) ? definitionProgram : '')
       const concurrency = node.concurrency === 'exclusive' || node.concurrency === 'shared'
         ? node.concurrency
         : entry.def.concurrency
@@ -1870,6 +1891,7 @@ const thumbCache = new Map()
       'extensions.add': 'Add an extension package',
       'extensions.title': 'Add an extension package',
       'extensions.hint': 'Drop an extension folder here, or paste the path of a folder that contains pack.json or nodes/.',
+      'notice.pinSkipped': 'Its program imports other files, so this node was not pinned; it still needs its pack to run.',
       'settings.open': 'Extension settings',
       'settings.general': 'General',
       'settings.language': 'Language',
@@ -2078,6 +2100,7 @@ const thumbCache = new Map()
       'extensions.add': '添加拓展包',
       'extensions.title': '添加拓展包',
       'extensions.hint': '把拓展包文件夹拖到下面，或粘贴一个包含 pack.json / nodes/ 的文件夹路径。',
+      'notice.pinSkipped': '该节点的程序引用了其他文件，因此未固化；运行仍需对应的节点包。',
       'settings.open': '拓展设置',
       'settings.general': '通用',
       'settings.language': '界面语言',
@@ -4729,6 +4752,9 @@ const thumbCache = new Map()
         const programSource = typeof def.program?.source === 'string' && def.program.source.trim() !== ''
           ? def.program.source
           : ''
+        // A program that imports anything cannot live in a data: URL; keep it a pack reference
+        // instead of copying code that would fail the moment it runs.
+        const pinnable = programSource !== '' && sourceIsSelfContained(programSource)
         const base = {
           id: uid('n'),
           x: Math.round(at.x - width / 2),
@@ -4740,9 +4766,10 @@ const thumbCache = new Map()
           ...(origin === undefined ? {} : { origin }),
           mode: 0,
           widgetStore: {},
-          ...(programSource !== ''
+          ...(pinnable
             ? { program: { source: programSource }, pinned: true }
             : {}),
+          ...(programSource !== '' && pinnable !== true ? { pinSkipped: true } : {}),
           ...(def.concurrency === 'exclusive' || def.concurrency === 'shared'
             ? { concurrency: def.concurrency }
             : {}),
@@ -4770,6 +4797,11 @@ const thumbCache = new Map()
             }
           : at
         const node = nodeForType(entry, point)
+        if (node.pinSkipped === true) {
+          // Transient: the honest thing to say once, when the node is created.
+          delete node.pinSkipped
+          showNotice(tr('notice.pinSkipped'))
+        }
         pushHistory()
         updateGraph({
           nodes: [...current.nodes, node],

@@ -198,4 +198,11 @@ eq('the source list is handed every helper it calls', missingProps(client, 'func
 eq('the workflow list is handed every helper it calls',
   missingProps(client, 'function WorkflowList(props)'), [])
 
+// ---- pinning refuses programs that cannot stand alone ------------------------------------
+ok('pinning checks the program before copying it', client.includes('sourceIsSelfContained(programSource)'))
+ok('...and says so when it refuses', client.includes("tr('notice.pinSkipped')"))
+ok('hydrating from a pack uses the same rule', client.includes('sourceIsSelfContained(definitionProgram)'))
+ok('the detector ignores comments and strings before looking for imports',
+  client.includes("replace(/\\/\\*[\\s\\S]*?\\*\\//g"))
+
 report('contract')
