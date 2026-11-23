@@ -1232,12 +1232,14 @@ const thumbCache = new Map()
      * panning and zooming from popping nodes in at the edge; links whose own bounds cross the
      * region stay even when both endpoint nodes are outside it.
      */
-    function visibleGraph(graph, view, area) {
+    const CULL_THRESHOLD = 160
+
+function visibleGraph(graph, view, area) {
       const byId = new Map(graph.nodes.map((node) => [node.id, node]))
       const width = num(area?.w, 0)
       const height = num(area?.h, 0)
       const zoom = clamp(num(view?.k, 1), ZOOM_MIN, ZOOM_MAX)
-      if (width <= 0 || height <= 0 || graph.nodes.length < 160) {
+      if (width <= 0 || height <= 0 || graph.nodes.length < CULL_THRESHOLD) {
         return { nodes: graph.nodes, links: graph.links, byId }
       }
       const viewWidth = width / zoom
@@ -2033,6 +2035,10 @@ const thumbCache = new Map()
       'notice.backendDraft': 'A local workflow is already named “{name}”; this copy opens as a draft — save it under another name.',
       'menu.paste': 'Paste',
       'menu.selectAll': 'Select all',
+      'notice.deletedOffscreen': 'Deleted {n} node(s) outside the current view.',
+      'menu.refresh': 'Refresh from pack',
+      'notice.refreshed': 'Refreshed “{name}” from its pack.',
+      'notice.refreshMissing': 'This node’s pack is not installed; there is nothing to refresh from.',
       'menu.properties': 'Node properties…',
       'menu.rename': 'Rename',
       'menu.duplicate': 'Duplicate',
@@ -2242,6 +2248,10 @@ const thumbCache = new Map()
       'notice.backendDraft': '本地已有同名工作流「{name}」，这份先以临时状态打开，请另存为新名字。',
       'menu.paste': '粘贴',
       'menu.selectAll': '全选',
+      'notice.deletedOffscreen': '已删除 {n} 个当前视口外的节点。',
+      'menu.refresh': '从节点库刷新',
+      'notice.refreshed': '已从节点库刷新「{name}」。',
+      'notice.refreshMissing': '这个节点的节点包未安装，无法刷新。',
       'menu.properties': '设置节点属性…',
       'menu.rename': '重命名',
       'menu.duplicate': '复制节点',
@@ -4523,6 +4533,15 @@ const thumbCache = new Map()
       function deleteSelection() {
         const ids = selectionIds()
         if (ids.nodes.size === 0 && ids.links.size === 0) return
+        // Above the culling threshold the DOM only holds the visible neighbourhood; say how many
+        // deleted nodes the user could not see, instead of letting them disappear silently.
+        let offscreen = 0
+        const currentGraph = graphRef.current
+        const visible = visibleGraph(currentGraph, viewRef.current, shellSize())
+        const visibleIds = new Set(visible.nodes.map((node) => node.id))
+        for (const id of ids.nodes) {
+          if (visibleIds.has(id) !== true) offscreen += 1
+        }
         pushHistory()
         const current = graphRef.current
         updateGraph({
@@ -4533,6 +4552,7 @@ const thumbCache = new Map()
         select(new Set())
         setEditing(null)
         setProps(null)
+        if (offscreen > 0) showNotice(tr('notice.deletedOffscreen', { n: offscreen }))
       }
 
       function selectAll() {
@@ -7396,6 +7416,54 @@ const thumbCache = new Map()
         ])
       }
 
+      /**
+       * Re-pin a node from its current pack definition. A pinned node keeps its own program and
+       * control schema on purpose, which also means a pack fix never reaches it; this is the
+       * explicit way to take the pack's current version again.
+       */
+      function refreshNodeFromDefinition(node) {
+        const entry = definitionFor(node)
+        if (entry === undefined) {
+          showNotice(tr('notice.refreshMissing'))
+          return
+        }
+        const def = entry.def
+        const programSource = typeof def.program?.source === 'string' && def.program.source.trim() !== ''
+          ? def.program.source
+          : ''
+        const pinnable = programSource !== '' && sourceIsSelfContained(programSource)
+        const modelsRoot = typeof entry.pack?.modelsRoot === 'string' ? entry.pack.modelsRoot : ''
+        const specs = []
+        for (const spec of Array.isArray(def.inputs) ? def.inputs : []) {
+          if (spec.widget === true) specs.push({ ...specFromDef(spec, modelsRoot), index: specs.length })
+        }
+        const next = {
+          ...node,
+          title: def.display_name || node.title,
+        }
+        if (pinnable) {
+          next.program = { source: programSource }
+          next.pinned = true
+          next.widgetSpecs = specs
+        } else {
+          delete next.program
+          delete next.pinned
+          delete next.widgetSpecs
+        }
+        if (def.concurrency === 'exclusive' || def.concurrency === 'shared') next.concurrency = def.concurrency
+        else delete next.concurrency
+        if (typeof def.resource === 'string' && def.resource !== '') next.resource = def.resource
+        else delete next.resource
+        const graph = graphRef.current
+        pushHistory()
+        updateGraph({
+          nodes: graph.nodes.map((item) => (item.id === node.id ? next : item)),
+          links: graph.links,
+          extra: graph.extra,
+        })
+        showNotice(tr('notice.refreshed', { name: next.title }))
+      }
+
       function onNodeContextMenu(event, node) {
         if (rightDraggedRef.current === true) {
           event.preventDefault()
@@ -7419,6 +7487,11 @@ const thumbCache = new Map()
         openMenu(event, [
           { label: tr('menu.properties'), run: () => openNodeProperties(node.id) },
           { label: tr('menu.duplicate'), run: duplicateSelection },
+          {
+            label: tr('menu.refresh'),
+            disabled: definitionFor(node) === undefined,
+            run: () => refreshNodeFromDefinition(node),
+          },
           { separator: true },
           {
             label: node.mode === 2 ? tr('menu.unmute') : tr('menu.mute'),

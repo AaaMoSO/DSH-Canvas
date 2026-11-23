@@ -209,4 +209,12 @@ ok('the detector ignores comments and strings before looking for imports',
 ok('run-start records the isolation mode', client.includes('') && executor.includes("isolation: this.usesIsolation()"))
 ok('the host announces isolation at startup', host.includes('node programs run in isolated processes'))
 
+// ---- a pinned node has an explicit way back to its pack ------------------------------------
+ok('the node menu offers a refresh', client.includes("tr('menu.refresh')"))
+ok('...which re-reads the definition and the pinning rule',
+  client.includes('function refreshNodeFromDefinition(node)')
+  && client.includes('sourceIsSelfContained(programSource)'))
+ok('...and is disabled when the pack is gone',
+  client.includes('disabled: definitionFor(node) === undefined'))
+
 report('contract')

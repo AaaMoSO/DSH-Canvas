@@ -8,6 +8,7 @@ const visibleGraph = buildFunction(client, 'visibleGraph', {
   clamp,
   ZOOM_MIN: 0.2,
   ZOOM_MAX: 2.5,
+  CULL_THRESHOLD: 160,
   nodeHeight: (node) => node.h ?? 80,
 })
 
@@ -38,5 +39,8 @@ ok('a link in the visible region is kept', visible.links.some((link) => link.id 
 ok('a link crossing the region is kept', visible.links.some((link) => link.id === 'crossing'))
 ok('a link entirely outside is culled', visible.links.every((link) => link.id !== 'remote'))
 eq('the lookup still knows every endpoint', visible.byId.size, nodes.length)
+
+ok('the threshold is a named constant, not a literal', client.includes('const CULL_THRESHOLD = 160'))
+ok('...and the filter uses it', client.includes('graph.nodes.length < CULL_THRESHOLD'))
 
 report('culling')
